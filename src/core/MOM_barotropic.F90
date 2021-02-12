@@ -2180,6 +2180,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                     scale=US%L_T_to_m_s)
       call uvchksum(trim(mesg)//" [uv]hbt", uhbt, vhbt, CS%debug_BT_HI, haloshift=iev-ie, &
                     scale=US%s_to_T*US%L_to_m**2*GV%H_to_m)
+      call uvchksum(trim(mesg)//" lin_drag_[uv]", CS%lin_drag_u, CS%lin_drag_v, CS%debug_BT_HI, haloshift=iev-ie, &
+                    scale=US%L_T_to_m_s*US%s_to_T)
+      call uvchksum(trim(mesg)//" Rayleigh_[uv]", Rayleigh_u, Rayleigh_v, CS%debug_BT_HI, haloshift=iev-ie, &
+                    scale=US%L_T_to_m_s*US%s_to_T)       
       call uvchksum(trim(mesg)//" [uv]_accel_bt", u_accel_bt, v_accel_bt, CS%debug_BT_HI, haloshift=iev-ie, &
                     scale=US%L_T_to_m_s*US%s_to_T)
       if (integral_BT_cont) &
