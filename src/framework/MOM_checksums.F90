@@ -7,7 +7,7 @@ use MOM_array_transform, only: rotate_array, rotate_array_pair, rotate_vector
 use MOM_coms, only : PE_here, root_PE, num_PEs, sum_across_PEs
 use MOM_coms, only : min_across_PEs, max_across_PEs
 use MOM_coms, only : reproducing_sum
-use MOM_error_handler, only : MOM_error, FATAL, is_root_pe
+use MOM_error_handler, only : MOM_error, FATAL, is_root_pe, WARNING
 use MOM_file_parser, only : log_version, param_file_type
 use MOM_hor_index, only : hor_index_type, rotate_hor_index
 
@@ -2032,7 +2032,10 @@ function is_NaN_2d(x)
       n = n + 1
       write(msg(1:240),'(2(a,i4,x),(a,f8.3,x))') &
         'NaN Found: i=',i,'j=',j, &
-        'x=',x(i,j)
+        'x(i-1,j-1)=',x(i-1,j-1), 'x(i,j-1)=',x(i,j-1), 'x(i+1,j-1)=',x(i+1,j-1), &
+        'x(i-1,j)='  ,x(i-1,j)  , 'x(i,j)=',x(i,j), 'x(i+1,j)=',x(i+1,j), &
+        'x(i-1,j+1)=',x(i-1,j+1), 'x(i,j+1)=',x(i,j+1), 'x(i+1,j+1)=',x(i+1,j+1)
+
         call MOM_error(WARNING, trim(msg), all_print=.true.)
     endif
   enddo ; enddo
