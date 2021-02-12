@@ -2030,7 +2030,7 @@ function is_NaN_2d(x)
   do j = LBOUND(x,2), UBOUND(x,2) ; do i = LBOUND(x,1), UBOUND(x,1)
     if (is_NaN_0d(x(i,j))) then
       n = n + 1
-      write(msg(1:240),'(2(a,i4,x),(a,f8.3,x))') &
+      write(msg(1:240),'(2(a,i4,x),9(a,f8.3,x))') &
         'NaN Found: i=',i,'j=',j, &
         'x(i-1,j-1)=',x(i-1,j-1), 'x(i,j-1)=',x(i,j-1), 'x(i+1,j-1)=',x(i+1,j-1), &
         'x(i-1,j)='  ,x(i-1,j)  , 'x(i,j)=',x(i,j), 'x(i+1,j)=',x(i+1,j), &
