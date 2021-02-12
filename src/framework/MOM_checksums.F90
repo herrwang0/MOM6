@@ -1060,7 +1060,7 @@ subroutine chksum_v_2d(array_m, mesg, HI_m, haloshift, symmetric, omit_corners, 
 
   if (checkForNaNs) then
     if (is_NaN(array(HI%isc:HI%iec,HI%JscB:HI%JecB))) then
-      write(msg, '4(I4, x)') HI%isc, HI%iec, HI%JscB, HI%JecB
+      write(msg, '(6(I4, x))') HI%isc, HI%iec, HI%JscB, HI%JecB, HI%isg, HI%jsg
       call chksum_error(WARNING, 'Domain: '//trim(msg))
       call chksum_error(FATAL, 'NaN detected: '//trim(mesg))
     endif

@@ -1489,6 +1489,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         'Htot-=',Htot, 'lindragv=',CS%lin_drag_v(i,J)
         call MOM_error(WARNING, trim(msg), all_print=.true.)
       endif
+      else
+           Rayleigh_v(i,J) = 0.
 
     endif ; enddo ; enddo
   endif
