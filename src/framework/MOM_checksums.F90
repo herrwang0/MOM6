@@ -2024,10 +2024,17 @@ function is_NaN_2d(x)
   logical :: is_NaN_2d
 
   integer :: i, j, n
+  character(240) :: msg
 
   n = 0
   do j = LBOUND(x,2), UBOUND(x,2) ; do i = LBOUND(x,1), UBOUND(x,1)
-    if (is_NaN_0d(x(i,j))) n = n + 1
+    if (is_NaN_0d(x(i,j))) then
+      n = n + 1
+      write(msg(1:240),'(2(a,i4,x),(a,f8.3,x))') &
+        'NaN Found: i=',i,'j=',j, &
+        'x=',x(i,j)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+    endif
   enddo ; enddo
   call sum_across_PEs(n)
   is_NaN_2d = .false.
