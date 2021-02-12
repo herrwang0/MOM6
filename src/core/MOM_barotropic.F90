@@ -1468,15 +1468,28 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       bt_rem_v(i,J) = bt_rem_v(i,J) * (Htot / (Htot + CS%lin_drag_v(i,J) * dtbt))
 
       Rayleigh_v(i,J) = CS%lin_drag_v(i,J) / Htot
-      if (abs(Htot) < 1e-7) then
+      if (((htot < 0.0) .and. (htot >= 0.0)) .or. &
+      (.not.(htot < 0.0) .and. .not.(htot >= 0.0))) then
         ig = i + G%HI%idg_offset ! Global i-index
         jg = j + G%HI%jdg_offset ! Global j-index
         write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x))') &
-        'Small Htot: i=',ig,'j=',jg, &
+        'NaN Htot: i=',ig,'j=',jg, &
         'eta-=',eta(i,j), 'eta+=',eta(i,j+1), &
         'bathyT-=',CS%bathyT(i,j), 'bathyT+=',CS%bathyT(i,j+1)
         call MOM_error(WARNING, trim(msg), all_print=.true.)
       endif
+      if (((Rayleigh_v(i,J) < 0.0) .and. (Rayleigh_v(i,J) >= 0.0)) .or. &
+      (.not.(Rayleigh_v(i,J) < 0.0) .and. .not.(Rayleigh_v(i,J) >= 0.0))) then
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        write(msg(1:240),'(2(a,i4,x),6(a,f8.3,x))') &
+        'NaN R_v: i=',ig,'j=',jg, &
+        'eta-=',eta(i,j), 'eta+=',eta(i,j+1), &
+        'bathyT-=',CS%bathyT(i,j), 'bathyT+=',CS%bathyT(i,j+1), &
+        'Htot-=',Htot, 'lindragv=',CS%lin_drag_v(i,J)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
+
     endif ; enddo ; enddo
   endif
 
