@@ -1036,6 +1036,7 @@ subroutine chksum_v_2d(array_m, mesg, HI_m, haloshift, symmetric, omit_corners, 
   integer :: bcN, bcS, bcE, bcW
   logical :: do_corners, sym, sym_stats
   integer :: turns                      ! Quarter turns from input to model grid
+  character(240) :: msg
 
   ! Rotate array to the input grid
   turns = HI_m%turns
@@ -1058,8 +1059,11 @@ subroutine chksum_v_2d(array_m, mesg, HI_m, haloshift, symmetric, omit_corners, 
   endif
 
   if (checkForNaNs) then
-    if (is_NaN(array(HI%isc:HI%iec,HI%JscB:HI%JecB))) &
+    if (is_NaN(array(HI%isc:HI%iec,HI%JscB:HI%JecB))) then
+      write(msg, '4(I4, x)') HI%isc, HI%iec, HI%JscB, HI%JecB
+      call chksum_error(WARNING, 'Domain: '//trim(msg))
       call chksum_error(FATAL, 'NaN detected: '//trim(mesg))
+    endif
 !   if (is_NaN(array)) &
 !     call chksum_error(FATAL, 'NaN detected in halo: '//trim(mesg))
   endif
