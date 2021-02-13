@@ -1459,6 +1459,18 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       bt_rem_u(I,j) = bt_rem_u(I,j) * (Htot / (Htot + CS%lin_drag_u(I,j) * dtbt))
 
       Rayleigh_u(I,j) = CS%lin_drag_u(I,j) / Htot
+
+      if (Rayleigh_u(I,j) >1.e-1)  then
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        write(msg(1:240),'(2(a,i4,x),6(a,f8.3,x))') &
+        'Large R_u: i=',ig,'j=',jg, &
+        'eta-=',eta(i,j), 'eta+=',eta(i+1,j), &
+        'bathyT-=',CS%bathyT(i,j), 'bathyT+=',CS%bathyT(i+1,j), &
+        'Htot-=',Htot, 'lindragu=',CS%lin_drag_u(i,J)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
+
     endif ; enddo ; enddo
     !$OMP do
     do J=js-1,je ; do i=is,ie ; if (CS%lin_drag_v(i,J) > 0.0) then
@@ -1489,8 +1501,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         'Htot-=',Htot, 'lindragv=',CS%lin_drag_v(i,J)
         call MOM_error(WARNING, trim(msg), all_print=.true.)
       endif
-      else
-           Rayleigh_v(i,J) = 0.
+
+      if (Rayleigh_v(i,J) >1.e-1)  then
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        write(msg(1:240),'(2(a,i4,x),6(a,f8.3,x))') &
+        'Large R_v: i=',ig,'j=',jg, &
+        'eta-=',eta(i,j), 'eta+=',eta(i,j+1), &
+        'bathyT-=',CS%bathyT(i,j), 'bathyT+=',CS%bathyT(i,j+1), &
+        'Htot-=',Htot, 'lindragv=',CS%lin_drag_v(i,J)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
+
+      ! else
+      !      Rayleigh_v(i,J) = 0.
 
     endif ; enddo ; enddo
   endif
