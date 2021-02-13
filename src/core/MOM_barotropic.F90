@@ -2241,6 +2241,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                       scale=US%L_to_m**2*GV%H_to_m)
     endif
 
+    !$OMP do
+    do j=js,je ; do I=is-1,ie ; if (G%%mask2dCu(I,j) > 0.0) then
+      if (u_accel_bt(I,j) >1.e1)  then
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        write(msg(1:240),'(2(a,i4,x),8(a,f8.3,x))') &
+        'Large u_accel_bt: i=',ig,'j=',jg, &
+        'R_u=',Rayleigh_u(i,j), 'u_accel_bt=',u_accel_bt(i,j), &
+        'eta-=',eta(i,j), 'eta+=',eta(i+1,j), &
+        'bathyT-=',CS%bathyT(i,j), 'bathyT+=',CS%bathyT(i+1,j), &
+        'Htot-=',Htot, 'lindragu=',CS%lin_drag_u(i,J)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
+
+    endif ; enddo ; enddo
+
     if (find_PF) then
       !$OMP do
       do j=js,je ; do I=is-1,ie
