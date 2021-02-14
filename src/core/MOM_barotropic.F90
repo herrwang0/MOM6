@@ -1450,23 +1450,31 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
   if (CS%linear_wave_drag) then
     !$OMP do
-    do j=js,je ; do I=is-1,ie ; if (CS%lin_drag_u(I,j) > 0.0) then
-      Htot = 0.5 * (eta(i,j) + eta(i+1,j))
-      if (GV%Boussinesq) &
-        Htot = Htot + 0.5*GV%Z_to_H * (CS%bathyT(i,j) + CS%bathyT(i+1,j))
-      bt_rem_u(I,j) = bt_rem_u(I,j) * (Htot / (Htot + CS%lin_drag_u(I,j) * dtbt))
+    do j=js,je ; do I=is-1,ie ; 
+      if (CS%lin_drag_u(I,j) > 0.0) then
+        Htot = 0.5 * (eta(i,j) + eta(i+1,j))
+        if (GV%Boussinesq) &
+          Htot = Htot + 0.5*GV%Z_to_H * (CS%bathyT(i,j) + CS%bathyT(i+1,j))
+        bt_rem_u(I,j) = bt_rem_u(I,j) * (Htot / (Htot + CS%lin_drag_u(I,j) * dtbt))
 
-      Rayleigh_u(I,j) = CS%lin_drag_u(I,j) / Htot
-    endif ; enddo ; enddo
+        Rayleigh_u(I,j) = CS%lin_drag_u(I,j) / Htot
+      else
+        Rayleigh_u(I,j) = 0.0
+      endif 
+    enddo ; enddo
     !$OMP do
-    do J=js-1,je ; do i=is,ie ; if (CS%lin_drag_v(i,J) > 0.0) then
-      Htot = 0.5 * (eta(i,j) + eta(i,j+1))
-      if (GV%Boussinesq) &
-        Htot = Htot + 0.5*GV%Z_to_H * (CS%bathyT(i,j) + CS%bathyT(i,j+1))
-      bt_rem_v(i,J) = bt_rem_v(i,J) * (Htot / (Htot + CS%lin_drag_v(i,J) * dtbt))
+    do J=js-1,je ; do i=is,ie ; 
+      if (CS%lin_drag_v(i,J) > 0.0) then
+        Htot = 0.5 * (eta(i,j) + eta(i,j+1))
+        if (GV%Boussinesq) &
+          Htot = Htot + 0.5*GV%Z_to_H * (CS%bathyT(i,j) + CS%bathyT(i,j+1))
+        bt_rem_v(i,J) = bt_rem_v(i,J) * (Htot / (Htot + CS%lin_drag_v(i,J) * dtbt))
 
-      Rayleigh_v(i,J) = CS%lin_drag_v(i,J) / Htot
-    endif ; enddo ; enddo
+        Rayleigh_v(i,J) = CS%lin_drag_v(i,J) / Htot
+      else
+        Rayleigh_v(i,J) = 0.0
+      endif
+    enddo ; enddo
   endif
 
   ! Zero out the arrays for various time-averaged quantities.
