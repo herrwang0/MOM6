@@ -16,6 +16,8 @@ use MOM_io,            only : MOM_read_data, slasher, file_exists, stdout
 use MOM_io,            only : CORNER, NORTH_FACE, EAST_FACE
 use MOM_unit_scaling,  only : unit_scale_type
 
+use MOM_io,            only : vardesc, var_desc, create_file, close_file, MOM_write_field, file_type, fieldtype, SINGLE_FILE
+
 implicit none ; private
 
 public set_grid_metrics, initialize_masks, Adcroft_reciprocal
@@ -189,6 +191,10 @@ subroutine set_grid_metrics_from_mosaic(G, param_file, US)
   integer :: i, j, i2, j2, ni, nj
   integer :: start(4), nread(4)
 
+  type(vardesc) :: vars(3)
+  type(fieldtype) :: fields(3)
+  type(file_type) :: IO_handle ! The I/O handle of the fileset
+
   call callTree_enter("set_grid_metrics_from_mosaic(), MOM_grid_initialize.F90")
 
   m_to_L = 1.0 ; if (present(US)) m_to_L = US%m_to_L
@@ -217,7 +223,14 @@ subroutine set_grid_metrics_from_mosaic(G, param_file, US)
   call clone_MOM_domain(G%domain, SGdom, symmetric=.true., domain_name="MOM_MOSAIC", &
                         refine=2, extra_halo=1)
 
-  ! Read X from the supergrid
+
+  vars(1) = var_desc("area1","m2","area after reading in",'h','1','1')
+  vars(2) = var_desc("area2","m2","area after pass_var",'h','1','1')
+  vars(3) = var_desc("area3","m2","area after extrapolate_metric",'h','1','1')
+
+  call create_file(IO_handle, "debug_area", vars, 3, fields, SINGLE_FILE)
+
+! Read X from the supergrid
   tmpZ(:,:) = 999.
   call MOM_read_data(filename, 'x', tmpZ, SGdom, position=CORNER)
 
@@ -292,8 +305,13 @@ subroutine set_grid_metrics_from_mosaic(G, param_file, US)
   ! Read AREA from the supergrid
   tmpT(:,:) = 0.
   call MOM_read_data(filename, 'area', tmpT, SGdom)
+  call MOM_write_field(IO_handle, fields(1), SGdom, tmpT)
   call pass_var(tmpT, SGdom)
+  call MOM_write_field(IO_handle, fields(2), SGdom, tmpT)
   call extrapolate_metric(tmpT, 2*(G%jsc-G%jsd)+2, missing=0.)
+  call MOM_write_field(IO_handle, fields(3), SGdom, tmpT)
+
+  call close_file(IO_handle)
 
   do j=G%jsd,G%jed ; do i=G%isd,G%ied ; i2 = 2*i ; j2 = 2*j
     areaT(i,j) = (tmpT(i2-1,j2-1) + tmpT(i2,j2)) + &
