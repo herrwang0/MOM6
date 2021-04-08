@@ -228,7 +228,8 @@ subroutine set_grid_metrics_from_mosaic(G, param_file, US)
   vars(2) = var_desc("area2","m2","area after pass_var",'h','1','1')
   vars(3) = var_desc("area3","m2","area after extrapolate_metric",'h','1','1')
 
-  call create_file(IO_handle, "debug_area", vars, 3, fields, SINGLE_FILE)
+  ! call create_file(IO_handle, "debug_area", vars, 3, fields, SINGLE_FILE)
+  call create_file(IO_handle, "debug_area", vars, 3, fields, SINGLE_FILE, dG=G)
 
 ! Read X from the supergrid
   tmpZ(:,:) = 999.
@@ -305,12 +306,27 @@ subroutine set_grid_metrics_from_mosaic(G, param_file, US)
   ! Read AREA from the supergrid
   tmpT(:,:) = 0.
   call MOM_read_data(filename, 'area', tmpT, SGdom)
-  call MOM_write_field(IO_handle, fields(1), SGdom, tmpT)
-  call pass_var(tmpT, SGdom)
-  call MOM_write_field(IO_handle, fields(2), SGdom, tmpT)
-  call extrapolate_metric(tmpT, 2*(G%jsc-G%jsd)+2, missing=0.)
-  call MOM_write_field(IO_handle, fields(3), SGdom, tmpT)
+  ! call MOM_write_field(IO_handle, fields(1), SGdom, tmpT)
+  do j=G%jsd,G%jed ; do i=G%isd,G%ied ; i2 = 2*i ; j2 = 2*j
+    areaT(i,j) = (tmpT(i2-1,j2-1) + tmpT(i2,j2)) + &
+                 (tmpT(i2-1,j2) + tmpT(i2,j2-1))
+  enddo ; enddo
+  call MOM_write_field(IO_handle, fields(1), G%Domain, areaT)
 
+  call pass_var(tmpT, SGdom)
+  ! call MOM_write_field(IO_handle, fields(2), SGdom, tmpT)
+  do j=G%jsd,G%jed ; do i=G%isd,G%ied ; i2 = 2*i ; j2 = 2*j
+    areaT(i,j) = (tmpT(i2-1,j2-1) + tmpT(i2,j2)) + &
+                 (tmpT(i2-1,j2) + tmpT(i2,j2-1))
+  enddo ; enddo
+  call MOM_write_field(IO_handle, fields(2), G%Domain, areaT)
+  call extrapolate_metric(tmpT, 2*(G%jsc-G%jsd)+2, missing=0.)
+  ! call MOM_write_field(IO_handle, fields(3), SGdom, tmpT)
+  do j=G%jsd,G%jed ; do i=G%isd,G%ied ; i2 = 2*i ; j2 = 2*j
+    areaT(i,j) = (tmpT(i2-1,j2-1) + tmpT(i2,j2)) + &
+                 (tmpT(i2-1,j2) + tmpT(i2,j2-1))
+  enddo ; enddo
+  call MOM_write_field(IO_handle, fields(3), G%Domain, areaT)
   call close_file(IO_handle)
 
   do j=G%jsd,G%jed ; do i=G%isd,G%ied ; i2 = 2*i ; j2 = 2*j
