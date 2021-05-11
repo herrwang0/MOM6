@@ -2267,7 +2267,7 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
   call get_param(param_file, mdl, "MLE_USE_PBL_MLD", MLE_use_PBL_MLD, &
                  default=.false., do_not_log=.true.)
 
-  call get_param(param_file, mld, "BOTTOM_WAVE_DRAG", CS%Bottom_wave_drag, &
+  call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG", CS%Bottom_wave_drag, &
                  "If true, apply a linear drag to the bottom velocities, with rate "//&
                  "similar to BT_LINEAR_WAVE_DRAG. The thickness of the boundary "//&
                  "layer is a fixed value set by BOTTOM_WAVE_DRAG_DEPTH and piston velocities "//&
@@ -2278,7 +2278,7 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
     call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG_DEPTH", CS%H_lindrag, &
                    "Descriptions", default=500.0, units="m", &
                    do_not_log=.not.CS%Bottom_wave_drag)
-    call get_param(param_file, mld, "BOTTOM_WAVE_DRAG_FILE", wave_drag_file, &
+    call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG_FILE", wave_drag_file, &
                    "The name of the file with the bottom linear wave drag "//&
                    "piston velocities.", default="", do_not_log=.not.CS%Bottom_wave_drag)
     call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG_VAR", wave_drag_var, &
