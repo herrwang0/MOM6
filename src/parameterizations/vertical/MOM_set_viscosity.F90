@@ -119,6 +119,7 @@ type, public :: set_visc_CS ; private
   integer :: id_bbl_thick_u = -1, id_kv_bbl_u = -1, id_bbl_u = -1
   integer :: id_bbl_thick_v = -1, id_kv_bbl_v = -1, id_bbl_v = -1
   integer :: id_Ray_u = -1, id_Ray_v = -1
+  integer :: id_Ray_lin_u = -1, id_Ray_lin_v = -1
   integer :: id_nkml_visc_u = -1, id_nkml_visc_v = -1
   !>@}
 end type set_visc_CS
@@ -1116,6 +1117,11 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
     call post_data(CS%id_Ray_u, visc%Ray_lin_u, CS%diag)
   if (CS%id_Ray_lin_v > 0) &
     call post_data(CS%id_Ray_v, visc%Ray_lin_v, CS%diag)
+
+  if (CS%id_Ray_lin_u > 0) &
+    call post_data(CS%id_Ray_lin_u, visc%Ray_lin_u, CS%diag)
+  if (CS%id_Ray_lin_v > 0) &
+    call post_data(CS%id_Ray_lin_v, visc%Ray_lin_v, CS%diag)
 
   if (CS%debug) then
     if (allocated(visc%Ray_u) .and. allocated(visc%Ray_v)) &
