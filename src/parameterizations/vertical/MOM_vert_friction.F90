@@ -1728,7 +1728,7 @@ subroutine vertvisc_init(MIS, Time, G, GV, US, param_file, diag, ADp, dirs, &
                  default=0.0, units="nondim")
   call get_param(param_file, mdl, "DEBUG", CS%debug, default=.false.)
 
-  call get_param(param_file, mld, "BOTTOM_WAVE_DRAG", CS%Bottom_wave_drag, &
+  call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG", CS%Bottom_wave_drag, &
                  "If true, apply a linear drag to the bottom velocities, with rate "//&
                  "similar to BT_LINEAR_WAVE_DRAG. The thickness of the boundary "//&
                  "layer is a fixed value set by BOTTOM_WAVE_DRAG_DEPTH and piston velocities "//&
