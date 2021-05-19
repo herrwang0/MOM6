@@ -1114,11 +1114,6 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
   if (CS%id_Ray_v > 0) &
     call post_data(CS%id_Ray_v, visc%Ray_v, CS%diag)
   if (CS%id_Ray_lin_u > 0) &
-    call post_data(CS%id_Ray_u, visc%Ray_lin_u, CS%diag)
-  if (CS%id_Ray_lin_v > 0) &
-    call post_data(CS%id_Ray_v, visc%Ray_lin_v, CS%diag)
-
-  if (CS%id_Ray_lin_u > 0) &
     call post_data(CS%id_Ray_lin_u, visc%Ray_lin_u, CS%diag)
   if (CS%id_Ray_lin_v > 0) &
     call post_data(CS%id_Ray_lin_v, visc%Ray_lin_v, CS%diag)
@@ -2352,10 +2347,10 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
 
   if (CS%Bottom_wave_drag) then
     allocate(visc%Ray_lin_u(IsdB:IedB,jsd:jed,nz)) ; visc%Ray_lin_u(:,:,:) = 0.0
-    allocate(visc%Ray_lin_v(IsdB:IedB,jsd:jed,nz)) ; visc%Ray_lin_v(:,:,:) = 0.0
+    allocate(visc%Ray_lin_v(isd:ied,JsdB:JedB,nz)) ; visc%Ray_lin_v(:,:,:) = 0.0
 
-    allocate(CS%lin_drag_u(isd:ied,jsd:jed)) ; CS%lin_drag_u(:,:) = 0.0
-    allocate(CS%lin_drag_v(isd:ied,jsd:jed)) ; CS%lin_drag_v(:,:) = 0.0
+    allocate(CS%lin_drag_u(IsdB:IedB,jsd:jed)) ; CS%lin_drag_u(:,:) = 0.0
+    allocate(CS%lin_drag_v(isd:ied,JsdB:JedB)) ; CS%lin_drag_v(:,:) = 0.0
 
     allocate(lin_drag_h(isd:ied,jsd:jed)) ; lin_drag_h(:,:) = 0.0
 
@@ -2370,11 +2365,11 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
     call pass_var(lin_drag_h,G%domain)
 
     do j=js,je ; do I=is-1,ie
-      CS%lin_drag_u(I,j) = (GV%Z_to_H * wave_drag_scale) * &
+      CS%lin_drag_u(I,j) = (US%L_to_Z * wave_drag_scale) * &
          0.5 * (lin_drag_h(i,j) + lin_drag_h(i+1,j))
     enddo ; enddo
     do J=js-1,je ; do i=is,ie
-      CS%lin_drag_v(i,J) = (GV%Z_to_H * wave_drag_scale) * &
+      CS%lin_drag_v(i,J) = (US%L_to_Z * wave_drag_scale) * &
          0.5 * (lin_drag_h(i,j) + lin_drag_h(i,j+1))
     enddo ; enddo
     deallocate(lin_drag_h)
