@@ -4,6 +4,7 @@ module MOM_barotropic
 ! This file is part of MOM6. See LICENSE.md for the license.
 
 use MOM_debugging, only : hchksum, uvchksum
+use MOM_checksums, only : uchksum, vchksum
 use MOM_cpu_clock, only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_ROUTINE
 use MOM_diag_mediator, only : post_data, query_averaging_enabled, register_diag_field
 use MOM_diag_mediator, only : safe_alloc_ptr, diag_ctrl, enable_averaging
@@ -691,6 +692,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: ioff, joff
   integer :: l_seg
 
+  integer :: ig, jg
+character(300):: msg
+
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
   if (.not.CS%split) return
@@ -767,6 +771,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
   CS%nstep_last = nstep
 
+!    write(mesg,'("btstep is using a dynamic barotropic timestep of ", ES12.6, &
+!               & " seconds, max ", ES12.6, ".")') (US%T_to_s*dt/nstep), US%T_to_s*CS%dtbt_max
+  
+!call MOM_error(WARNING, trim(mesg), all_print=.true.)
   ! Set the actual barotropic time step.
   Instep = 1.0 / real(nstep)
   dtbt = dt * Instep
@@ -1239,9 +1247,21 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         CS%IDatu(I,j) = 1.0 / Htot_avg
       endif
     endif
+! if (CS%IDatu(I,j)>1e30)then
+!
+!  ig = i + G%HI%idg_offset ! Global i-index
+!  jg = j + G%HI%jdg_offset !
+!        write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+!          'Extreme IDatu detected: i=',ig,'j=',jg, &
+!          'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+!          'x=',G%gridLonT(i), 'y=',G%gridLatT(j), &
+!          'D=',G%bathyT(i,j),  'D+=',G%bathyT(i+1,j), 'htot_avg=',Htot_avg, 'H=', CS%bathyT(i,j)*GV%Z_to_H + eta(i,j),'H+=',CS%bathyT(i+1,j)*GV%Z_to_H + eta(i+1,j)
+!      call MOM_error(WARNING, trim(msg), all_print=.true.)
+!  endif
 
     BT_force_u(I,j) = forces%taux(I,j) * mass_accel_to_Z * CS%IDatu(I,j)*visc_rem_u(I,j,1)
   else
+    CS%IDatu(I,j) = 0.0
     BT_force_u(I,j) = 0.0
   endif ; enddo ; enddo
   !$OMP parallel do default(shared)
@@ -1265,9 +1285,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         CS%IDatv(i,J) = 1.0 / Htot_avg
       endif
     endif
-
+!  if (CS%IDatv(I,j)>1e30)then
+!
+!  ig = i + G%HI%idg_offset ! Global i-index
+!  jg = j + G%HI%jdg_offset !
+!        write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+!          'Extreme IDatv detected: i=',ig,'j=',jg, &
+!          'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+!          'x=',G%gridLonT(i), 'y=',G%gridLatT(j), &
+!          'D=',G%bathyT(i,j),  'D+=',G%bathyT(i,j+1), 'htot_avg=',0.5*(max(CS%bathyT(i,j)*GV%Z_to_H + eta(i,j), 0.0) + max(CS%bathyT(i,j+1)*GV%Z_to_H + eta(i,j+1), 0.0)), 'H=', CS%bathyT(i,j)*GV%Z_to_H + eta(i,j),'H+=',CS%bathyT(i,j+1)*GV%Z_to_H + eta(i,j+1) 
+!      call MOM_error(WARNING, trim(msg), all_print=.true.)
+!  endif
     BT_force_v(i,J) = forces%tauy(i,J) * mass_accel_to_Z * CS%IDatv(i,J)*visc_rem_v(i,J,1)
   else
+    CS%IDatv(i,J)= 0.0
     BT_force_v(i,J) = 0.0
   endif ; enddo ; enddo
   if (present(taux_bot) .and. present(tauy_bot)) then
@@ -1615,7 +1646,28 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
   if (CS%debug) then
-    call uvchksum("BT [uv]hbt", uhbt, vhbt, CS%debug_BT_HI, haloshift=0, &
+     if (.not. use_BT_cont) then
+      call uvchksum("BT Dat[uv]", Datu, Datv, CS%debug_BT_HI, haloshift=1, scale=US%L_to_m*GV%H_to_m)
+    endif
+    call uvchksum("BT wt_[uv]", wt_u, wt_v, G%HI, haloshift=0, &
+                  symmetric=.true., omit_corners=.true., scalar_pair=.true.)
+    call uvchksum("BT frhat[uv]", CS%frhatu, CS%frhatv, G%HI, haloshift=0, &
+                  symmetric=.true., omit_corners=.true., scalar_pair=.true.)
+    call uvchksum("BT bc_accel_[uv]", bc_accel_u, bc_accel_v, G%HI, haloshift=0, scale=US%L_T2_to_m_s2)
+    call uvchksum("BT visc_rem_[uv]", visc_rem_u, visc_rem_v, G%HI, &
+                  haloshift=1, scalar_pair=.true.)
+
+      call uchksum(CS%IDatu, "IDatu",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+      call vchksum(CS%IDatv, "IDatv",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+    call uvchksum("BT IDat[uv]", CS%IDatu, CS%IDatv, G%HI, haloshift=0, &
+                  scale=US%m_to_Z, scalar_pair=.true.)
+
+
+!    call uvchksum("BT visc_rem_[uv], Instep", Instep+visc_rem_u, Instep+visc_rem_v, G%HI, &
+!                  haloshift=1, scalar_pair=.true.)
+
+
+     call uvchksum("BT [uv]hbt", uhbt, vhbt, CS%debug_BT_HI, haloshift=0, &
                   scale=US%s_to_T*US%L_to_m**2*GV%H_to_m)
     call uvchksum("BT Initial [uv]bt", ubt, vbt, CS%debug_BT_HI, haloshift=0, scale=US%L_T_to_m_s)
     call hchksum(eta, "BT Initial eta", CS%debug_BT_HI, haloshift=0, scale=GV%H_to_m)
@@ -1631,18 +1683,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     call uvchksum("BT Cor_ref_[uv]", Cor_ref_u, Cor_ref_v, CS%debug_BT_HI, haloshift=0, scale=US%L_T2_to_m_s2)
     call uvchksum("BT [uv]hbt0", uhbt0, vhbt0, CS%debug_BT_HI, haloshift=0, &
                   scale=US%L_to_m**2*US%s_to_T*GV%H_to_m)
-    if (.not. use_BT_cont) then
-      call uvchksum("BT Dat[uv]", Datu, Datv, CS%debug_BT_HI, haloshift=1, scale=US%L_to_m*GV%H_to_m)
-    endif
-    call uvchksum("BT wt_[uv]", wt_u, wt_v, G%HI, haloshift=0, &
-                  symmetric=.true., omit_corners=.true., scalar_pair=.true.)
-    call uvchksum("BT frhat[uv]", CS%frhatu, CS%frhatv, G%HI, haloshift=0, &
-                  symmetric=.true., omit_corners=.true., scalar_pair=.true.)
-    call uvchksum("BT bc_accel_[uv]", bc_accel_u, bc_accel_v, G%HI, haloshift=0, scale=US%L_T2_to_m_s2)
-    call uvchksum("BT IDat[uv]", CS%IDatu, CS%IDatv, G%HI, haloshift=0, &
-                  scale=US%m_to_Z, scalar_pair=.true.)
-    call uvchksum("BT visc_rem_[uv]", visc_rem_u, visc_rem_v, G%HI, &
-                  haloshift=1, scalar_pair=.true.)
+!    if (.not. use_BT_cont) then
+!      call uvchksum("BT Dat[uv]", Datu, Datv, CS%debug_BT_HI, haloshift=1, scale=US%L_to_m*GV%H_to_m)
+!    endif
+!    call uvchksum("BT wt_[uv]", wt_u, wt_v, G%HI, haloshift=0, &
+!                  symmetric=.true., omit_corners=.true., scalar_pair=.true.)
+!    call uvchksum("BT frhat[uv]", CS%frhatu, CS%frhatv, G%HI, haloshift=0, &
+!                  symmetric=.true., omit_corners=.true., scalar_pair=.true.)
+!    call uvchksum("BT bc_accel_[uv]", bc_accel_u, bc_accel_v, G%HI, haloshift=0, scale=US%L_T2_to_m_s2)
+!    call uvchksum("BT IDat[uv]", CS%IDatu, CS%IDatv, G%HI, haloshift=0, &
+!                  scale=US%m_to_Z, scalar_pair=.true.)
+!    call uvchksum("BT visc_rem_[uv]", visc_rem_u, visc_rem_v, G%HI, &
+!                  haloshift=1, scalar_pair=.true.)
+
+
+!    call uvchksum("BT visc_rem_[uv], Instep", Instep+visc_rem_u, Instep+visc_rem_v, G%HI, &
+ !                 haloshift=1, scalar_pair=.true.)
   endif
 
   if (CS%id_ubtdt > 0) then
@@ -2209,6 +2265,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     ! This might need to be moved outside of the OMP do loop directives.
     if (CS%debug_bt) then
       write(mesg,'("BT vel update ",I4)') n
+      call hchksum(eta_PF_BT - eta_PF, "eta_PF_BT - eta_PF",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+      call hchksum(eta_PF_BT, "eta_PF_BT",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+      call hchksum(eta_PF, "eta_PF",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+      call hchksum(eta_PF_BT-1000., "eta_PF_BT-1000",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+      call hchksum(eta_PF-1000., "eta_PF-1000",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+      call hchksum(eta_PF_BT+G%bathyT, "eta_PF_BT+bathy",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+      call hchksum(eta_PF+G%bathyT, "eta_PF+bathy",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+
       call uvchksum(trim(mesg)//" PF[uv]", PFu, PFv, CS%debug_BT_HI, haloshift=iev-ie, &
                     scale=US%L_T_to_m_s*US%s_to_T)
       call uvchksum(trim(mesg)//" Cor_[uv]", Cor_u, Cor_v, CS%debug_BT_HI, haloshift=iev-ie, &
@@ -3264,7 +3328,6 @@ subroutine btcalc(h, G, GV, CS, h_u, h_v, may_use_default, OBC)
   logical :: use_default, test_dflt, apply_OBCs
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, i, j, k
   integer :: iss, ies, n
-
 !    This section interpolates thicknesses onto u & v grid points with the
 ! second order accurate estimate h = 2*(h+ * h-)/(h+ + h-).
   if (.not.associated(CS)) call MOM_error(FATAL, &
@@ -4151,12 +4214,12 @@ subroutine find_face_areas(Datu, Datv, G, GV, US, CS, MS, eta, halo, add_max)
 !$OMP do
     do j=js-hs,je+hs ; do I=is-1-hs,ie+hs
       Datu(I,j) = CS%dy_Cu(I,j) * GV%Z_to_H * &
-                 (max(CS%bathyT(i+1,j), CS%bathyT(i,j)) + add_max)
+                 (max(CS%bathyT(i+1,j), CS%bathyT(i,j)) + G%Z_ref + add_max)
     enddo ; enddo
 !$OMP do
     do J=js-1-hs,je+hs ; do i=is-hs,ie+hs
       Datv(i,J) = CS%dx_Cv(i,J) * GV%Z_to_H * &
-                 (max(CS%bathyT(i,j+1), CS%bathyT(i,j)) + add_max)
+                 (max(CS%bathyT(i,j+1), CS%bathyT(i,j)) + G%Z_ref + add_max)
     enddo ; enddo
   else
 !$OMP do
@@ -4165,8 +4228,8 @@ subroutine find_face_areas(Datu, Datv, G, GV, US, CS, MS, eta, halo, add_max)
       !Would be "if (G%mask2dCu(I,j)>0.) &" is G was valid on BT domain
       if (CS%bathyT(i+1,j)+CS%bathyT(i,j)>0.) &
         Datu(I,j) = 2.0*CS%dy_Cu(I,j) * GV%Z_to_H * &
-                  (CS%bathyT(i+1,j) * CS%bathyT(i,j)) / &
-                  (CS%bathyT(i+1,j) + CS%bathyT(i,j))
+                  ((CS%bathyT(i+1,j)+G%Z_ref) * (CS%bathyT(i,j)+G%Z_ref)) / &
+                  ((CS%bathyT(i+1,j)+G%Z_ref) + (CS%bathyT(i,j)+G%Z_ref))
     enddo ; enddo
 !$OMP do
     do J=js-1-hs,je+hs ; do i=is-hs,ie+hs
@@ -4174,8 +4237,8 @@ subroutine find_face_areas(Datu, Datv, G, GV, US, CS, MS, eta, halo, add_max)
       !Would be "if (G%mask2dCv(i,J)>0.) &" is G was valid on BT domain
       if (CS%bathyT(i,j+1)+CS%bathyT(i,j)>0.) &
         Datv(i,J) = 2.0*CS%dx_Cv(i,J) * GV%Z_to_H * &
-                  (CS%bathyT(i,j+1) * CS%bathyT(i,j)) / &
-                  (CS%bathyT(i,j+1) + CS%bathyT(i,j))
+                  ((CS%bathyT(i,j+1)+G%Z_ref) * (CS%bathyT(i,j)+G%Z_ref)) / &
+                  ((CS%bathyT(i,j+1)+G%Z_ref) + (CS%bathyT(i,j)+G%Z_ref))
     enddo ; enddo
   endif
 !$OMP end parallel
@@ -4921,20 +4984,22 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     Mean_SL = G%Z_ref
     do j=js,je ; do I=is-1,ie
       if (G%mask2dCu(I,j)>0.) then
-        CS%IDatu(I,j) = G%mask2dCu(I,j) * 2.0 / ((G%bathyT(i+1,j) + G%bathyT(i,j)) + 2.0*Mean_SL)
+        CS%IDatu(I,j) = G%mask2dCu(I,j) * 2.0 / (max(G%bathyT(i+1,j) + Mean_SL, GV%Angstrom_Z) + max(G%bathyT(i,j) + Mean_SL, GV%Angstrom_Z))
       else ! Both neighboring H points are masked out so IDatu(I,j) is meaningless
         CS%IDatu(I,j) = 0.
       endif
     enddo ; enddo
     do J=js-1,je ; do i=is,ie
       if (G%mask2dCv(i,J)>0.) then
-        CS%IDatv(i,J) = G%mask2dCv(i,J) * 2.0 / ((G%bathyT(i,j+1) + G%bathyT(i,j)) + 2.0*Mean_SL)
+        CS%IDatv(i,J) = G%mask2dCv(i,J) * 2.0 / (max(G%bathyT(i,j+1) + Mean_SL, GV%Angstrom_Z) + max(G%bathyT(i,j) + Mean_SL, GV%Angstrom_Z))
       else ! Both neighboring H points are masked out so IDatv(i,J) is meaningless
         CS%IDatv(i,J) = 0.
       endif
     enddo ; enddo
   endif
 
+!        call uchksum(CS%IDatu, "IDatu",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
+!      call vchksum(CS%IDatv, "IDatv",CS%debug_BT_HI,haloshift=0, scale=GV%H_to_m)
   call find_face_areas(Datu, Datv, G, GV, US, CS, MS, halo=1)
   if ((CS%bound_BT_corr) .and. .not.(use_BT_Cont_type .and. CS%BT_cont_bounds)) then
     ! This is not used in most test cases.  Were it ever to become more widely used, consider

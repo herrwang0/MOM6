@@ -11,6 +11,7 @@ use MOM_file_parser,   only : get_param, log_version, param_file_type
 use MOM_grid,          only : ocean_grid_type
 use MOM_io,            only : field_exists, file_exists, MOM_read_data
 use MOM_time_manager,  only : set_date, time_type, time_type_to_real, operator(-)
+use MOM_debugging,         only : hchksum, uvchksum
 
 implicit none ; private
 
@@ -631,6 +632,7 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, CS, deta_tidal_deta, m_to
     enddo ; enddo
   endif
 
+!  call hchksum(eta_tidal, "etidal: eta_prop*eta", G%HI, haloshift=0)
   m_Z = 1.0 ; if (present(m_to_Z)) m_Z = m_to_Z
 
   do c=1,CS%nc
@@ -642,6 +644,7 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, CS, deta_tidal_deta, m_to
                                          amp_sinomegat*CS%sin_struct(i,j,m))
     enddo ; enddo
   enddo
+!  call hchksum(eta_tidal, "etidal: +eq", G%HI, haloshift=0)
 
   if (CS%tidal_sal_from_file) then ; do c=1,CS%nc
     cosomegat = cos(CS%freq(c)*now)
@@ -651,6 +654,7 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, CS, deta_tidal_deta, m_to
            (cosomegat*CS%cosphasesal(i,j,c) + sinomegat*CS%sinphasesal(i,j,c))
     enddo ; enddo
   enddo ; endif
+!  call hchksum(eta_tidal, "etidal: +sal", G%HI, haloshift=0)
 
   if (CS%USE_PREV_TIDES) then ; do c=1,CS%nc
     cosomegat = cos(CS%freq(c)*now)

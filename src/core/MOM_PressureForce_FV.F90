@@ -19,6 +19,7 @@ use MOM_density_integrals, only : int_density_dz_generic_plm, int_density_dz_gen
 use MOM_density_integrals, only : int_spec_vol_dp_generic_plm
 use MOM_density_integrals, only : int_density_dz_generic_pcm, int_spec_vol_dp_generic_pcm
 use MOM_ALE, only : TS_PLM_edge_values, TS_PPM_edge_values, ALE_CS
+use MOM_debugging,         only : hchksum, uvchksum
 
 implicit none ; private
 
@@ -62,6 +63,8 @@ type, public :: PressureForce_FV_CS ; private
                             !! the Stanley form of the Brankart correction.
   integer :: id_e_tidal = -1 !< Diagnostic identifier
   integer :: id_tvar_sgs = -1 !< Diagnostic identifier
+  integer :: id_PFu = -1 !< Diagnostic identifier
+  integer :: id_PFv = -1 !< Diagnostic identifier
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
 
@@ -424,6 +427,29 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   type(thermo_var_ptrs),                      intent(in)  :: tv  !< Thermodynamic variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(out) :: PFu !< Zonal acceleration [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(out) :: PFv !< Meridional acceleration [L T-2 ~> m s-2]
+  
+    real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: PFu1 !< Zonal acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV))  :: PFv1 !< Meridional acceleration [L T-2 ~> m s-2]
+
+    real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: PFu2 !< Zonal acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: PFv2 !< Meridional acceleration [L T-2 ~> m s-2]
+
+    real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: PFu3 !< Zonal acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)):: PFv3 !< Meridional acceleration [L T-2 ~> m s-2]
+
+    real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: PFu4 !< Zonal acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: PFv4 !< Meridional acceleration [L T-2 ~> m s-2]
+
+      real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: hu !< Zonal acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: hv !< Meridional acceleration [L T-2 ~> m s-2]
+
+    real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: dphu !< Zonal acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: dphv !< Meridional acceleration [L T-2 ~> m s-2]
+
+    real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: dhpau !< Zonal acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: dhpav !< Meridional acceleration [L T-2 ~> m s-2]
+
+
   type(PressureForce_FV_CS),                  pointer     :: CS  !< Finite volume PGF control structure
   type(ALE_CS),                               pointer     :: ALE_CSp !< ALE control structure
   real, dimension(:,:),                      optional, pointer :: p_atm !< The pressure at the ice-ocean
@@ -492,7 +518,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer :: i, j, k
-
+PFu = 0.0
+PFv = 0.0
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -742,6 +769,24 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                    (e(i+1,j,K+1) - e(i,j,K+1)) * intx_dpa(I,j) * GV%Z_to_H)) * &
                    ((2.0*I_Rho0*G%IdxCu(I,j)) / &
                    ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+      PFu1(I,j,k) = (((pa(i,j)*h(i,j,k) ) - &
+                   (pa(i+1,j)*h(i+1,j,k) ))) * &
+                   ((2.0*I_Rho0*G%IdxCu(I,j)) / &
+                   ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+      PFu2(I,j,k) = ((( intz_dpa(i,j)) - &
+                   ( intz_dpa(i+1,j)))) * &
+                   ((2.0*I_Rho0*G%IdxCu(I,j)) / &
+                   ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+      PFu3(I,j,k) = (h(i+1,j,k) - h(i,j,k)) * intx_pa(I,j) *  &
+                   ((2.0*I_Rho0*G%IdxCu(I,j)) / &
+                   ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+      PFu4(I,j,k) =  - (e(i+1,j,K+1) - e(i,j,K+1)) * intx_dpa(I,j) * GV%Z_to_H * &
+                   ((2.0*I_Rho0*G%IdxCu(I,j)) / &
+                   ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+
+      hu(I,j,k) = 1.0/((h(i,j,k) + h(i+1,j,k)) + h_neglect)
+      dphu(I,j,k) = pa(i,j)*h(i,j,k) - pa(i+1,j)*h(i+1,j,k)
+      dhpau(I,j,k) =  (h(i+1,j,k) - h(i,j,k)) * intx_pa(I,j) 
       intx_pa(I,j) = intx_pa(I,j) + intx_dpa(I,j)
     enddo ; enddo
     ! Compute pressure gradient in y direction
@@ -753,7 +798,29 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                    (e(i,j+1,K+1) - e(i,j,K+1)) * inty_dpa(i,J) * GV%Z_to_H)) * &
                    ((2.0*I_Rho0*G%IdyCv(i,J)) / &
                    ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
-      inty_pa(i,J) = inty_pa(i,J) + inty_dpa(i,J)
+
+      PFv1(i,J,k) = ((pa(i,j)*h(i,j,k) ) - &
+                   (pa(i,j+1)*h(i,j+1,k) )) * &
+                   ((2.0*I_Rho0*G%IdyCv(i,J)) / &
+                   ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+      
+      PFv2(i,J,k) = ((intz_dpa(i,j)) - &
+                   ( intz_dpa(i,j+1))) * &
+                   ((2.0*I_Rho0*G%IdyCv(i,J)) / &
+                   ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+      
+      PFv3(i,J,k) = (h(i,j+1,k) - h(i,j,k)) * inty_pa(i,J) * &
+                   ((2.0*I_Rho0*G%IdyCv(i,J)) / &
+                   ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+      
+      PFv4(i,J,k) = -(e(i,j+1,K+1) - e(i,j,K+1)) * inty_dpa(i,J) * GV%Z_to_H * &
+                   ((2.0*I_Rho0*G%IdyCv(i,J)) / &
+                   ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+      
+      hv(i,J,k) = 1.0/((h(i,j,k) + h(i,j+1,k)) + h_neglect) 
+      dphv(i,J,k) = pa(i,j)*h(i,j,k) - pa(i,j+1)*h(i,j+1,k)
+      dhpav(i,j,k) = (h(i,j+1,k) - h(i,j,k)) * inty_pa(i,J)    
+           inty_pa(i,J) = inty_pa(i,J) + inty_dpa(i,J)
     enddo ; enddo
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -796,6 +863,26 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_tidal, CS%diag)
   if (CS%id_tvar_sgs>0) call post_data(CS%id_tvar_sgs, tv%varT, CS%diag)
+  if (CS%id_PFu>0) call post_data(CS%id_PFu, PFu, CS%diag)
+  if (CS%id_PFv>0) call post_data(CS%id_PFv, PFv, CS%diag)
+
+!    call hchksum(eta, "eta",  G%HI, haloshift=0,  scale=US%L_T_to_m_s)
+  !  call hchksum(eta-1000, "eta-1000",  G%HI, haloshift=0,  scale=US%L_T_to_m_s)
+
+!  call uvchksum("PF", PFu, PFv, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!    call uvchksum("PF1", PFu1, PFv1, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!    call uvchksum("PF2", PFu2, PFv2, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!    call uvchksum("PF3", PFu3, PFv3, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!    call uvchksum("PF4", PFu4, PFv4, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!    call uvchksum("PF total", PFu1+PFu2+pfu3+pfu4, pfv1+pfv2+pfv3+pfv4, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+
+!      call uvchksum("h", hu, hv, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!  call uvchksum("dph", dphu, dphv, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!  call uvchksum("dhpa", dhpau, dhpav, G%HI, haloshift=0, symmetric=.false., scale=US%L_T_to_m_s)
+!    call hchksum(h, "h",  G%HI, haloshift=0,  scale=US%L_T_to_m_s)
+!    call hchksum(pa, "pa",  G%HI, haloshift=0,  scale=US%L_T_to_m_s)
+!    call hchksum(e, "e",  G%HI, haloshift=0,  scale=US%L_T_to_m_s)
+!    call hchksum(e_tidal, "etidal",  G%HI, haloshift=0,  scale=US%L_T_to_m_s)
 
 end subroutine PressureForce_FV_Bouss
 
@@ -875,7 +962,10 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
     CS%id_e_tidal = register_diag_field('ocean_model', 'e_tidal', diag%axesT1, &
         Time, 'Tidal Forcing Astronomical and SAL Height Anomaly', 'meter', conversion=US%Z_to_m)
   endif
-
+    CS%id_PFu = register_diag_field('ocean_model', 'pfu_org', diag%axesCuL, &
+        Time, 'pfu added', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_PFv = register_diag_field('ocean_model', 'pfv_org', diag%axesCvL, &
+        Time, 'pfv added', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%GFS_scale = 1.0
   if (GV%g_prime(1) /= GV%g_Earth) CS%GFS_scale = GV%g_prime(1) / GV%g_Earth
 

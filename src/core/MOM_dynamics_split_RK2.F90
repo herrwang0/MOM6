@@ -171,6 +171,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_hf_u_BT_accel_2d = -1, id_hf_v_BT_accel_2d = -1
   !>@}
 
+  integer :: id_pfuorg = -1, id_pfvorg = -1
   type(diag_ctrl), pointer       :: diag !< A structure that is used to regulate the
                                          !! timing of diagnostic output.
   type(accel_diag_ptrs), pointer :: ADp  !< A structure pointing to the various
@@ -425,11 +426,16 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
 
 ! PFu = d/dx M(h,T,S)
 ! pbce = dM/deta
-  if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
+              ! call uvchksum("Before Pressureforce PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
+
+               if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
   call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
                      CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
-  if (dyn_p_surf) then
+
+              ! call uvchksum("after Pressureforce PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
+
+             if (dyn_p_surf) then
     pres_to_eta = 1.0 / (GV%g_Earth * GV%H_to_RZ)
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -440,14 +446,18 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   call disable_averaging(CS%diag)
   if (showCallTree) call callTree_wayPoint("done with PressureForce (step_MOM_dyn_split_RK2)")
 
+              !   call uvchksum("after Pressureforce 2 PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
+
   if (associated(CS%OBC)) then ; if (CS%OBC%update_OBC) then
     call update_OBC_data(CS%OBC, G, GV, US, tv, h, CS%update_OBC_CSp, Time_local)
   endif ; endif
   if (associated(CS%OBC) .and. CS%debug_OBC) &
     call open_boundary_zero_normal_flow(CS%OBC, G, GV, CS%PFu, CS%PFv)
+              ! call uvchksum("after OBC PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
 
   if (G%nonblocking_updates) &
     call start_group_pass(CS%pass_eta, G%Domain, clock=id_clock_pass)
+             !  call uvchksum("after group pass PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
 
 ! CAu = -(f+zeta_av)/h_av vh + d/dx KE_av
   call cpu_clock_begin(id_clock_Cor)
@@ -455,6 +465,8 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
                  G, Gv, US, CS%CoriolisAdv_CSp)
   call cpu_clock_end(id_clock_Cor)
   if (showCallTree) call callTree_wayPoint("done with CorAdCalc (step_MOM_dyn_split_RK2)")
+
+              !   call uvchksum("after CorAd PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
 
 ! u_bc_accel = CAu + PFu + diffu(u[n-1])
   call cpu_clock_begin(id_clock_btforce)
@@ -467,11 +479,15 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
       v_bc_accel(i,J,k) = (CS%CAv(i,J,k) + CS%PFv(i,J,k)) + CS%diffv(i,J,k)
     enddo ; enddo
   enddo
+
+              !   call uvchksum("after accel PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
+
   if (associated(CS%OBC)) then
     call open_boundary_zero_normal_flow(CS%OBC, G, GV, u_bc_accel, v_bc_accel)
   endif
   call cpu_clock_end(id_clock_btforce)
 
+!  call uvchksum("pre pre-btstep PF[uv]",CS%PFu,CS%PFv, G%HI, haloshift=0, symmetric=sym, scale=US%L_T2_to_m_s2)
   if (CS%debug) then
     call MOM_accel_chksum("pre-btstep accel", CS%CAu, CS%CAv, CS%PFu, CS%PFv, &
                           CS%diffu, CS%diffv, G, GV, US, CS%pbce, u_bc_accel, v_bc_accel, &
@@ -740,6 +756,9 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
     call check_redundant("corr pre-btstep u_bc_accel ", u_bc_accel, v_bc_accel, G)
   endif
 
+    if (CS%id_pfuorg > 0) call post_data(CS%id_pfuorg, CS%PFu, CS%diag)
+    if (CS%id_pfvorg > 0) call post_data(CS%id_pfvorg, CS%PFv, CS%diag)
+
   ! u_accel_bt = layer accelerations due to barotropic solver
   ! pbce = dM/deta
   call cpu_clock_begin(id_clock_btstep)
@@ -866,7 +885,11 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
 
   !  Here various terms used in to update the momentum equations are
   !  offered for time averaging.
-  if (CS%id_PFu > 0) call post_data(CS%id_PFu, CS%PFu, CS%diag)
+
+!    call MOM_accel_chksum("BEFORE POST", CS%CAu, CS%CAv, CS%PFu, CS%PFv, &
+!                          CS%diffu, CS%diffv, G, GV, US, CS%pbce, u_bc_accel, v_bc_accel, &
+!                          symmetric=sym)
+                  if (CS%id_PFu > 0) call post_data(CS%id_PFu, CS%PFu, CS%diag)
   if (CS%id_PFv > 0) call post_data(CS%id_PFv, CS%PFv, CS%diag)
   if (CS%id_CAu > 0) call post_data(CS%id_CAu, CS%CAu, CS%diag)
   if (CS%id_CAv > 0) call post_data(CS%id_CAv, CS%CAv, CS%diag)
@@ -1357,6 +1380,11 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
       'Zonal Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_PFv = register_diag_field('ocean_model', 'PFv', diag%axesCvL, Time, &
       'Meridional Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+
+  CS%id_PFuorg = register_diag_field('ocean_model', 'PFuorg_1', diag%axesCuL, Time, &
+      'Zonal Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_PFvorg = register_diag_field('ocean_model', 'PFvorg_1', diag%axesCvL, Time, &
+      'Zonal Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
 
   !CS%id_hf_PFu = register_diag_field('ocean_model', 'hf_PFu', diag%axesCuL, Time, &
   !    'Fractional Thickness-weighted Zonal Pressure Force Acceleration', 'm s-2', &
