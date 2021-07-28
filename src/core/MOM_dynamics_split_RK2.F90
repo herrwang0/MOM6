@@ -348,6 +348,9 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
 
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   integer :: cont_stencil
+
+  integer :: ig, jg
+  character(len=240) :: msg
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
   u_av => CS%u_av ; v_av => CS%v_av ; h_av => CS%h_av ; eta => CS%eta
@@ -563,7 +566,42 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   call cpu_clock_begin(id_clock_btstep)
   if (calc_dtbt) call set_dtbt(G, GV, US, CS%barotropic_CSp, eta, CS%pbce)
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
-  ! This is the predictor step call to btstep.
+      do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+            'before btstep: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+            'h=',h(i,j,1), &
+           'D=',G%bathyT(i,j),  'h=',h(i,j,1), &
+           'eta=', eta(i,j)
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
+do j=js,je ; do i=is,ie
+    ig = i + G%HI%idg_offset ! Global i-index
+    jg = j + G%HI%jdg_offset ! Global j-index
+    if (ig == 3647 .and. jg == 5649) then
+      write(msg(1:240),'(a, 2(a,i2), 4(a,es11.4))') &
+      'Pre pred btstep:  ' , &
+      '    i=',ig,'j=',jg, &
+      ' CS%PFu_W=', CS%PFu(i-1,j,1), ' CS%PFu_E=', CS%PFu(i,j,1), &
+      ' CS%PFv_S=', CS%PFv(i,j-1,1), ' CS%PFv_N=', CS%PFv(i,j,1)
+       call MOM_error(WARNING, trim(msg), all_print=.true.)
+       write(msg(1:240),'( 4(a,es11.4))') &
+       ' CS%CAu_W=', CS%CAu(i-1,j,1), ' CS%CAu_E=', CS%CAu(i,j,1), &
+       ' CS%CAv_S=', CS%CAv(i,j-1,1), ' CS%CAv_N=', CS%CAv(i,j,1)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        write(msg(1:240),'( 4(a,es11.4))') &
+        ' CS%DFu_W=', CS%diffu(i-1,j,1), ' CS%DFu_E=', CS%diffu(i,j,1), &
+        ' CS%DFv_S=', CS%diffv(i,j-1,1), ' CS%DFv_N=', CS%diffv(i,j,1)
+         call MOM_error(WARNING, trim(msg), all_print=.true.)
+    endif
+enddo; enddo
+! This is the predictor step call to btstep.
   call btstep(u, v, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, CS%eta_PF, &
               u_av, v_av, CS%u_accel_bt, CS%v_accel_bt, eta_pred, CS%uhbt, CS%vhbt, &
               G, GV, US, CS%barotropic_CSp, CS%visc_rem_u, CS%visc_rem_v, ADp=CS%ADp, &
@@ -765,7 +803,26 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   if (CS%BT_use_layer_fluxes) then
     uh_ptr => uh ; vh_ptr => vh ; u_ptr => u_av ; v_ptr => v_av
   endif
-
+do j=js,je ; do i=is,ie
+    ig = i + G%HI%idg_offset ! Global i-index
+    jg = j + G%HI%jdg_offset ! Global j-index
+    if (ig == 3647 .and. jg == 5649) then
+      write(msg(1:240),'(a, 2(a,i2), 4(a,es11.4))') &
+      'Pre corr btstep:  ' , &
+      '    i=',ig,'j=',jg, &
+      ' CS%PFu_W=', CS%PFu(i-1,j,1), ' CS%PFu_E=', CS%PFu(i,j,1), &
+      ' CS%PFv_S=', CS%PFv(i,j-1,1), ' CS%PFv_N=', CS%PFv(i,j,1)
+       call MOM_error(WARNING, trim(msg), all_print=.true.)
+       write(msg(1:240),'( 4(a,es11.4))') &
+       ' CS%CAu_W=', CS%CAu(i-1,j,1), ' CS%CAu_E=', CS%CAu(i,j,1), &
+       ' CS%CAv_S=', CS%CAv(i,j-1,1), ' CS%CAv_N=', CS%CAv(i,j,1)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        write(msg(1:240),'( 4(a,es11.4))') &
+        ' CS%DFu_W=', CS%diffu(i-1,j,1), ' CS%DFu_E=', CS%diffu(i,j,1), &
+        ' CS%DFv_S=', CS%diffv(i,j-1,1), ' CS%DFv_N=', CS%diffv(i,j,1)
+         call MOM_error(WARNING, trim(msg), all_print=.true.)
+    endif
+enddo; enddo
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
   ! This is the corrector step call to btstep.
   call btstep(u, v, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, &

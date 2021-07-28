@@ -458,7 +458,8 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
 
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, n
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
-
+integer ::ig,jg
+character(len=240) :: msg
   real :: time_interval   ! time interval covered by this run segment [T ~> s].
   real :: dt              ! baroclinic time step [T ~> s]
   real :: dtdia           ! time step for diabatic processes [T ~> s]
@@ -773,11 +774,39 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
                           (1.0-wt_beg) * CS%p_surf_prev(i,j)
         enddo ; enddo
       endif
-
+     do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+            'before step_MOM_dynamics: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+            'eta_av_bc=',CS%eta_av_bc(i,j), 'h=',h(i,j,1), &
+           'D=',CS%US%Z_to_m*G%bathyT(i,j),  'cs%h=',CS%h(i,j,1), &
+           'ave_ssh_ibc=', cS%ave_ssh_ibc(i,j), 'ssh_rint=', CS%ssh_rint(i,j), 'ssh=', ssh(i,j)
+ !       call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
       call step_MOM_dynamics(forces, CS%p_surf_begin, CS%p_surf_end, dt, &
                              dt_therm_here, bbl_time_int, CS, &
                              Time_local, Waves=Waves)
-
+     do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+            'after step_MOM_dynamics: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+            'eta_av_bc=',CS%eta_av_bc(i,j), 'h=',h(i,j,1), &
+           'D=',CS%US%Z_to_m*G%bathyT(i,j),  'cs%h=',CS%h(i,j,1), &
+           'ave_ssh_ibc=', cS%ave_ssh_ibc(i,j), 'ssh_rint=', CS%ssh_rint(i,j), 'ssh=', ssh(i,j)
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
       !===========================================================================
       ! This is the start of the tracer advection part of the algorithm.
 
@@ -840,7 +869,25 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       ! This may be eta_av if Boussinesq, or need to be diagnosed if not.
       CS%time_in_cycle = CS%time_in_cycle + dt
       call find_eta(h, CS%tv, G, GV, US, ssh, CS%eta_av_bc, eta_to_m=1.0)
-      do j=js,je ; do i=is,ie
+     do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),2(a,f8.3,x),7(a,es11.4))') &
+            'accum ssh: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+            ' eta_av_bc=',CS%eta_av_bc(i,j), ' h=',h(i,j,1), &
+           ' D=',CS%US%Z_to_m*G%bathyT(i,j),  ' cs%h=',CS%h(i,j,1), &
+           ' ave_ssh_ibc=', cS%ave_ssh_ibc(i,j), ' ssh_rint=', CS%ssh_rint(i,j), ' ssh=', ssh(i,j)
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
+
+
+
+do j=js,je ; do i=is,ie
         CS%ssh_rint(i,j) = CS%ssh_rint(i,j) + dt*ssh(i,j)
       enddo ; enddo
       if (CS%IDs%id_ssh_inst > 0) call post_data(CS%IDs%id_ssh_inst, ssh, CS%diag)
@@ -876,12 +923,43 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
 
   call cpu_clock_begin(id_clock_other)
 
+  do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+            'After the loop:: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+            'x=',G%gridLonT(i), 'y=',G%gridLatT(j), &
+           ' D=',CS%US%Z_to_m*G%bathyT(i,j),  ' h=',CS%h(i,j,1), &
+           ' ave_ssh_ibc=', cS%ave_ssh_ibc(i,j), ' ssh_rint=', CS%ssh_rint(i,j), ' iwtssh=', I_wt_ssh
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+  enddo
+
+
   if (CS%time_in_cycle > 0.0) then
     I_wt_ssh = 1.0/CS%time_in_cycle
     do j=js,je ; do i=is,ie
       ssh(i,j) = CS%ssh_rint(i,j)*I_wt_ssh
       CS%ave_ssh_ibc(i,j) = ssh(i,j)
     enddo ; enddo
+    do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),2(a,f8.3,x),6(a,es11.4))') &
+            'ave_ssh_ibc update: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+           ' D=',CS%US%Z_to_m*G%bathyT(i,j),  ' h=',CS%h(i,j,1), &
+           ' ave_ssh_ibc=', cS%ave_ssh_ibc(i,j), ' ssh_rint=', CS%ssh_rint(i,j), ' iwtssh=', I_wt_ssh
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
     if (do_dyn) then
       call adjust_ssh_for_p_atm(CS%tv, G, GV, US, CS%ave_ssh_ibc, forces%p_surf_SSH, &
                                 CS%calc_rho_for_sea_lev)
@@ -891,6 +969,20 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
     endif
   endif
 
+    do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),2(a,f8.3,x),6(a,es11.4))') &
+            'ave_ssh_ibc update atm: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+           ' D=',CS%US%Z_to_m*G%bathyT(i,j),  ' h=',CS%h(i,j,1), &
+           ' ave_ssh_ibc=', cS%ave_ssh_ibc(i,j), ' ssh_rint=', CS%ssh_rint(i,j), ' iwtssh=', I_wt_ssh
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
   if (do_dyn .and. CS%interp_p_surf) then ; do j=jsd,jed ; do i=isd,ied
     CS%p_surf_prev(i,j) = forces%p_surf(i,j)
   enddo ; enddo ; endif
@@ -903,6 +995,24 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
     ! update the time for the next analysis step if needed
     call set_analysis_time(CS%Time,CS%odaCS)
   endif
+
+  do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+!          write(msg(1:240),'(a)') &
+!            'Extreme surface sfc_state detected:'
+             write(msg(1:240),'(2(a,i4,x),2(a,f8.3,x),6(a,es11.4))') &
+            'Point found: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+           'D=',CS%US%Z_to_m*G%bathyT(i,j),  'h=',CS%h(i,j,1), &
+           'ave_ssh_ibc=', cS%ave_ssh_ibc(i,j), 'U+=',CS%h(i,j,1), &
+           'V-=',CS%h(i,j,1), 'V+=',CS%h(i,j,1)
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
 
   if (showCallTree) call callTree_waypoint("calling extract_surface_state (step_MOM)")
   ! NOTE: sfc_state uses input indexing, since it is also used by drivers.
@@ -998,7 +1108,8 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
-
+integer :: ig, jg
+character(len=240)::msg
   G => CS%G ; GV => CS%GV ; US => CS%US ; IDs => CS%IDs
   is   = G%isc  ; ie   = G%iec  ; js   = G%jsc  ; je   = G%jec ; nz = GV%ke
   Isq  = G%IscB ; Ieq  = G%IecB ; Jsq  = G%JscB ; Jeq  = G%JecB
@@ -1053,6 +1164,22 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
         CS%dtbt_reset_time = CS%dtbt_reset_time + CS%dtbt_reset_interval
       endif
     endif
+
+         do j = js, je
+    do i = is, ie
+        ig = i + G%HI%idg_offset ! Global i-index
+        jg = j + G%HI%jdg_offset ! Global j-index
+        if (ig == 3758 .and. jg == 5559) then
+             write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+            'before split: i=',ig,'j=',jg, &
+            'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
+            'eta_av_bc=',CS%eta_av_bc(i,j), 'h=',h(i,j,1), &
+           'D=',CS%US%Z_to_m*G%bathyT(i,j),  'cs%h=',CS%h(i,j,1), &
+           'ave_ssh_ibc=', cS%ave_ssh_ibc(i,j)
+!        call MOM_error(WARNING, trim(msg), all_print=.true.)
+        endif
+    enddo
+enddo
 
     call step_MOM_dyn_split_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                 p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
@@ -3419,13 +3546,14 @@ subroutine extract_surface_state(CS, sfc_state_in)
                 'U-=',US%L_T_to_m_s*sfc_state%u(I-1,j), 'U+=',US%L_T_to_m_s*sfc_state%u(I,j), &
                 'V-=',US%L_T_to_m_s*sfc_state%v(i,J-1), 'V+=',US%L_T_to_m_s*sfc_state%v(i,J)
             else
-              write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),6(a,es11.4))') &
+              write(msg(1:240),'(2(a,i4,x),4(a,f8.3,x),7(a,es11.4))') &
                 'Extreme surface sfc_state detected: i=',ig,'j=',jg, &
                 'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
                 'x=',G%gridLonT(i), 'y=',G%gridLatT(j), &
                 'D=',CS%US%Z_to_m*G%bathyT(i,j),  'SSH=',CS%US%Z_to_m*sfc_state%sea_lev(i,j), &
                 'U-=',US%L_T_to_m_s*sfc_state%u(I-1,j), 'U+=',US%L_T_to_m_s*sfc_state%u(I,j), &
-                'V-=',US%L_T_to_m_s*sfc_state%v(i,J-1), 'V+=',US%L_T_to_m_s*sfc_state%v(i,J)
+                'V-=',US%L_T_to_m_s*sfc_state%v(i,J-1), 'V+=',US%L_T_to_m_s*sfc_state%v(i,J),&
+                'h = ', CS%h(I,J,1)
             endif
             call MOM_error(WARNING, trim(msg), all_print=.true.)
           elseif (numberOfErrors==9) then ! Indicate once that there are more errors

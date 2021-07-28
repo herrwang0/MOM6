@@ -303,6 +303,8 @@ type, public :: barotropic_CS ; private
   integer :: id_ubt = -1, id_vbt = -1, id_eta_bt = -1, id_ubtav = -1, id_vbtav = -1
   integer :: id_ubt_st = -1, id_vbt_st = -1, id_eta_st = -1
   integer :: id_ubtdt = -1, id_vbtdt = -1
+ integer :: id_pfubt_hifreq = -1, id_pfvbt_hifreq = -1
+ integer :: id_corubt_hifreq = -1, id_corvbt_hifreq = -1
   integer :: id_ubt_hifreq = -1, id_vbt_hifreq = -1, id_eta_hifreq = -1
   integer :: id_uhbt_hifreq = -1, id_vhbt_hifreq = -1, id_eta_pred_hifreq = -1
   integer :: id_gtotn = -1, id_gtots = -1, id_gtote = -1, id_gtotw = -1
@@ -693,7 +695,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: l_seg
 
   integer :: ig, jg
-character(300):: msg
+character(len=240):: msg
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
@@ -794,6 +796,8 @@ character(300):: msg
   do_hifreq_output = .false.
   if ((CS%id_ubt_hifreq > 0) .or. (CS%id_vbt_hifreq > 0) .or. &
       (CS%id_eta_hifreq > 0) .or. (CS%id_eta_pred_hifreq > 0) .or. &
+      (CS%id_pfubt_hifreq > 0) .or. (CS%id_pfvbt_hifreq > 0) .or. &
+      (CS%id_corubt_hifreq > 0) .or. (CS%id_corvbt_hifreq > 0) .or. &
       (CS%id_uhbt_hifreq > 0) .or. (CS%id_vhbt_hifreq > 0)) then
     do_hifreq_output = query_averaging_enabled(CS%diag, time_int_in, time_end_in)
     if (do_hifreq_output) &
@@ -2400,10 +2404,14 @@ character(300):: msg
     !$OMP end parallel
 
     if (do_hifreq_output) then
-      time_step_end = time_bt_start + real_to_time(n*US%T_to_s*dtbt)
+      time_step_end = time_bt_start + real_to_time(n*US%T_to_s*dt/(nstep+nfilter))
       call enable_averaging(US%T_to_s*dtbt, time_step_end, CS%diag)
       if (CS%id_ubt_hifreq > 0) call post_data(CS%id_ubt_hifreq, ubt(IsdB:IedB,jsd:jed), CS%diag)
       if (CS%id_vbt_hifreq > 0) call post_data(CS%id_vbt_hifreq, vbt(isd:ied,JsdB:JedB), CS%diag)
+    if (CS%id_pfubt_hifreq > 0) call post_data(CS%id_pfubt_hifreq, PFu(IsdB:IedB,jsd:jed), CS%diag)
+    if (CS%id_pfvbt_hifreq > 0) call post_data(CS%id_pfvbt_hifreq, PFv(isd:ied,JsdB:JedB), CS%diag)
+    if (CS%id_corubt_hifreq > 0) call post_data(CS%id_corubt_hifreq, Cor_u(IsdB:IedB,jsd:jed), CS%diag)
+    if (CS%id_corvbt_hifreq > 0) call post_data(CS%id_corvbt_hifreq, Cor_v(isd:ied,JsdB:JedB), CS%diag)
       if (CS%id_eta_hifreq > 0) call post_data(CS%id_eta_hifreq, eta(isd:ied,jsd:jed), CS%diag)
       if (CS%id_uhbt_hifreq > 0) call post_data(CS%id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
       if (CS%id_vhbt_hifreq > 0) call post_data(CS%id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
@@ -2419,8 +2427,87 @@ character(300):: msg
 
     if (GV%Boussinesq) then
       do j=js,je ; do i=is,ie
-        if (eta(i,j) < -GV%Z_to_H*G%bathyT(i,j)) &
-          call MOM_error(WARNING, "btstep: eta has dropped below bathyT.")
+        if (eta(i,j) < -GV%Z_to_H*G%bathyT(i,j))then 
+          call MOM_error(WARNING, "btstep: eta has dropped below bathyT.", all_print=.true.)
+
+          ig = i + G%HI%idg_offset ! Global i-index
+          jg = j + G%HI%jdg_offset ! Global j-index
+          write(msg(1:240),'(a, i2, 2(a,i4,x), 5(a,es11.4))') &
+            '  btstep:  ' , n, &
+            '    i=',ig,'j=',jg, &
+            ' eta=', eta(i,j), &
+            ' eta_src=', eta_src(i,j), ' div=', (dtbt * CS%IareaT(i,j)) * &
+              ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J))), &
+            ' div_x=', (dtbt * CS%IareaT(i,j)) * (uhbt(I-1,j) - uhbt(I,j)), &
+            ' div_y=', (dtbt * CS%IareaT(i,j)) * (vhbt(i,J-1) - vhbt(i,J))
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(7(a,es11.4))') &
+            '    uh_E=', uhbt(I,j), ' uh_W=', uhbt(I-1,j), &
+            ' vh_N=', vhbt(i,J), ' vh_S=', vhbt(i,J-1), &
+            ' IareaT=', CS%IareaT(i,j), ' areaT=', G%areaT(i,j), ' dtbt=', dtbt
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(4(a,es11.4))') &
+            '    uh_E (find_uhbt)=', find_uhbt(ubt_trans(I,j), BTCL_u(I,j)), &
+            ' uh_W (find_uhbt)=', find_uhbt(ubt_trans(I-1,j), BTCL_u(I-1,j)), &
+            ' vh_N (find_vhbt)=', find_vhbt(vbt_trans(i,J), BTCL_v(i,J)), &
+            ' vh_S (find_vhbt)=', find_vhbt(vbt_trans(i,J-1), BTCL_v(i,J-1))
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(4(a,es11.4))') &
+            '    uh_E (uhbt0)    =', uhbt0(I,j), ' uh_W (uhbt0)    =', uhbt0(I-1,j), &
+            ' vh_N (vhbt0)    =', vhbt0(i,J), ' vh_S (vhbt0)    =', vhbt0(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(4(a,es11.4))') &
+            '    ubt_trans_E=', ubt_trans(I,j), &
+            ' ubt_trans_W=', ubt_trans(I-1,j), &
+            ' vbt_trans_N=', vbt_trans(i,J), &
+            ' vbt_trans_S=', vbt_trans(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+   !       write(msg(1:240),'(4(a,es11.4))') &
+   !         '    BTCL_u=', BTCL_u(I,j), &
+   !         ' BTCL_u=', BTCL_u(I-1,j), &
+   !         ' BTCL_v=', BTCL_v(i,J), &
+   !         ' BTCL_v=', BTCL_v(i,J-1)
+   !       call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    uh0_E=', uh0(I,j,1), ' ub0_W=', uh0(I-1,j,1), &
+            ' vh0_N=', vh0(i,J,1), ' vh0_S=', vh0(i,J-1,1), &
+            ' u_uh0_E=', u_uh0(I,j,1), ' u_uh0_W=', u_uh0(I-1,j,1), &
+            ' v_vh0_N=', v_vh0(i,J,1), ' v_vh0_S=', v_vh0(i,J-1,1), &
+            ' frhatu_E=', CS%frhatu(I,j,1), ' frhatu_W=', CS%frhatu(I-1,j,1), &
+            ' frhatv_N=', CS%frhatv(i,J,1), ' frhatv_S=', CS%frhatv(i,J-1,1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    ubt_E=', ubt(I,j),' ubt_W=', ubt(I-1,j), &
+            ' vbt_N=', vbt(i,J), ' vbt_S=', vbt(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    bt_rem_u_E=', bt_rem_u(i,J), ' bt_rem_u_W=', bt_rem_u(I-1,j), &
+            ' bt_rem_v_N=', bt_rem_v(i,J), ' bt_rem_v_S=', bt_rem_v(I,j-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    BT_force_u_E=', dtbt * BT_force_u(i,J), ' BT_force_u_W=', dtbt * BT_force_u(i-1,J), &
+            ' BT_force_v_N=', dtbt * BT_force_v(i,J), ' BT_force_v_S=', dtbt * BT_force_v(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    Cor_u_E =', dtbt *  Cor_u(i,J), ' Cor_u_W =', dtbt *  Cor_u(i-1,J), &
+            ' Cor_v_N =', dtbt *  Cor_v(i,J), ' Cor_v_S =', dtbt *  Cor_v(i,J-1) 
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    PFu_E=', dtbt *  PFu(i,J), ' PFu_W=', dtbt *  PFu(i-1,J), &
+            ' PFv_N=',  dtbt *  PFv(i,J), ' PFv_S=', dtbt *  PFv(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
       enddo ; enddo
     else
       do j=js,je ; do i=is,ie
@@ -2428,7 +2515,49 @@ character(300):: msg
           call MOM_error(WARNING, "btstep: negative eta in a non-Boussinesq barotropic solver.")
       enddo ; enddo
     endif
+  do j = js, je; do i = is, ie
+    ig = i + G%HI%idg_offset ! Global i-index
+    jg = j + G%HI%jdg_offset ! Global j-index
+    if (ig == 3647 .and. jg == 5649) then
+      write(msg(1:240),'(a, i2, a, f8.3,  3(a,es11.4))') &
+        ' btstep:  ' , n, ' wvel=',  wt_vel(n), & 
+        ' eta=', eta(i,j), &
+        ' eta_pred=', eta_pred(i,j), ' D=', -GV%Z_to_H*G%bathyT(i,j)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
 
+        if (n == 1) then
+        write(msg(1:240),'(18(a,es11.4))') &        
+            '    ubtst_E=', ubt_st(I,j),' ubtst_W=', ubt_st(I-1,j), &       
+            ' vbtst_N=', vbt_st(i,J), ' vbtst_S=', vbt_st(i,J-1)          
+          call MOM_error(WARNING, trim(msg), all_print=.true.)          
+        endif
+
+        write(msg(1:240),'(18(a,es11.4))') &
+            '    ubt_E=', ubt(I,j),' ubt_W=', ubt(I-1,j), &
+            ' vbt_N=', vbt(i,J), ' vbt_S=', vbt(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    bt_rem_u_E=', bt_rem_u(i,J), ' bt_rem_u_W=', bt_rem_u(I-1,j), &
+            ' bt_rem_v_N=', bt_rem_v(i,J), ' bt_rem_v_S=', bt_rem_v(I,j-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    BT_force_u_E=', dtbt * BT_force_u(i,J), ' BT_force_u_W=', dtbt * BT_force_u(i-1,J), &
+            ' BT_force_v_N=', dtbt * BT_force_v(i,J), ' BT_force_v_S=', dtbt * BT_force_v(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    Cor_u_E =', dtbt *  Cor_u(i,J), ' Cor_u_W =', dtbt *  Cor_u(i-1,J), &
+            ' Cor_v_N =', dtbt *  Cor_v(i,J), ' Cor_v_S =', dtbt *  Cor_v(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+
+          write(msg(1:240),'(18(a,es11.4))') &
+            '    PFu_E=', dtbt *  PFu(i,J), ' PFu_W=', dtbt *  PFu(i-1,J), &
+            ' PFv_N=',  dtbt *  PFv(i,J), ' PFv_S=', dtbt *  PFv(i,J-1)
+          call MOM_error(WARNING, trim(msg), all_print=.true.)
+    endif
+  enddo; enddo
   enddo ! end of do n=1,ntimestep
   if (id_clock_calc > 0) call cpu_clock_end(id_clock_calc)
   if (id_clock_calc_post > 0) call cpu_clock_begin(id_clock_calc_post)
@@ -2742,6 +2871,27 @@ character(300):: msg
     if (find_etaav) call complete_group_pass(CS%pass_etaav, G%Domain)
     call complete_group_pass(CS%pass_ubta_uhbta, G%Domain)
   endif
+  do j = js, je; do i = is, ie
+    ig = i + G%HI%idg_offset ! Global i-index
+    jg = j + G%HI%jdg_offset ! Global j-index
+    if (ig == 3758 .and. jg == 5559) then
+!        write(msg(1:240),'(2(a,i4,x))') &
+!          'Extreme point detected: i=',ig,'j=',jg
+            if (.not. find_etaav) then
+      write(msg(1:240),'(a, 4(a,es11.4))') &
+        ' End of btstep:  ' ,&
+        ' eta_out=', eta_out(i,j), &
+        ' eta_wtd=', eta_wtd(i,j)
+else
+             write(msg(1:240),'(a, 4(a,es11.4))') &
+        ' End of btstep:  ' ,&
+        ' eta_out=', eta_out(i,j), ' eta_wtd=', eta_wtd(i,j), &
+        ' eta_av=', etaav(i,j), ' eta_sum=', eta_sum(i,j)
+endif
+
+call MOM_error(WARNING, trim(msg), all_print=.true.)
+    endif
+  enddo; enddo
 
 end subroutine btstep
 
@@ -4226,19 +4376,25 @@ subroutine find_face_areas(Datu, Datv, G, GV, US, CS, MS, eta, halo, add_max)
     do j=js-hs,je+hs ; do I=is-1-hs,ie+hs
       Datu(I, j) = 0.0
       !Would be "if (G%mask2dCu(I,j)>0.) &" is G was valid on BT domain
-      if (CS%bathyT(i+1,j)+CS%bathyT(i,j)>0.) &
+!      if (CS%bathyT(i+1,j)+CS%bathyT(i,j)>0.) &
+      if (G%mask2dCu(I,j)>0.) then
+          H1 = max(CS%bathyT(i+1,j)+G%Z_ref, GV%Angstrom_H)
+          H2 = max(CS%bathyT(i,j)+G%Z_ref, GV%Angstrom_H)
         Datu(I,j) = 2.0*CS%dy_Cu(I,j) * GV%Z_to_H * &
-                  ((CS%bathyT(i+1,j)+G%Z_ref) * (CS%bathyT(i,j)+G%Z_ref)) / &
-                  ((CS%bathyT(i+1,j)+G%Z_ref) + (CS%bathyT(i,j)+G%Z_ref))
+                  (H1*H2)/(H1+H2)
+  endif
     enddo ; enddo
 !$OMP do
     do J=js-1-hs,je+hs ; do i=is-hs,ie+hs
       Datv(i, J) = 0.0
       !Would be "if (G%mask2dCv(i,J)>0.) &" is G was valid on BT domain
-      if (CS%bathyT(i,j+1)+CS%bathyT(i,j)>0.) &
+!      if (CS%bathyT(i,j+1)+CS%bathyT(i,j)>0.) &
+      if (G%mask2dCv(i,J)>0.) then
+          H1 = max(CS%bathyT(i,j+1)+G%Z_ref, GV%Angstrom_H)
+          H2 = max(CS%bathyT(i,j)+G%Z_ref, GV%Angstrom_H)
         Datv(i,J) = 2.0*CS%dx_Cv(i,J) * GV%Z_to_H * &
-                  ((CS%bathyT(i,j+1)+G%Z_ref) * (CS%bathyT(i,j)+G%Z_ref)) / &
-                  ((CS%bathyT(i,j+1)+G%Z_ref) + (CS%bathyT(i,j)+G%Z_ref))
+                  (H1*H2)/(H1+H2)
+  endif
     enddo ; enddo
   endif
 !$OMP end parallel
@@ -4879,6 +5035,14 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
       'gtot to West', 'm s-2', conversion=GV%m_to_H*(US%L_T_to_m_s**2))
   CS%id_eta_hifreq = register_diag_field('ocean_model', 'eta_hifreq', diag%axesT1, Time, &
       'High Frequency Barotropic SSH', thickness_units, conversion=GV%H_to_m)
+ CS%id_pfubt_hifreq = register_diag_field('ocean_model', 'pfubt_hifreq', diag%axesCu1, Time, &
+      'High Frequency Barotropic zonal velocity', 'm s-1', conversion=US%L_T_to_m_s)
+ CS%id_pfvbt_hifreq = register_diag_field('ocean_model', 'pfvbt_hifreq', diag%axesCv1, Time, &
+      'High Frequency Barotropic meridional velocity', 'm s-1', conversion=US%L_T_to_m_s)
+ CS%id_corubt_hifreq = register_diag_field('ocean_model', 'corubt_hifreq', diag%axesCu1, Time, &
+      'High Frequency Barotropic zonal velocity', 'm s-1', conversion=US%L_T_to_m_s)
+ CS%id_corvbt_hifreq = register_diag_field('ocean_model', 'corvbt_hifreq', diag%axesCv1, Time, &
+      'High Frequency Barotropic meridional velocity', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_ubt_hifreq = register_diag_field('ocean_model', 'ubt_hifreq', diag%axesCu1, Time, &
       'High Frequency Barotropic zonal velocity', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_vbt_hifreq = register_diag_field('ocean_model', 'vbt_hifreq', diag%axesCv1, Time, &
