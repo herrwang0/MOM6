@@ -181,6 +181,10 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_h_u_BT_accel    = -1, id_h_v_BT_accel    = -1
   integer :: id_hf_u_BT_accel_2d = -1, id_hf_v_BT_accel_2d = -1
   integer :: id_intz_u_BT_accel_2d = -1, id_intz_v_BT_accel_2d = -1
+
+  integer :: id_pred_CAu = -1, id_pred_CAv = -1
+  integer :: id_pred_PFu = -1, id_pred_PFv = -1
+  integer :: id_pred_DFu = -1, id_pred_DFv = -1
   !>@}
 
   type(diag_ctrl), pointer       :: diag !< A structure that is used to regulate the
@@ -672,6 +676,15 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
     h_av(i,j,k) = 0.5*(h(i,j,k) + hp(i,j,k))
   enddo ; enddo ; enddo
+
+  call enable_averages(dt, Time_local, CS%diag)
+  if (CS%id_pred_PFu > 0) call post_data(CS%id_pred_PFu, CS%PFu, CS%diag)
+  if (CS%id_pred_PFv > 0) call post_data(CS%id_pred_PFv, CS%PFv, CS%diag)
+  if (CS%id_pred_CAu > 0) call post_data(CS%id_pred_CAu, CS%CAu, CS%diag)
+  if (CS%id_pred_CAv > 0) call post_data(CS%id_pred_CAv, CS%CAv, CS%diag)
+  if (CS%id_pred_DFu > 0) call post_data(CS%id_pred_DFu, CS%Diffu, CS%diag)
+  if (CS%id_pred_DFv > 0) call post_data(CS%id_pred_DFv, CS%Diffv, CS%diag)
+  call disable_averaging(CS%diag)
 
   ! The correction phase of the time step starts here.
   call enable_averages(dt, Time_local, CS%diag)
@@ -1481,6 +1494,19 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
       'Zonal Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_PFv = register_diag_field('ocean_model', 'PFv', diag%axesCvL, Time, &
       'Meridional Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+
+  CS%id_pred_CAu = register_diag_field('ocean_model', 'CAu_pred', diag%axesCuL, Time, &
+      'Zonal Coriolis and Advective Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_pred_CAv = register_diag_field('ocean_model', 'CAv_pred', diag%axesCvL, Time, &
+      'Meridional Coriolis and Advective Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_pred_PFu = register_diag_field('ocean_model', 'PFu_pred', diag%axesCuL, Time, &
+      'Zonal Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_pred_PFv = register_diag_field('ocean_model', 'PFv_pred', diag%axesCvL, Time, &
+      'Meridional Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_pred_DFu = register_diag_field('ocean_model', 'diffu_pred', diag%axesCuL, Time, &
+      'Zonal Acceleration from Horizontal Viscosity (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_pred_DFv = register_diag_field('ocean_model', 'diffv_pred', diag%axesCvL, Time, &
+      'Meridional Acceleration from Horizontal Viscosity (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
 
   !CS%id_hf_PFu = register_diag_field('ocean_model', 'hf_PFu', diag%axesCuL, Time, &
   !    'Fractional Thickness-weighted Zonal Pressure Force Acceleration', &
