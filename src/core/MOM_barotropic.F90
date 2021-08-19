@@ -1727,10 +1727,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if ((CS%id_ubt_hifreq > 0) .or. (CS%id_vbt_hifreq > 0) .or. &
       (CS%id_eta_hifreq > 0) .or. (CS%id_eta_pred_hifreq > 0) .or. &
       (CS%id_uhbt_hifreq > 0) .or. (CS%id_vhbt_hifreq > 0) .or. &
+      (CS%id_PFuBT_hifreq > 0) .or. (CS%id_PFvBT_hifreq > 0) .or. &
+      (CS%id_CorvBT_hifreq > 0) .or. (CS%id_CorvBT_hifreq > 0) .or. &
       (CS%id_ubt_hifreq_pred > 0) .or. (CS%id_vbt_hifreq_pred> 0) .or. &
       (CS%id_eta_hifreq_pred > 0) .or. (CS%id_eta_pred_hifreq_pred > 0) .or. &
-      (CS%id_uhbt_hifreq_pred > 0) .or. (CS%id_vhbt_hifreq_pred > 0)) then
-    do_hifreq_output = .True.
+      (CS%id_uhbt_hifreq_pred > 0) .or. (CS%id_vhbt_hifreq_pred > 0) .or. &
+      (CS%id_CorvBT_hifreq > 0) .or. (CS%id_CorvBT_hifreq > 0)) then
+        do_hifreq_output = .True.
     if (output_corr) then
       time_int_out_hf = dt/(nstep+nfilter)
     else
@@ -2431,6 +2434,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (id_uhbt_hifreq > 0) call post_data(id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
       if (id_vhbt_hifreq > 0) call post_data(id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
       if (id_eta_pred_hifreq > 0) call post_data(id_eta_pred_hifreq, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
+      if (id_PFuBT_hifreq > 0) call post_data(id_PFuBT_hifreq, PFu(isd:ied,jsd:jed), CS%diag)
+      if (id_PFvBT_hifreq > 0) call post_data(id_PFvBT_hifreq, PFv_bt_sum(isd:ied,jsd:jed), CS%diag)
+      if (id_CoruBT_hifreq > 0) call post_data(id_CoruBT_hifreq, Cor_u(isd:ied,jsd:jed), CS%diag)
+      if (id_CorvBT_hifreq > 0) call post_data(id_CorvBT_hifreq, Cor_v(isd:ied,jsd:jed), CS%diag)
     endif
 
     if (CS%debug_bt) then
