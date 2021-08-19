@@ -314,7 +314,7 @@ type, public :: barotropic_CS ; private
   integer :: id_BTC_vbt_NN = -1, id_BTC_vbt_SS = -1
   integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
   integer :: id_uhbt0 = -1, id_vhbt0 = -1
-  integer :: id_PFu_bt_hifreq = -1, id_PFu_bt_hifreq = -1
+  integer :: id_PFu_bt_hifreq = -1, id_PFv_bt_hifreq = -1
   integer :: id_Coru_bt_hifreq, id_Corv_bt_hifreq = -1
 
   integer :: id_PFu_bt_pred = -1, id_PFv_bt_pred = -1, id_Coru_bt_pred = -1, id_Corv_bt_pred = -1
@@ -334,7 +334,7 @@ type, public :: barotropic_CS ; private
   integer :: id_BTC_vbt_NN_pred = -1, id_BTC_vbt_SS_pred = -1
   integer :: id_BTC_FA_u_rat0_pred = -1, id_BTC_FA_v_rat0_pred = -1, id_BTC_FA_h_rat0_pred = -1
   integer :: id_uhbt0_pred = -1, id_vhbt0_pred = -1
-  integer :: id_PFu_bt_hifreq_pred = -1, id_PFu_bt_hifreq_pred = -1
+  integer :: id_PFu_bt_hifreq_pred = -1, id_PFv_bt_hifreq_pred = -1
   integer :: id_Coru_bt_hifreq_pred, id_Corv_bt_hifreq_pred = -1
   !>@}
 
@@ -2434,10 +2434,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (id_uhbt_hifreq > 0) call post_data(id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
       if (id_vhbt_hifreq > 0) call post_data(id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
       if (id_eta_pred_hifreq > 0) call post_data(id_eta_pred_hifreq, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
-      if (id_PFuBT_hifreq > 0) call post_data(id_PFuBT_hifreq, PFu(isd:ied,jsd:jed), CS%diag)
-      if (id_PFvBT_hifreq > 0) call post_data(id_PFvBT_hifreq, PFv_bt_sum(isd:ied,jsd:jed), CS%diag)
-      if (id_CoruBT_hifreq > 0) call post_data(id_CoruBT_hifreq, Cor_u(isd:ied,jsd:jed), CS%diag)
-      if (id_CorvBT_hifreq > 0) call post_data(id_CorvBT_hifreq, Cor_v(isd:ied,jsd:jed), CS%diag)
+      if (id_PFu_bt_hifreq > 0) call post_data(id_PFu_bt_hifreq, PFu(isd:ied,jsd:jed), CS%diag)
+      if (id_PFv_bt_hifreq > 0) call post_data(id_PFv_bt_hifreq, PFv_bt_sum(isd:ied,jsd:jed), CS%diag)
+      if (id_Coru_bt_hifreq > 0) call post_data(id_Coru_bt_hifreq, Cor_u(isd:ied,jsd:jed), CS%diag)
+      if (id_Corv_bt_hifreq > 0) call post_data(id_Corv_bt_hifreq, Cor_v(isd:ied,jsd:jed), CS%diag)
     endif
 
     if (CS%debug_bt) then
