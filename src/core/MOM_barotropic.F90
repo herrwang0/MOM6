@@ -733,7 +733,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: id_BTC_vbt_NN = -1, id_BTC_vbt_SS = -1
   integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
   integer :: id_uhbt0 = -1, id_vhbt0 = -1
-  integer :: id_PFu_bt_hifreq = -1, id_PFu_bt_hifreq = -1
+  integer :: id_PFu_bt_hifreq = -1, id_PFv_bt_hifreq = -1
   integer :: id_Coru_bt_hifreq, id_Corv_bt_hifreq = -1
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
