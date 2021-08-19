@@ -4,7 +4,7 @@ module MOM_dynamics_split_RK2
 ! This file is part of MOM6. See LICENSE.md for the license.
 
 use MOM_variables,    only : vertvisc_type, thermo_var_ptrs
-use MOM_variables,    only : BT_cont_type, alloc_bt_cont_type, dealloc_bt_cont_type
+use MOM_variables,    only : BT_cont_type, alloc_BT_cont_type, dealloc_BT_cont_type
 use MOM_variables,    only : accel_diag_ptrs, ocean_internal_state, cont_diag_ptrs
 use MOM_forcing_type, only : mech_forcing
 
@@ -182,9 +182,9 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_hf_u_BT_accel_2d = -1, id_hf_v_BT_accel_2d = -1
   integer :: id_intz_u_BT_accel_2d = -1, id_intz_v_BT_accel_2d = -1
 
-  integer :: id_pred_CAu = -1, id_pred_CAv = -1
-  integer :: id_pred_PFu = -1, id_pred_PFv = -1
-  integer :: id_pred_DFu = -1, id_pred_DFv = -1
+  integer :: id_CAu_pred = -1, id_CAv_pred = -1
+  integer :: id_PFu_pred = -1, id_PFv_pred = -1
+  integer :: id_DFu_pred = -1, id_DFv_pred = -1
   !>@}
 
   type(diag_ctrl), pointer       :: diag !< A structure that is used to regulate the
@@ -678,12 +678,12 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   enddo ; enddo ; enddo
 
   call enable_averages(dt, Time_local, CS%diag)
-  if (CS%id_pred_PFu > 0) call post_data(CS%id_pred_PFu, CS%PFu, CS%diag)
-  if (CS%id_pred_PFv > 0) call post_data(CS%id_pred_PFv, CS%PFv, CS%diag)
-  if (CS%id_pred_CAu > 0) call post_data(CS%id_pred_CAu, CS%CAu, CS%diag)
-  if (CS%id_pred_CAv > 0) call post_data(CS%id_pred_CAv, CS%CAv, CS%diag)
-  if (CS%id_pred_DFu > 0) call post_data(CS%id_pred_DFu, CS%Diffu, CS%diag)
-  if (CS%id_pred_DFv > 0) call post_data(CS%id_pred_DFv, CS%Diffv, CS%diag)
+  if (CS%id_PFu_pred > 0) call post_data(CS%id_PFu_pred, CS%PFu, CS%diag)
+  if (CS%id_PFv_pred > 0) call post_data(CS%id_PFv_pred, CS%PFv, CS%diag)
+  if (CS%id_CAu_pred > 0) call post_data(CS%id_CAu_pred, CS%CAu, CS%diag)
+  if (CS%id_CAv_pred > 0) call post_data(CS%id_CAv_pred, CS%CAv, CS%diag)
+  if (CS%id_DFu_pred > 0) call post_data(CS%id_DFu_pred, CS%Diffu, CS%diag)
+  if (CS%id_DFv_pred > 0) call post_data(CS%id_DFv_pred, CS%Diffv, CS%diag)
   call disable_averaging(CS%diag)
 
   ! The correction phase of the time step starts here.
@@ -1495,17 +1495,17 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   CS%id_PFv = register_diag_field('ocean_model', 'PFv', diag%axesCvL, Time, &
       'Meridional Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
 
-  CS%id_pred_CAu = register_diag_field('ocean_model', 'CAu_pred', diag%axesCuL, Time, &
+  CS%id_CAu_pred = register_diag_field('ocean_model', 'CAu_pred', diag%axesCuL, Time, &
       'Zonal Coriolis and Advective Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
-  CS%id_pred_CAv = register_diag_field('ocean_model', 'CAv_pred', diag%axesCvL, Time, &
+  CS%id_CAv_pred = register_diag_field('ocean_model', 'CAv_pred', diag%axesCvL, Time, &
       'Meridional Coriolis and Advective Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
-  CS%id_pred_PFu = register_diag_field('ocean_model', 'PFu_pred', diag%axesCuL, Time, &
+  CS%id_PFu_pred = register_diag_field('ocean_model', 'PFu_pred', diag%axesCuL, Time, &
       'Zonal Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
-  CS%id_pred_PFv = register_diag_field('ocean_model', 'PFv_pred', diag%axesCvL, Time, &
+  CS%id_PFv_pred = register_diag_field('ocean_model', 'PFv_pred', diag%axesCvL, Time, &
       'Meridional Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
-  CS%id_pred_DFu = register_diag_field('ocean_model', 'diffu_pred', diag%axesCuL, Time, &
+  CS%id_DFu_pred = register_diag_field('ocean_model', 'diffu_pred', diag%axesCuL, Time, &
       'Zonal Acceleration from Horizontal Viscosity (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
-  CS%id_pred_DFv = register_diag_field('ocean_model', 'diffv_pred', diag%axesCvL, Time, &
+  CS%id_DFv_pred = register_diag_field('ocean_model', 'diffv_pred', diag%axesCvL, Time, &
       'Meridional Acceleration from Horizontal Viscosity (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
 
   !CS%id_hf_PFu = register_diag_field('ocean_model', 'hf_PFu', diag%axesCuL, Time, &

@@ -6,7 +6,7 @@ module MOM_barotropic
 use MOM_debugging, only : hchksum, uvchksum
 use MOM_cpu_clock, only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_ROUTINE
 use MOM_diag_mediator, only : post_data, query_averaging_enabled, register_diag_field
-use MOM_diag_mediator, only : safe_alloc_ptr, diag_ctrl, enable_averaging
+use MOM_diag_mediator, only : safe_alloc_ptr, diag_ctrl, enable_averaging, disable_averaging
 use MOM_domains, only : min_across_PEs, clone_MOM_domain, deallocate_MOM_domain
 use MOM_domains, only : To_All, Scalar_Pair, AGRID, CORNER, MOM_domain_type
 use MOM_domains, only : create_group_pass, do_group_pass, group_pass_type
@@ -25,7 +25,7 @@ use MOM_restart, only : query_initialized, MOM_restart_CS
 use MOM_tidal_forcing, only : tidal_forcing_sensitivity, tidal_forcing_CS
 use MOM_time_manager, only : time_type, real_to_time, operator(+), operator(-)
 use MOM_unit_scaling, only : unit_scale_type
-use MOM_variables, only : BT_cont_type, alloc_bt_cont_type
+use MOM_variables, only : BT_cont_type, alloc_BT_cont_type
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_variables, only : accel_diag_ptrs
 
@@ -187,10 +187,10 @@ type, public :: barotropic_CS ; private
                              !! otherwise the Arakawa & Hsu scheme is used.  If
                              !! the deformation radius is not resolved Sadourny's
                              !! scheme should probably be used.
-  logical :: integral_bt_cont !< If true, use the time-integrated velocity over the barotropic steps
+  logical :: integral_BT_cont !< If true, use the time-integrated velocity over the barotropic steps
                              !! to determine the integrated transports used to update the continuity
                              !! equation.  Otherwise the transports are the sum of the transports
-                             !! based on ]a series of instantaneous velocities and the BT_CONT_TYPE
+                             !! based on a series of instantaneous velocities and the BT_CONT_TYPE
                              !! for transports.  This is only valid if a BT_CONT_TYPE is used.
   logical :: Nonlinear_continuity !< If true, the barotropic continuity equation
                              !! uses the full ocean thickness for transport.
@@ -314,6 +314,24 @@ type, public :: barotropic_CS ; private
   integer :: id_BTC_vbt_NN = -1, id_BTC_vbt_SS = -1
   integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
   integer :: id_uhbt0 = -1, id_vhbt0 = -1
+
+  integer :: id_PFu_bt_pred = -1, id_PFv_bt_pred = -1, id_Coru_bt_pred = -1, id_Corv_bt_pred = -1
+  integer :: id_ubtforce_pred = -1, id_vbtforce_pred = -1, id_uaccel_pred = -1, id_vaccel_pred = -1
+  integer :: id_visc_rem_u_pred = -1, id_visc_rem_v_pred = -1, id_eta_cor_pred = -1
+  integer :: id_ubt_pred = -1, id_vbt_pred = -1, id_eta_bt_pred = -1, id_ubtav_pred = -1, id_vbtav_pred = -1
+  integer :: id_ubt_st_pred = -1, id_vbt_st_pred = -1, id_eta_st_pred = -1
+  integer :: id_ubtdt_pred = -1, id_vbtdt_pred = -1
+  integer :: id_ubt_hifreq_pred = -1, id_vbt_hifreq_pred = -1, id_eta_hifreq_pred = -1
+  integer :: id_uhbt_hifreq_pred = -1, id_vhbt_hifreq_pred = -1, id_eta_pred_hifreq_pred = -1
+  integer :: id_gtotn_pred = -1, id_gtots_pred = -1, id_gtote_pred = -1, id_gtotw_pred = -1
+  integer :: id_uhbt_pred = -1, id_frhatu_pred = -1, id_vhbt_pred = -1, id_frhatv_pred = -1
+
+  integer :: id_BTC_FA_u_EE_pred = -1, id_BTC_FA_u_E0_pred = -1, id_BTC_FA_u_W0_pred = -1, id_BTC_FA_u_WW_pred = -1
+  integer :: id_BTC_ubt_EE_pred = -1, id_BTC_ubt_WW_pred = -1
+  integer :: id_BTC_FA_v_NN_pred = -1, id_BTC_FA_v_N0_pred = -1, id_BTC_FA_v_S0_pred = -1, id_BTC_FA_v_SS_pred = -1
+  integer :: id_BTC_vbt_NN_pred = -1, id_BTC_vbt_SS_pred = -1
+  integer :: id_BTC_FA_u_rat0_pred = -1, id_BTC_FA_v_rat0_pred = -1, id_BTC_FA_h_rat0_pred = -1
+  integer :: id_uhbt0_pred = -1, id_vhbt0_pred = -1
   !>@}
 
 end type barotropic_CS
@@ -691,6 +709,27 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: ioff, joff
   integer :: l_seg
 
+  integer :: Npred = 1, ipred = 1 ! Total number of predictor steps and current step number. This should be implemented at the interface as input
+  logical :: output_corr ! If true, output corrector results; otherwise predictor results
+  real    :: time_int_out, time_int_out_hf ! Output time interval for a full btstep call and high frequency
+  ! Local copies of diagnostic IDs, taking either corrector or predictor values
+  integer :: id_PFu_bt = -1, id_PFv_bt = -1, id_Coru_bt = -1, id_Corv_bt = -1
+  integer :: id_ubtforce = -1, id_vbtforce = -1, id_uaccel = -1, id_vaccel = -1
+  integer :: id_visc_rem_u = -1, id_visc_rem_v = -1, id_eta_cor = -1
+  integer :: id_ubt = -1, id_vbt = -1, id_eta_bt = -1, id_ubtav = -1, id_vbtav = -1
+  integer :: id_ubt_st = -1, id_vbt_st = -1, id_eta_st = -1
+  integer :: id_ubtdt = -1, id_vbtdt = -1
+  integer :: id_ubt_hifreq = -1, id_vbt_hifreq = -1, id_eta_hifreq = -1
+  integer :: id_uhbt_hifreq = -1, id_vhbt_hifreq = -1, id_eta_pred_hifreq = -1
+  integer :: id_gtotn = -1, id_gtots = -1, id_gtote = -1, id_gtotw = -1
+  integer :: id_uhbt = -1, id_frhatu = -1, id_vhbt = -1, id_frhatv = -1
+  integer :: id_BTC_FA_u_EE = -1, id_BTC_FA_u_E0 = -1, id_BTC_FA_u_W0 = -1, id_BTC_FA_u_WW = -1
+  integer :: id_BTC_ubt_EE = -1, id_BTC_ubt_WW = -1
+  integer :: id_BTC_FA_v_NN = -1, id_BTC_FA_v_N0 = -1, id_BTC_FA_v_S0 = -1, id_BTC_FA_v_SS = -1
+  integer :: id_BTC_vbt_NN = -1, id_BTC_vbt_SS = -1
+  integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
+  integer :: id_uhbt0 = -1, id_vhbt0 = -1
+
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
   if (.not.CS%split) return
@@ -783,13 +822,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     trans_wt1 = bebt ;           trans_wt2 = (1.0-bebt)
   endif
 
-  do_hifreq_output = .false.
-  if ((CS%id_ubt_hifreq > 0) .or. (CS%id_vbt_hifreq > 0) .or. &
-      (CS%id_eta_hifreq > 0) .or. (CS%id_eta_pred_hifreq > 0) .or. &
-      (CS%id_uhbt_hifreq > 0) .or. (CS%id_vhbt_hifreq > 0)) then
-    do_hifreq_output = query_averaging_enabled(CS%diag, time_int_in, time_end_in)
-    if (do_hifreq_output) &
-      time_bt_start = time_end_in - real_to_time(US%T_to_s*dt)
+  ! diag%ave_enabled is turned off at predictor step(s) so it can be used to inform which step we are in.
+  output_corr = query_averaging_enabled(CS%diag, time_int_in, time_end_in)
+  if (output_corr) then
+    time_int_out = dt
+    time_bt_start = time_end_in - real_to_time(US%T_to_s*time_int_out)
+  else
+    time_int_out = dt/Npred
+    time_bt_start = time_end_in - real_to_time(US%T_to_s*time_int_out*(Npred-ipred+1))
   endif
 
 !--- begin setup for group halo update
@@ -1547,7 +1587,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   do j=js,je ; do i=is,ie
     eta_src(i,j) = G%mask2dT(i,j) * (Instep * CS%eta_cor(i,j))
   enddo ; enddo
-!$OMP end parallel
+  !$OMP end parallel
 
   if (CS%dynamic_psurf) then
     ice_is_rigid = (associated(forces%rigidity_ice_u) .and. &
@@ -1676,6 +1716,21 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   if (nstep+nfilter==0 ) call MOM_error(FATAL, &
       "btstep: number of barotropic step (nstep+nfilter) is 0")
+
+  do_hifreq_output = .false.
+  if ((CS%id_ubt_hifreq > 0) .or. (CS%id_vbt_hifreq > 0) .or. &
+      (CS%id_eta_hifreq > 0) .or. (CS%id_eta_pred_hifreq > 0) .or. &
+      (CS%id_uhbt_hifreq > 0) .or. (CS%id_vhbt_hifreq > 0) .or. &
+      (CS%id_ubt_hifreq_pred > 0) .or. (CS%id_vbt_hifreq_pred> 0) .or. &
+      (CS%id_eta_hifreq_pred > 0) .or. (CS%id_eta_pred_hifreq_pred > 0) .or. &
+      (CS%id_uhbt_hifreq_pred > 0) .or. (CS%id_vhbt_hifreq_pred > 0)) then
+    do_hifreq_output = .True.
+    if (output_corr) then
+      time_int_out_hf = dt/(nstep+nfilter)
+    else
+      time_int_out_hf = dt/Npred/(nstep+nfilter)
+    endif
+  endif
 
   ! Set up the normalized weights for the filtered velocity.
   sum_wt_vel = 0.0 ; sum_wt_eta = 0.0 ; sum_wt_accel = 0.0 ; sum_wt_trans = 0.0
@@ -2337,14 +2392,39 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !$OMP end parallel
 
     if (do_hifreq_output) then
-      time_step_end = time_bt_start + real_to_time(n*US%T_to_s*dtbt)
-      call enable_averaging(US%T_to_s*dtbt, time_step_end, CS%diag)
-      if (CS%id_ubt_hifreq > 0) call post_data(CS%id_ubt_hifreq, ubt(IsdB:IedB,jsd:jed), CS%diag)
-      if (CS%id_vbt_hifreq > 0) call post_data(CS%id_vbt_hifreq, vbt(isd:ied,JsdB:JedB), CS%diag)
-      if (CS%id_eta_hifreq > 0) call post_data(CS%id_eta_hifreq, eta(isd:ied,jsd:jed), CS%diag)
-      if (CS%id_uhbt_hifreq > 0) call post_data(CS%id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
-      if (CS%id_vhbt_hifreq > 0) call post_data(CS%id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
-      if (CS%id_eta_pred_hifreq > 0) call post_data(CS%id_eta_pred_hifreq, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
+      if (output_corr) then
+        time_step_end = time_bt_start + real_to_time(US%T_to_s*time_int_out_hf*n)
+        call enable_averaging(US%T_to_s*dt/(nstep+nfilter), time_step_end, CS%diag)
+        ! if (CS%id_ubt_hifreq > 0) call post_data(CS%id_ubt_hifreq, ubt(IsdB:IedB,jsd:jed), CS%diag)
+        ! if (CS%id_vbt_hifreq > 0) call post_data(CS%id_vbt_hifreq, vbt(isd:ied,JsdB:JedB), CS%diag)
+        ! if (CS%id_eta_hifreq > 0) call post_data(CS%id_eta_hifreq, eta(isd:ied,jsd:jed), CS%diag)
+        ! if (CS%id_uhbt_hifreq > 0) call post_data(CS%id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
+        ! if (CS%id_vhbt_hifreq > 0) call post_data(CS%id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
+        ! if (CS%id_eta_pred_hifreq > 0) call post_data(CS%id_eta_pred_hifreq, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
+        id_ubt_hifreq  = CS%id_ubt_hifreq;  id_vbt_hifreq  = CS%id_vbt_hifreq
+        id_uhbt_hifreq = CS%id_uhbt_hifreq; id_vhbt_hifreq = CS%id_vhbt_hifreq
+        id_eta_hifreq = CS%id_eta_hifreq
+        id_eta_pred_hifreq = CS%id_eta_pred_hifreq
+      else
+        time_step_end = time_bt_start + real_to_time(US%T_to_s*time_int_out_hf*ipred*n)
+        call enable_averaging(US%T_to_s*dt/Npred/(nstep+nfilter), time_step_end, CS%diag)
+        ! if (CS%id_ubt_hifreq_pred > 0) call post_data(CS%id_ubt_hifreq_pred, ubt(IsdB:IedB,jsd:jed), CS%diag)
+        ! if (CS%id_vbt_hifreq_pred > 0) call post_data(CS%id_vbt_hifreq_pred, vbt(isd:ied,JsdB:JedB), CS%diag)
+        ! if (CS%id_eta_hifreq_pred > 0) call post_data(CS%id_eta_hifreq_pred, eta(isd:ied,jsd:jed), CS%diag)
+        ! if (CS%id_uhbt_hifreq_pred > 0) call post_data(CS%id_uhbt_hifreq_pred, uhbt(IsdB:IedB,jsd:jed), CS%diag)
+        ! if (CS%id_vhbt_hifreq_pred > 0) call post_data(CS%id_vhbt_hifreq_pred, vhbt(isd:ied,JsdB:JedB), CS%diag)
+        ! if (CS%id_eta_pred_hifreq_pred > 0) call post_data(CS%id_eta_pred_hifreq_pred, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
+        id_ubt_hifreq  = CS%id_ubt_hifreq_pred;  id_vbt_hifreq  = CS%id_vbt_hifreq_pred
+        id_uhbt_hifreq = CS%id_uhbt_hifreq_pred; id_vhbt_hifreq = CS%id_vhbt_hifreq_pred
+        id_eta_hifreq = CS%id_eta_hifreq_pred
+        id_eta_pred_hifreq = CS%id_eta_pred_hifreq_pred
+      endif
+      if (id_ubt_hifreq > 0) call post_data(id_ubt_hifreq, ubt(IsdB:IedB,jsd:jed), CS%diag)
+      if (id_vbt_hifreq > 0) call post_data(id_vbt_hifreq, vbt(isd:ied,JsdB:JedB), CS%diag)
+      if (id_eta_hifreq > 0) call post_data(id_eta_hifreq, eta(isd:ied,jsd:jed), CS%diag)
+      if (id_uhbt_hifreq > 0) call post_data(id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
+      if (id_vhbt_hifreq > 0) call post_data(id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
+      if (id_eta_pred_hifreq > 0) call post_data(id_eta_pred_hifreq, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
     endif
 
     if (CS%debug_bt) then
@@ -2370,8 +2450,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_calc > 0) call cpu_clock_end(id_clock_calc)
   if (id_clock_calc_post > 0) call cpu_clock_begin(id_clock_calc_post)
 
-  ! Reset the time information in the diag type.
-  if (do_hifreq_output) call enable_averaging(time_int_in, time_end_in, CS%diag)
+  ! Set the time information to a full btstep in the diag type.
+  if (do_hifreq_output) call enable_averaging(time_int_out, time_bt_start + real_to_time(US%T_to_s*time_int_out), CS%diag)
 
   if (CS%answers_2018) then
     I_sum_wt_vel = 1.0 / sum_wt_vel ; I_sum_wt_eta = 1.0 / sum_wt_eta
@@ -2515,153 +2595,221 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
 
   ! Calculate diagnostic quantities.
-  if (query_averaging_enabled(CS%diag)) then
-
+  if (output_corr) then
     if (CS%gradual_BT_ICs) then
       do j=js,je ; do I=is-1,ie ; CS%ubt_IC(I,j) = ubt_wtd(I,j) ; enddo ; enddo
       do J=js-1,je ; do i=is,ie ; CS%vbt_IC(i,J) = vbt_wtd(i,J) ; enddo ; enddo
     endif
 
-!  Offer various barotropic terms for averaging.
-    if (CS%id_PFu_bt > 0) then
-      do j=js,je ; do I=is-1,ie
-        PFu_bt_sum(I,j) = PFu_bt_sum(I,j) * I_sum_wt_accel
-      enddo ; enddo
-      call post_data(CS%id_PFu_bt, PFu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
-    endif
-    if (CS%id_PFv_bt > 0) then
-      do J=js-1,je ; do i=is,ie
-        PFv_bt_sum(i,J) = PFv_bt_sum(i,J) * I_sum_wt_accel
-      enddo ; enddo
-      call post_data(CS%id_PFv_bt, PFv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
-    endif
-    if (CS%id_Coru_bt > 0) then
-      do j=js,je ; do I=is-1,ie
-        Coru_bt_sum(I,j) = Coru_bt_sum(I,j) * I_sum_wt_accel
-      enddo ; enddo
-      call post_data(CS%id_Coru_bt, Coru_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
-    endif
-    if (CS%id_Corv_bt > 0) then
-      do J=js-1,je ; do i=is,ie
-        Corv_bt_sum(i,J) = Corv_bt_sum(i,J) * I_sum_wt_accel
-      enddo ; enddo
-      call post_data(CS%id_Corv_bt, Corv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
-    endif
-    if (CS%id_ubtdt > 0) then
-      do j=js,je ; do I=is-1,ie
-        ubt_dt(I,j) = (ubt_wtd(I,j) - ubt_st(I,j))*Idt
-      enddo ; enddo
-      call post_data(CS%id_ubtdt, ubt_dt(IsdB:IedB,jsd:jed), CS%diag)
-    endif
-    if (CS%id_vbtdt > 0) then
-      do J=js-1,je ; do i=is,ie
-        vbt_dt(i,J) = (vbt_wtd(i,J) - vbt_st(i,J))*Idt
-      enddo ; enddo
-      call post_data(CS%id_vbtdt, vbt_dt(isd:ied,JsdB:JedB), CS%diag)
-    endif
-
-    if (CS%id_ubtforce > 0) call post_data(CS%id_ubtforce, BT_force_u(IsdB:IedB,jsd:jed), CS%diag)
-    if (CS%id_vbtforce > 0) call post_data(CS%id_vbtforce, BT_force_v(isd:ied,JsdB:JedB), CS%diag)
-    if (CS%id_uaccel > 0) call post_data(CS%id_uaccel, u_accel_bt(IsdB:IedB,jsd:jed), CS%diag)
-    if (CS%id_vaccel > 0) call post_data(CS%id_vaccel, v_accel_bt(isd:ied,JsdB:JedB), CS%diag)
-
-    if (CS%id_eta_cor > 0) call post_data(CS%id_eta_cor, CS%eta_cor, CS%diag)
-    if (CS%id_eta_bt > 0) call post_data(CS%id_eta_bt, eta_out, CS%diag)
-    if (CS%id_gtotn > 0) call post_data(CS%id_gtotn, gtot_N(isd:ied,jsd:jed), CS%diag)
-    if (CS%id_gtots > 0) call post_data(CS%id_gtots, gtot_S(isd:ied,jsd:jed), CS%diag)
-    if (CS%id_gtote > 0) call post_data(CS%id_gtote, gtot_E(isd:ied,jsd:jed), CS%diag)
-    if (CS%id_gtotw > 0) call post_data(CS%id_gtotw, gtot_W(isd:ied,jsd:jed), CS%diag)
-    if (CS%id_ubt > 0) call post_data(CS%id_ubt, ubt_wtd(IsdB:IedB,jsd:jed), CS%diag)
-    if (CS%id_vbt > 0) call post_data(CS%id_vbt, vbt_wtd(isd:ied,JsdB:JedB), CS%diag)
-    if (CS%id_ubtav > 0) call post_data(CS%id_ubtav, CS%ubtav, CS%diag)
-    if (CS%id_vbtav > 0) call post_data(CS%id_vbtav, CS%vbtav, CS%diag)
-    if (CS%id_visc_rem_u > 0) call post_data(CS%id_visc_rem_u, visc_rem_u, CS%diag)
-    if (CS%id_visc_rem_v > 0) call post_data(CS%id_visc_rem_v, visc_rem_v, CS%diag)
-
-    if (CS%id_frhatu > 0) call post_data(CS%id_frhatu, CS%frhatu, CS%diag)
-    if (CS%id_uhbt > 0) call post_data(CS%id_uhbt, uhbtav, CS%diag)
-    if (CS%id_frhatv > 0) call post_data(CS%id_frhatv, CS%frhatv, CS%diag)
-    if (CS%id_vhbt > 0) call post_data(CS%id_vhbt, vhbtav, CS%diag)
-    if (CS%id_uhbt0 > 0) call post_data(CS%id_uhbt0, uhbt0(IsdB:IedB,jsd:jed), CS%diag)
-    if (CS%id_vhbt0 > 0) call post_data(CS%id_vhbt0, vhbt0(isd:ied,JsdB:JedB), CS%diag)
-
-    if (CS%id_frhatu1 > 0) call post_data(CS%id_frhatu1, CS%frhatu1, CS%diag)
-    if (CS%id_frhatv1 > 0) call post_data(CS%id_frhatv1, CS%frhatv1, CS%diag)
+    id_PFu_bt   = CS%id_PFu_bt;   id_PFv_bt   = CS%id_PFv_bt
+    id_Coru_bt  = CS%id_Coru_bt;  id_Corv_bt  = CS%id_Corv_bt
+    id_ubtdt    = CS%id_ubtdt;    id_vbtdt    = CS%id_vbtdt
+    id_ubtforce = CS%id_ubtforce; id_vbtforce = CS%id_vbtforce
+    id_uaccel   = CS%id_uaccel;   id_vaccel   = CS%id_vaccel
+    id_eta_cor  = CS%id_eta_cor
+    id_eta_bt   = CS%id_eta_bt
+    id_gtotn    = CS%id_gtotn;    id_gtots    = CS%id_gtots
+    id_gtote    = CS%id_gtote;    id_gtotw    = CS%id_gtotw
+    id_ubt      = CS%id_ubt;      id_vbt      = CS%id_vbt
+    id_ubtav    = CS%id_ubtav;    id_vbtav    = CS%id_vbtav
+    id_visc_rem_u = CS%id_visc_rem_u; id_visc_rem_v = CS%id_visc_rem_v
+    id_frhatu   = CS%id_frhatu;   id_frhatv   = CS%id_frhatv
+    id_uhbt     = CS%id_uhbt;     id_vhbt     = CS%id_vhbt
+    id_uhbt0    = CS%id_uhbt0;    id_vhbt0    = CS%id_vhbt0
 
     if (use_BT_cont) then
-      if (CS%id_BTC_FA_u_EE > 0) call post_data(CS%id_BTC_FA_u_EE, BT_cont%FA_u_EE, CS%diag)
-      if (CS%id_BTC_FA_u_E0 > 0) call post_data(CS%id_BTC_FA_u_E0, BT_cont%FA_u_E0, CS%diag)
-      if (CS%id_BTC_FA_u_W0 > 0) call post_data(CS%id_BTC_FA_u_W0, BT_cont%FA_u_W0, CS%diag)
-      if (CS%id_BTC_FA_u_WW > 0) call post_data(CS%id_BTC_FA_u_WW, BT_cont%FA_u_WW, CS%diag)
-      if (CS%id_BTC_uBT_EE > 0) call post_data(CS%id_BTC_uBT_EE, BT_cont%uBT_EE, CS%diag)
-      if (CS%id_BTC_uBT_WW > 0) call post_data(CS%id_BTC_uBT_WW, BT_cont%uBT_WW, CS%diag)
-      if (CS%id_BTC_FA_u_rat0 > 0) then
-        tmp_u(:,:) = 0.0
-        do j=js,je ; do I=is-1,ie
-          if ((G%mask2dCu(I,j) > 0.0) .and. (BT_cont%FA_u_W0(I,j) > 0.0)) then
-            tmp_u(I,j) = (BT_cont%FA_u_E0(I,j)/ BT_cont%FA_u_W0(I,j))
-          else
-            tmp_u(I,j) = 1.0
-          endif
-        enddo ; enddo
-        call post_data(CS%id_BTC_FA_u_rat0, tmp_u, CS%diag)
-      endif
-      if (CS%id_BTC_FA_v_NN > 0) call post_data(CS%id_BTC_FA_v_NN, BT_cont%FA_v_NN, CS%diag)
-      if (CS%id_BTC_FA_v_N0 > 0) call post_data(CS%id_BTC_FA_v_N0, BT_cont%FA_v_N0, CS%diag)
-      if (CS%id_BTC_FA_v_S0 > 0) call post_data(CS%id_BTC_FA_v_S0, BT_cont%FA_v_S0, CS%diag)
-      if (CS%id_BTC_FA_v_SS > 0) call post_data(CS%id_BTC_FA_v_SS, BT_cont%FA_v_SS, CS%diag)
-      if (CS%id_BTC_vBT_NN > 0) call post_data(CS%id_BTC_vBT_NN, BT_cont%vBT_NN, CS%diag)
-      if (CS%id_BTC_vBT_SS > 0) call post_data(CS%id_BTC_vBT_SS, BT_cont%vBT_SS, CS%diag)
-      if (CS%id_BTC_FA_v_rat0 > 0) then
-        tmp_v(:,:) = 0.0
-        do J=js-1,je ; do i=is,ie
-          if ((G%mask2dCv(i,J) > 0.0) .and. (BT_cont%FA_v_S0(i,J) > 0.0)) then
-            tmp_v(i,J) = (BT_cont%FA_v_N0(i,J)/ BT_cont%FA_v_S0(i,J))
-          else
-            tmp_v(i,J) = 1.0
-          endif
-        enddo ; enddo
-        call post_data(CS%id_BTC_FA_v_rat0, tmp_v, CS%diag)
-      endif
-      if (CS%id_BTC_FA_h_rat0 > 0) then
-        tmp_h(:,:) = 0.0
-        do j=js,je ; do i=is,ie
-          tmp_h(i,j) = 1.0
-          if ((G%mask2dCu(I,j) > 0.0) .and. (BT_cont%FA_u_W0(I,j) > 0.0) .and. (BT_cont%FA_u_E0(I,j) > 0.0)) then
-            if (BT_cont%FA_u_W0(I,j) > BT_cont%FA_u_E0(I,j)) then
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_W0(I,j)/ BT_cont%FA_u_E0(I,j)))
-            else
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_E0(I,j)/ BT_cont%FA_u_W0(I,j)))
-            endif
-          endif
-          if ((G%mask2dCu(I-1,j) > 0.0) .and. (BT_cont%FA_u_W0(I-1,j) > 0.0) .and. (BT_cont%FA_u_E0(I-1,j) > 0.0)) then
-            if (BT_cont%FA_u_W0(I-1,j) > BT_cont%FA_u_E0(I-1,j)) then
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_W0(I-1,j)/ BT_cont%FA_u_E0(I-1,j)))
-            else
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_E0(I-1,j)/ BT_cont%FA_u_W0(I-1,j)))
-            endif
-          endif
-          if ((G%mask2dCv(i,J) > 0.0) .and. (BT_cont%FA_v_S0(i,J) > 0.0) .and. (BT_cont%FA_v_N0(i,J) > 0.0)) then
-            if (BT_cont%FA_v_S0(i,J) > BT_cont%FA_v_N0(i,J)) then
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_S0(i,J)/ BT_cont%FA_v_N0(i,J)))
-            else
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_N0(i,J)/ BT_cont%FA_v_S0(i,J)))
-            endif
-          endif
-          if ((G%mask2dCv(i,J-1) > 0.0) .and. (BT_cont%FA_v_S0(i,J-1) > 0.0) .and. (BT_cont%FA_v_N0(i,J-1) > 0.0)) then
-            if (BT_cont%FA_v_S0(i,J-1) > BT_cont%FA_v_N0(i,J-1)) then
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_S0(i,J-1)/ BT_cont%FA_v_N0(i,J-1)))
-            else
-              tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_N0(i,J-1)/ BT_cont%FA_v_S0(i,J-1)))
-            endif
-          endif
-        enddo ; enddo
-        call post_data(CS%id_BTC_FA_h_rat0, tmp_h, CS%diag)
-      endif
+      id_BTC_FA_u_EE = CS%id_BTC_FA_u_EE; id_BTC_FA_u_E0 = CS%id_BTC_FA_u_E0
+      id_BTC_FA_u_WW = CS%id_BTC_FA_u_WW; id_BTC_FA_u_W0 = CS%id_BTC_FA_u_W0
+      id_BTC_uBT_EE  = CS%id_BTC_uBT_EE;  id_BTC_uBT_WW  = CS%id_BTC_uBT_WW
+      id_BTC_FA_u_rat0 = CS%id_BTC_FA_u_rat0
+
+      id_BTC_FA_v_NN = CS%id_BTC_FA_v_NN; id_BTC_FA_v_N0 = CS%id_BTC_FA_v_N0
+      id_BTC_FA_v_SS = CS%id_BTC_FA_v_SS; id_BTC_FA_v_S0 = CS%id_BTC_FA_v_S0
+      id_BTC_vBT_NN  = CS%id_BTC_vBT_NN;  id_BTC_vBT_SS  = CS%id_BTC_vBT_SS
+      id_BTC_FA_v_rat0 = CS%id_BTC_FA_v_rat0
+
+      id_BTC_FA_h_rat0 = CS%id_BTC_FA_h_rat0
     endif
+
+    ! kept for consistency with prior versions
+    if (CS%id_frhatu1 > 0) call post_data(CS%id_frhatu1, CS%frhatu1, CS%diag)
+    if (CS%id_frhatv1 > 0) call post_data(CS%id_frhatv1, CS%frhatv1, CS%diag)
   else
+    id_PFu_bt   = CS%id_PFu_bt_pred;   id_PFu_bt   = CS%id_PFu_bt_pred
+    id_Coru_bt  = CS%id_Coru_bt_pred;  id_Corv_bt  = CS%id_Corv_bt_pred
+    id_ubtdt    = CS%id_ubtdt_pred;    id_vbtdt    = CS%id_vbtdt_pred;
+    id_ubtforce = CS%id_ubtforce_pred; id_vbtforce = CS%id_vbtforce_pred
+    id_uaccel   = CS%id_uaccel_pred;   id_vaccel   = CS%id_vaccel_pred
+    id_eta_cor  = CS%id_eta_cor_pred
+    id_eta_bt   = CS%id_eta_bt_pred
+    id_gtotn    = CS%id_gtotn_pred;    id_gtots    = CS%id_gtots_pred
+    id_gtote    = CS%id_gtote_pred;    id_gtotw    = CS%id_gtotw_pred
+    id_ubt      = CS%id_ubt_pred;      id_vbt      = CS%id_vbt_pred
+    id_ubtav    = CS%id_ubtav_pred;    id_vbtav    = CS%id_vbtav_pred
+    id_visc_rem_u = CS%id_visc_rem_u_pred; id_visc_rem_v = CS%id_visc_rem_v_pred
+    id_frhatu   = CS%id_frhatu_pred;   id_frhatv   = CS%id_frhatv_pred
+    id_uhbt     = CS%id_uhbt_pred;     id_vhbt     = CS%id_vhbt_pred
+    id_uhbt0    = CS%id_uhbt0_pred;    id_vhbt0    = CS%id_vhbt0_pred
+
+    if (use_BT_cont) then
+      id_BTC_FA_u_EE = CS%id_BTC_FA_u_EE_pred; id_BTC_FA_u_E0 = CS%id_BTC_FA_u_E0_pred
+      id_BTC_FA_u_WW = CS%id_BTC_FA_u_WW_pred; id_BTC_FA_u_W0 = CS%id_BTC_FA_u_W0_pred
+      id_BTC_uBT_EE  = CS%id_BTC_uBT_EE_pred;  id_BTC_uBT_WW  = CS%id_BTC_uBT_WW_pred
+      id_BTC_FA_u_rat0 = CS%id_BTC_FA_u_rat0_pred
+
+      id_BTC_FA_v_NN = CS%id_BTC_FA_v_NN_pred; id_BTC_FA_v_N0 = CS%id_BTC_FA_v_N0_pred
+      id_BTC_FA_v_SS = CS%id_BTC_FA_v_SS_pred; id_BTC_FA_v_S0 = CS%id_BTC_FA_v_S0_pred
+      id_BTC_vBT_NN  = CS%id_BTC_vBT_NN_pred;  id_BTC_vBT_SS  = CS%id_BTC_vBT_SS_pred
+      id_BTC_FA_v_rat0 = CS%id_BTC_FA_v_rat0_pred
+
+      id_BTC_FA_h_rat0 = CS%id_BTC_FA_h_rat0_pred
+    endif
+
+    ! kept for consistency with prior versions
     if (CS%id_frhatu1 > 0) CS%frhatu1(:,:,:) = CS%frhatu(:,:,:)
     if (CS%id_frhatv1 > 0) CS%frhatv1(:,:,:) = CS%frhatv(:,:,:)
+  endif
+
+  !  Offer various barotropic terms for averaging.
+  if (id_PFu_bt > 0) then
+    do j=js,je ; do I=is-1,ie
+      PFu_bt_sum(I,j) = PFu_bt_sum(I,j) * I_sum_wt_accel
+    enddo ; enddo
+    call post_data(id_PFu_bt, PFu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+  endif
+  if (id_PFv_bt > 0) then
+    do J=js-1,je ; do i=is,ie
+      PFv_bt_sum(i,J) = PFv_bt_sum(i,J) * I_sum_wt_accel
+    enddo ; enddo
+    call post_data(id_PFv_bt, PFv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+  endif
+  if (id_Coru_bt > 0) then
+    do j=js,je ; do I=is-1,ie
+      Coru_bt_sum(I,j) = Coru_bt_sum(I,j) * I_sum_wt_accel
+    enddo ; enddo
+    call post_data(id_Coru_bt, Coru_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+  endif
+  if (id_Corv_bt > 0) then
+    do J=js-1,je ; do i=is,ie
+      Corv_bt_sum(i,J) = Corv_bt_sum(i,J) * I_sum_wt_accel
+    enddo ; enddo
+    call post_data(id_Corv_bt, Corv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+  endif
+  if (id_ubtdt > 0) then
+    do j=js,je ; do I=is-1,ie
+      ubt_dt(I,j) = (ubt_wtd(I,j) - ubt_st(I,j))*Idt
+    enddo ; enddo
+    call post_data(id_ubtdt, ubt_dt(IsdB:IedB,jsd:jed), CS%diag)
+  endif
+  if (id_vbtdt > 0) then
+    do J=js-1,je ; do i=is,ie
+      vbt_dt(i,J) = (vbt_wtd(i,J) - vbt_st(i,J))*Idt
+    enddo ; enddo
+    call post_data(id_vbtdt, vbt_dt(isd:ied,JsdB:JedB), CS%diag)
+  endif
+
+  if (id_ubtforce > 0) call post_data(id_ubtforce, BT_force_u(IsdB:IedB,jsd:jed), CS%diag)
+  if (id_vbtforce > 0) call post_data(id_vbtforce, BT_force_v(isd:ied,JsdB:JedB), CS%diag)
+  if (id_uaccel > 0) call post_data(id_uaccel, u_accel_bt(IsdB:IedB,jsd:jed), CS%diag)
+  if (id_vaccel > 0) call post_data(id_vaccel, v_accel_bt(isd:ied,JsdB:JedB), CS%diag)
+
+  if (id_eta_cor > 0) call post_data(id_eta_cor, CS%eta_cor, CS%diag)
+  if (id_eta_bt > 0) call post_data(id_eta_bt, eta_out, CS%diag)
+  if (id_gtotn > 0) call post_data(id_gtotn, gtot_N(isd:ied,jsd:jed), CS%diag)
+  if (id_gtots > 0) call post_data(id_gtots, gtot_S(isd:ied,jsd:jed), CS%diag)
+  if (id_gtote > 0) call post_data(id_gtote, gtot_E(isd:ied,jsd:jed), CS%diag)
+  if (id_gtotw > 0) call post_data(id_gtotw, gtot_W(isd:ied,jsd:jed), CS%diag)
+  if (id_ubt > 0) call post_data(id_ubt, ubt_wtd(IsdB:IedB,jsd:jed), CS%diag)
+  if (id_vbt > 0) call post_data(id_vbt, vbt_wtd(isd:ied,JsdB:JedB), CS%diag)
+  if (id_ubtav > 0) call post_data(id_ubtav, CS%ubtav, CS%diag)
+  if (id_vbtav > 0) call post_data(id_vbtav, CS%vbtav, CS%diag)
+  if (id_visc_rem_u > 0) call post_data(id_visc_rem_u, visc_rem_u, CS%diag)
+  if (id_visc_rem_v > 0) call post_data(id_visc_rem_v, visc_rem_v, CS%diag)
+
+  if (id_frhatu > 0) call post_data(id_frhatu, CS%frhatu, CS%diag)
+  if (id_frhatv > 0) call post_data(id_frhatv, CS%frhatv, CS%diag)
+  if (id_uhbt > 0) call post_data(id_uhbt, uhbtav, CS%diag)
+  if (id_vhbt > 0) call post_data(id_vhbt, vhbtav, CS%diag)
+  if (id_uhbt0 > 0) call post_data(id_uhbt0, uhbt0(IsdB:IedB,jsd:jed), CS%diag)
+  if (id_vhbt0 > 0) call post_data(id_vhbt0, vhbt0(isd:ied,JsdB:JedB), CS%diag)
+
+  if (use_BT_cont) then
+    if (id_BTC_FA_u_EE > 0) call post_data(id_BTC_FA_u_EE, BT_cont%FA_u_EE, CS%diag)
+    if (id_BTC_FA_u_E0 > 0) call post_data(id_BTC_FA_u_E0, BT_cont%FA_u_E0, CS%diag)
+    if (id_BTC_FA_u_W0 > 0) call post_data(id_BTC_FA_u_W0, BT_cont%FA_u_W0, CS%diag)
+    if (id_BTC_FA_u_WW > 0) call post_data(id_BTC_FA_u_WW, BT_cont%FA_u_WW, CS%diag)
+    if (id_BTC_uBT_EE > 0) call post_data(id_BTC_uBT_EE, BT_cont%uBT_EE, CS%diag)
+    if (id_BTC_uBT_WW > 0) call post_data(id_BTC_uBT_WW, BT_cont%uBT_WW, CS%diag)
+    if (id_BTC_FA_u_rat0 > 0) then
+      tmp_u(:,:) = 0.0
+      do j=js,je ; do I=is-1,ie
+        if ((G%mask2dCu(I,j) > 0.0) .and. (BT_cont%FA_u_W0(I,j) > 0.0)) then
+          tmp_u(I,j) = (BT_cont%FA_u_E0(I,j)/ BT_cont%FA_u_W0(I,j))
+        else
+          tmp_u(I,j) = 1.0
+        endif
+      enddo ; enddo
+      call post_data(id_BTC_FA_u_rat0, tmp_u, CS%diag)
+    endif
+    if (id_BTC_FA_v_NN > 0) call post_data(id_BTC_FA_v_NN, BT_cont%FA_v_NN, CS%diag)
+    if (id_BTC_FA_v_N0 > 0) call post_data(id_BTC_FA_v_N0, BT_cont%FA_v_N0, CS%diag)
+    if (id_BTC_FA_v_S0 > 0) call post_data(id_BTC_FA_v_S0, BT_cont%FA_v_S0, CS%diag)
+    if (id_BTC_FA_v_SS > 0) call post_data(id_BTC_FA_v_SS, BT_cont%FA_v_SS, CS%diag)
+    if (id_BTC_vBT_NN > 0) call post_data(id_BTC_vBT_NN, BT_cont%vBT_NN, CS%diag)
+    if (id_BTC_vBT_SS > 0) call post_data(id_BTC_vBT_SS, BT_cont%vBT_SS, CS%diag)
+    if (id_BTC_FA_v_rat0 > 0) then
+      tmp_v(:,:) = 0.0
+      do J=js-1,je ; do i=is,ie
+        if ((G%mask2dCv(i,J) > 0.0) .and. (BT_cont%FA_v_S0(i,J) > 0.0)) then
+          tmp_v(i,J) = (BT_cont%FA_v_N0(i,J)/ BT_cont%FA_v_S0(i,J))
+        else
+          tmp_v(i,J) = 1.0
+        endif
+      enddo ; enddo
+      call post_data(id_BTC_FA_v_rat0, tmp_v, CS%diag)
+    endif
+    if (id_BTC_FA_h_rat0 > 0) then
+      tmp_h(:,:) = 0.0
+      do j=js,je ; do i=is,ie
+        tmp_h(i,j) = 1.0
+        if ((G%mask2dCu(I,j) > 0.0) .and. (BT_cont%FA_u_W0(I,j) > 0.0) .and. (BT_cont%FA_u_E0(I,j) > 0.0)) then
+          if (BT_cont%FA_u_W0(I,j) > BT_cont%FA_u_E0(I,j)) then
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_W0(I,j)/ BT_cont%FA_u_E0(I,j)))
+          else
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_E0(I,j)/ BT_cont%FA_u_W0(I,j)))
+          endif
+        endif
+        if ((G%mask2dCu(I-1,j) > 0.0) .and. (BT_cont%FA_u_W0(I-1,j) > 0.0) .and. (BT_cont%FA_u_E0(I-1,j) > 0.0)) then
+          if (BT_cont%FA_u_W0(I-1,j) > BT_cont%FA_u_E0(I-1,j)) then
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_W0(I-1,j)/ BT_cont%FA_u_E0(I-1,j)))
+          else
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_u_E0(I-1,j)/ BT_cont%FA_u_W0(I-1,j)))
+          endif
+        endif
+        if ((G%mask2dCv(i,J) > 0.0) .and. (BT_cont%FA_v_S0(i,J) > 0.0) .and. (BT_cont%FA_v_N0(i,J) > 0.0)) then
+          if (BT_cont%FA_v_S0(i,J) > BT_cont%FA_v_N0(i,J)) then
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_S0(i,J)/ BT_cont%FA_v_N0(i,J)))
+          else
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_N0(i,J)/ BT_cont%FA_v_S0(i,J)))
+          endif
+        endif
+        if ((G%mask2dCv(i,J-1) > 0.0) .and. (BT_cont%FA_v_S0(i,J-1) > 0.0) .and. (BT_cont%FA_v_N0(i,J-1) > 0.0)) then
+          if (BT_cont%FA_v_S0(i,J-1) > BT_cont%FA_v_N0(i,J-1)) then
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_S0(i,J-1)/ BT_cont%FA_v_N0(i,J-1)))
+          else
+            tmp_h(i,j) = max(tmp_h(i,j), (BT_cont%FA_v_N0(i,J-1)/ BT_cont%FA_v_S0(i,J-1)))
+          endif
+        endif
+      enddo ; enddo
+      call post_data(id_BTC_FA_h_rat0, tmp_h, CS%diag)
+    endif
+  endif
+
+  ! Reset the time information in the diag type.
+  if (output_corr) then
+    call enable_averaging(time_int_in, time_end_in, CS%diag)
+  else
+    call disable_averaging(CS%diag)
   endif
 
   if ((present(ADp)) .and. (associated(ADp%diag_hfrac_u))) then
@@ -4356,7 +4504,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "as a function the barotropic flow in coupling between "//&
                  "the barotropic and baroclinic flow.  This is only used "//&
                  "if SPLIT is true.", default=.true.)
-  call get_param(param_file, mdl, "INTEGRAL_BT_CONTINUITY", CS%integral_bt_cont, &
+  call get_param(param_file, mdl, "INTEGRAL_BT_CONTINUITY", CS%integral_BT_cont, &
                  "If true, use the time-integrated velocity over the barotropic steps "//&
                  "to determine the integrated transports used to update the continuity "//&
                  "equation.  Otherwise the transports are the sum of the transports based on "//&
@@ -4776,7 +4924,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   endif
 
   CS%id_PFu_bt = register_diag_field('ocean_model', 'PFuBT', diag%axesCu1, Time, &
-      'Zonal Anomalous Barotropic Pressure Force Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+      'Zonal Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_PFv_bt = register_diag_field('ocean_model', 'PFvBT', diag%axesCv1, Time, &
       'Meridional Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_Coru_bt = register_diag_field('ocean_model', 'CoruBT', diag%axesCu1, Time, &
@@ -4855,6 +5003,78 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
       'Barotropic meridional transport averaged over a baroclinic step', &
       'm3 s-1', conversion=GV%H_to_m*US%L_to_m*US%L_T_to_m_s)
 
+  CS%id_PFu_bt_pred = register_diag_field('ocean_model', 'PFuBT_pred', diag%axesCu1, Time, &
+      'Zonal Anomalous Barotropic Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_PFv_bt_pred = register_diag_field('ocean_model', 'PFvBT_pred', diag%axesCv1, Time, &
+      'Meridional Anomalous Barotropic Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_Coru_bt_pred = register_diag_field('ocean_model', 'CoruBT_pred', diag%axesCu1, Time, &
+      'Zonal Barotropic Coriolis Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_Corv_bt_pred = register_diag_field('ocean_model', 'CorvBT_pred', diag%axesCv1, Time, &
+      'Meridional Barotropic Coriolis Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_uaccel_pred = register_diag_field('ocean_model', 'u_accel_bt_pred', diag%axesCu1, Time, &
+      'Barotropic zonal acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_vaccel_pred = register_diag_field('ocean_model', 'v_accel_bt_pred', diag%axesCv1, Time, &
+      'Barotropic meridional acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_ubtforce_pred = register_diag_field('ocean_model', 'ubtforce_pred', diag%axesCu1, Time, &
+      'Barotropic zonal acceleration from baroclinic terms (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_vbtforce_pred = register_diag_field('ocean_model', 'vbtforce_pred', diag%axesCv1, Time, &
+      'Barotropic meridional acceleration from baroclinic terms (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_ubtdt_pred = register_diag_field('ocean_model', 'ubt_dt_pred', diag%axesCu1, Time, &
+      'Barotropic zonal acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_vbtdt_pred = register_diag_field('ocean_model', 'vbt_dt_pred', diag%axesCv1, Time, &
+      'Barotropic meridional acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+
+  CS%id_eta_bt_pred = register_diag_field('ocean_model', 'eta_bt_pred', diag%axesT1, Time, &
+      'Barotropic end SSH (pred)', thickness_units, conversion=GV%H_to_MKS)
+  CS%id_ubt_pred = register_diag_field('ocean_model', 'ubt_pred', diag%axesCu1, Time, &
+      'Barotropic end zonal velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_vbt_pred = register_diag_field('ocean_model', 'vbt_pred', diag%axesCv1, Time, &
+      'Barotropic end meridional velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_eta_st_pred = register_diag_field('ocean_model', 'eta_st_pred', diag%axesT1, Time, &
+      'Barotropic start SSH (pred)', thickness_units, conversion=GV%H_to_MKS)
+  CS%id_ubt_st_pred = register_diag_field('ocean_model', 'ubt_st_pred', diag%axesCu1, Time, &
+      'Barotropic start zonal velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_vbt_st_pred = register_diag_field('ocean_model', 'vbt_st_pred', diag%axesCv1, Time, &
+      'Barotropic start meridional velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_ubtav_pred = register_diag_field('ocean_model', 'ubtav_pred', diag%axesCu1, Time, &
+      'Barotropic time-average zonal velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_vbtav_pred = register_diag_field('ocean_model', 'vbtav_pred', diag%axesCv1, Time, &
+      'Barotropic time-average meridional velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_eta_cor_pred = register_diag_field('ocean_model', 'eta_cor_pred', diag%axesT1, Time, &
+      'Corrective mass flux within a timestep (pred)', 'm', conversion=GV%H_to_m)
+  CS%id_visc_rem_u_pred = register_diag_field('ocean_model', 'visc_rem_u_pred', diag%axesCuL, Time, &
+      'Viscous remnant at u (pred)', 'nondim')
+  CS%id_visc_rem_v_pred = register_diag_field('ocean_model', 'visc_rem_v_pred', diag%axesCvL, Time, &
+      'Viscous remnant at v (pred)', 'nondim')
+  CS%id_gtotn_pred = register_diag_field('ocean_model', 'gtot_n_pred', diag%axesT1, Time, &
+      'gtot to North (pred)', 'm s-2', conversion=GV%m_to_H*(US%L_T_to_m_s**2))
+  CS%id_gtots_pred = register_diag_field('ocean_model', 'gtot_s_pred', diag%axesT1, Time, &
+      'gtot to South (pred)', 'm s-2', conversion=GV%m_to_H*(US%L_T_to_m_s**2))
+  CS%id_gtote_pred = register_diag_field('ocean_model', 'gtot_e_pred', diag%axesT1, Time, &
+      'gtot to East (pred)', 'm s-2', conversion=GV%m_to_H*(US%L_T_to_m_s**2))
+  CS%id_gtotw_pred = register_diag_field('ocean_model', 'gtot_w_pred', diag%axesT1, Time, &
+      'gtot to West (pred)', 'm s-2', conversion=GV%m_to_H*(US%L_T_to_m_s**2))
+
+  CS%id_frhatu_pred = register_diag_field('ocean_model', 'frhatu_pred', diag%axesCuL, Time, &
+      'Fractional thickness of layers in u-columns (pred)', 'nondim')
+  CS%id_frhatv_pred = register_diag_field('ocean_model', 'frhatv_pred', diag%axesCvL, Time, &
+      'Fractional thickness of layers in v-columns (pred)', 'nondim')
+
+  CS%id_eta_hifreq_pred = register_diag_field('ocean_model', 'eta_hifreq_pred', diag%axesT1, Time, &
+      'High Frequency Barotropic SSH (pred)', thickness_units, conversion=GV%H_to_MKS)
+  CS%id_ubt_hifreq_pred = register_diag_field('ocean_model', 'ubt_hifreq_pred', diag%axesCu1, Time, &
+      'High Frequency Barotropic zonal velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_vbt_hifreq_pred = register_diag_field('ocean_model', 'vbt_hifreq_pred', diag%axesCv1, Time, &
+      'High Frequency Barotropic meridional velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_eta_pred_hifreq_pred = register_diag_field('ocean_model', 'eta_pred_hifreq_pred', diag%axesT1, Time, &
+      'High Frequency Predictor Barotropic SSH (pred)', thickness_units, conversion=GV%H_to_MKS)
+  CS%id_uhbt_hifreq_pred = register_diag_field('ocean_model', 'uhbt_hifreq_pred', diag%axesCu1, Time, &
+      'High Frequency Barotropic zonal transport (pred)', &
+      'm3 s-1', conversion=GV%H_to_m*US%L_to_m*US%L_T_to_m_s)
+  CS%id_vhbt_hifreq_pred = register_diag_field('ocean_model', 'vhbt_hifreq_pred', diag%axesCv1, Time, &
+      'High Frequency Barotropic meridional transport (pred)', &
+      'm3 s-1', conversion=GV%H_to_m*US%L_to_m*US%L_T_to_m_s)
+
   if (use_BT_cont_type) then
     CS%id_BTC_FA_u_EE = register_diag_field('ocean_model', 'BTC_FA_u_EE', diag%axesCu1, Time, &
         'BTCont type far east face area', 'm2', conversion=US%L_to_m*GV%H_to_m)
@@ -4888,12 +5108,49 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     !     'BTCont type ratio of near north and south face areas', 'nondim')
     ! CS%id_BTC_FA_h_rat0 = register_diag_field('ocean_model', 'BTC_FA_h_rat0', diag%axesT1, Time, &
     !     'BTCont type maximum ratios of near face areas around cells', 'nondim')
+
+    CS%id_BTC_FA_u_EE_pred = register_diag_field('ocean_model', 'BTC_FA_u_EE_pred', diag%axesCu1, Time, &
+        'BTCont type far east face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_FA_u_E0_pred = register_diag_field('ocean_model', 'BTC_FA_u_E0_pred', diag%axesCu1, Time, &
+        'BTCont type near east face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_FA_u_WW_pred = register_diag_field('ocean_model', 'BTC_FA_u_WW_pred', diag%axesCu1, Time, &
+        'BTCont type far west face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_FA_u_W0_pred = register_diag_field('ocean_model', 'BTC_FA_u_W0_pred', diag%axesCu1, Time, &
+        'BTCont type near west face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_ubt_EE_pred = register_diag_field('ocean_model', 'BTC_ubt_EE_pred', diag%axesCu1, Time, &
+        'BTCont type far east velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+    CS%id_BTC_ubt_WW_pred = register_diag_field('ocean_model', 'BTC_ubt_WW_pred', diag%axesCu1, Time, &
+        'BTCont type far west velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+    ! This is a specialized diagnostic that is not being made widely available (yet).
+    ! CS%id_BTC_FA_u_rat0_pred = register_diag_field('ocean_model', 'BTC_FA_u_rat0_pred', diag%axesCu1, Time, &
+    !     'BTCont type ratio of near east and west face areas (pred)', 'nondim')
+    CS%id_BTC_FA_v_NN_pred = register_diag_field('ocean_model', 'BTC_FA_v_NN_pred', diag%axesCv1, Time, &
+        'BTCont type far north face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_FA_v_N0_pred = register_diag_field('ocean_model', 'BTC_FA_v_N0_pred', diag%axesCv1, Time, &
+        'BTCont type near north face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_FA_v_SS_pred = register_diag_field('ocean_model', 'BTC_FA_v_SS_pred', diag%axesCv1, Time, &
+        'BTCont type far south face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_FA_v_S0_pred = register_diag_field('ocean_model', 'BTC_FA_v_S0_pred', diag%axesCv1, Time, &
+        'BTCont type near south face area (pred)', 'm2', conversion=US%L_to_m*GV%H_to_m)
+    CS%id_BTC_vbt_NN_pred = register_diag_field('ocean_model', 'BTC_vbt_NN_pred', diag%axesCv1, Time, &
+        'BTCont type far north velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+    CS%id_BTC_vbt_SS_pred = register_diag_field('ocean_model', 'BTC_vbt_SS_pred', diag%axesCv1, Time, &
+        'BTCont type far south velocity (pred)', 'm s-1', conversion=US%L_T_to_m_s)
+    ! This is a specialized diagnostic that is not being made widely available (yet).
+    ! CS%id_BTC_FA_v_rat0_pred = register_diag_field('ocean_model', 'BTC_FA_v_rat0_pred', diag%axesCv1, Time, &
+    !     'BTCont type ratio of near north and south face areas (pred)', 'nondim')
+    ! CS%id_BTC_FA_h_rat0_pred = register_diag_field('ocean_model', 'BTC_FA_h_rat0_pred', diag%axesT1, Time, &
+    !     'BTCont type maximum ratios of near face areas around cells (pred)', 'nondim')
   endif
   CS%id_uhbt0 = register_diag_field('ocean_model', 'uhbt0', diag%axesCu1, Time, &
       'Barotropic zonal transport difference', 'm3 s-1', conversion=GV%H_to_m*US%L_to_m**2*US%s_to_T)
   CS%id_vhbt0 = register_diag_field('ocean_model', 'vhbt0', diag%axesCv1, Time, &
       'Barotropic meridional transport difference', 'm3 s-1', conversion=GV%H_to_m*US%L_to_m**2*US%s_to_T)
 
+  CS%id_uhbt0_pred = register_diag_field('ocean_model', 'uhbt0_pred', diag%axesCu1, Time, &
+      'Barotropic zonal transport difference (pred)', 'm3 s-1', conversion=GV%H_to_m*US%L_to_m**2*US%s_to_T)
+  CS%id_vhbt0_pred = register_diag_field('ocean_model', 'vhbt0_pred', diag%axesCv1, Time, &
+      'Barotropic meridional transport difference (pred)', 'm3 s-1', conversion=GV%H_to_m*US%L_to_m**2*US%s_to_T)
   if (CS%id_frhatu1 > 0) call safe_alloc_ptr(CS%frhatu1, IsdB,IedB,jsd,jed,nz)
   if (CS%id_frhatv1 > 0) call safe_alloc_ptr(CS%frhatv1, isd,ied,JsdB,JedB,nz)
 
