@@ -314,6 +314,8 @@ type, public :: barotropic_CS ; private
   integer :: id_BTC_vbt_NN = -1, id_BTC_vbt_SS = -1
   integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
   integer :: id_uhbt0 = -1, id_vhbt0 = -1
+  integer :: id_PFu_bt_hifreq = -1, id_PFu_bt_hifreq = -1
+  integer :: id_Coru_bt_hifreq, id_Corv_bt_hifreq = -1
 
   integer :: id_PFu_bt_pred = -1, id_PFv_bt_pred = -1, id_Coru_bt_pred = -1, id_Corv_bt_pred = -1
   integer :: id_ubtforce_pred = -1, id_vbtforce_pred = -1, id_uaccel_pred = -1, id_vaccel_pred = -1
@@ -332,6 +334,8 @@ type, public :: barotropic_CS ; private
   integer :: id_BTC_vbt_NN_pred = -1, id_BTC_vbt_SS_pred = -1
   integer :: id_BTC_FA_u_rat0_pred = -1, id_BTC_FA_v_rat0_pred = -1, id_BTC_FA_h_rat0_pred = -1
   integer :: id_uhbt0_pred = -1, id_vhbt0_pred = -1
+  integer :: id_PFu_bt_hifreq_pred = -1, id_PFu_bt_hifreq_pred = -1
+  integer :: id_Coru_bt_hifreq_pred, id_Corv_bt_hifreq_pred = -1
   !>@}
 
 end type barotropic_CS
@@ -729,6 +733,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: id_BTC_vbt_NN = -1, id_BTC_vbt_SS = -1
   integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
   integer :: id_uhbt0 = -1, id_vhbt0 = -1
+  integer :: id_PFu_bt_hifreq = -1, id_PFu_bt_hifreq = -1
+  integer :: id_Coru_bt_hifreq, id_Corv_bt_hifreq = -1
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
@@ -4988,6 +4994,14 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   CS%id_vhbt_hifreq = register_diag_field('ocean_model', 'vhbt_hifreq', diag%axesCv1, Time, &
       'High Frequency Barotropic meridional transport', &
       'm3 s-1', conversion=GV%H_to_m*US%L_to_m*US%L_T_to_m_s)
+  CS%id_PFu_bt_hifreq = register_diag_field('ocean_model', 'PFuBT_hifreq', diag%axesCu1, Time, &
+      'High Frequency Zonal Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_PFv_bt_hifreq = register_diag_field('ocean_model', 'PFvBT_hifreq', diag%axesCu1, Time, &
+      'High Frequency Meridional Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_Coru_bt_hifreq = register_diag_field('ocean_model', 'CoruBT_hifreq', diag%axesCu1, Time, &
+      'High Frequency Zonal Barotropic Coriolis Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_Corv_bt_hifreq = register_diag_field('ocean_model', 'CorvBT_hifreq', diag%axesCv1, Time, &
+      'High Frequency Meridional Barotropic Coriolis Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_frhatu = register_diag_field('ocean_model', 'frhatu', diag%axesCuL, Time, &
       'Fractional thickness of layers in u-columns', 'nondim')
   CS%id_frhatv = register_diag_field('ocean_model', 'frhatv', diag%axesCvL, Time, &
@@ -5074,6 +5088,14 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   CS%id_vhbt_hifreq_pred = register_diag_field('ocean_model', 'vhbt_hifreq_pred', diag%axesCv1, Time, &
       'High Frequency Barotropic meridional transport (pred)', &
       'm3 s-1', conversion=GV%H_to_m*US%L_to_m*US%L_T_to_m_s)
+  CS%id_PFu_bt_hifreq_pred = register_diag_field('ocean_model', 'PFuBT_hifreq_pred', diag%axesCu1, Time, &
+      'High Frequency Zonal Anomalous Barotropic Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_PFv_bt_hifreq_pred = register_diag_field('ocean_model', 'PFvBT_hifreq_pred', diag%axesCu1, Time, &
+      'High Frequency Meridional Anomalous Barotropic Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_Coru_bt_hifreq_pred = register_diag_field('ocean_model', 'CoruBT_hifreq_pred', diag%axesCu1, Time, &
+      'High Frequency Zonal Barotropic Coriolis Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_Corv_bt_hifreq_pred = register_diag_field('ocean_model', 'CorvBT_hifreq_pred', diag%axesCv1, Time, &
+      'High Frequency Meridional Barotropic Coriolis Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
 
   if (use_BT_cont_type) then
     CS%id_BTC_FA_u_EE = register_diag_field('ocean_model', 'BTC_FA_u_EE', diag%axesCu1, Time, &
