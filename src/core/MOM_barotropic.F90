@@ -734,7 +734,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
   integer :: id_uhbt0 = -1, id_vhbt0 = -1
   integer :: id_PFu_bt_hifreq = -1, id_PFv_bt_hifreq = -1
-  integer :: id_Coru_bt_hifreq, id_Corv_bt_hifreq = -1
+  integer :: id_Coru_bt_hifreq = -1, id_Corv_bt_hifreq = -1
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
@@ -2415,6 +2415,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         id_uhbt_hifreq = CS%id_uhbt_hifreq; id_vhbt_hifreq = CS%id_vhbt_hifreq
         id_eta_hifreq = CS%id_eta_hifreq
         id_eta_pred_hifreq = CS%id_eta_pred_hifreq
+        id_PFu_bt_hifreq = CS%id_PFu_bt_hifreq; id_PFv_bt_hifreq = CS%id_PFv_bt_hifreq
+        id_Coru_bt_hifreq = CS%id_Coru_bt_hifreq; id_Corv_bt_hifreq = CS%id_Corv_bt_hifreq
       else
         time_step_end = time_bt_start + real_to_time(US%T_to_s*time_int_out_hf*ipred*n)
         call enable_averaging(US%T_to_s*dt/Npred/(nstep+nfilter), time_step_end, CS%diag)
@@ -2428,17 +2430,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         id_uhbt_hifreq = CS%id_uhbt_hifreq_pred; id_vhbt_hifreq = CS%id_vhbt_hifreq_pred
         id_eta_hifreq = CS%id_eta_hifreq_pred
         id_eta_pred_hifreq = CS%id_eta_pred_hifreq_pred
-      endif
+        id_PFu_bt_hifreq = CS%id_PFu_bt_hifreq_pred; id_PFv_bt_hifreq = CS%id_PFv_bt_hifreq_pred
+        id_Coru_bt_hifreq = CS%id_Coru_bt_hifreq_pred; id_Corv_bt_hifreq = CS%id_Corv_bt_hifreq_pred
+    endif
       if (id_ubt_hifreq > 0) call post_data(id_ubt_hifreq, ubt(IsdB:IedB,jsd:jed), CS%diag)
       if (id_vbt_hifreq > 0) call post_data(id_vbt_hifreq, vbt(isd:ied,JsdB:JedB), CS%diag)
       if (id_eta_hifreq > 0) call post_data(id_eta_hifreq, eta(isd:ied,jsd:jed), CS%diag)
       if (id_uhbt_hifreq > 0) call post_data(id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
       if (id_vhbt_hifreq > 0) call post_data(id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
       if (id_eta_pred_hifreq > 0) call post_data(id_eta_pred_hifreq, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
-      if (id_PFu_bt_hifreq > 0) call post_data(id_PFu_bt_hifreq, PFu(isd:ied,jsd:jed), CS%diag)
-      if (id_PFv_bt_hifreq > 0) call post_data(id_PFv_bt_hifreq, PFv_bt_sum(isd:ied,jsd:jed), CS%diag)
-      if (id_Coru_bt_hifreq > 0) call post_data(id_Coru_bt_hifreq, Cor_u(isd:ied,jsd:jed), CS%diag)
-      if (id_Corv_bt_hifreq > 0) call post_data(id_Corv_bt_hifreq, Cor_v(isd:ied,jsd:jed), CS%diag)
+      if (id_PFu_bt_hifreq > 0) call post_data(id_PFu_bt_hifreq, PFu(IsdB:IedB,jsd:jed), CS%diag)
+      if (id_PFv_bt_hifreq > 0) call post_data(id_PFv_bt_hifreq, PFv(isd:ied,JsdB:JedB), CS%diag)
+      if (id_Coru_bt_hifreq > 0) call post_data(id_Coru_bt_hifreq, Cor_u(IsdB:IedB,jsd:jed), CS%diag)
+      if (id_Corv_bt_hifreq > 0) call post_data(id_Corv_bt_hifreq, Cor_v(isd:ied,JsdB:JedB), CS%diag)
     endif
 
     if (CS%debug_bt) then
@@ -5004,7 +5008,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
       'm3 s-1', conversion=GV%H_to_m*US%L_to_m*US%L_T_to_m_s)
   CS%id_PFu_bt_hifreq = register_diag_field('ocean_model', 'PFuBT_hifreq', diag%axesCu1, Time, &
       'High Frequency Zonal Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
-  CS%id_PFv_bt_hifreq = register_diag_field('ocean_model', 'PFvBT_hifreq', diag%axesCu1, Time, &
+  CS%id_PFv_bt_hifreq = register_diag_field('ocean_model', 'PFvBT_hifreq', diag%axesCv1, Time, &
       'High Frequency Meridional Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_Coru_bt_hifreq = register_diag_field('ocean_model', 'CoruBT_hifreq', diag%axesCu1, Time, &
       'High Frequency Zonal Barotropic Coriolis Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
@@ -5098,7 +5102,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
       'm3 s-1', conversion=GV%H_to_m*US%L_to_m*US%L_T_to_m_s)
   CS%id_PFu_bt_hifreq_pred = register_diag_field('ocean_model', 'PFuBT_hifreq_pred', diag%axesCu1, Time, &
       'High Frequency Zonal Anomalous Barotropic Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
-  CS%id_PFv_bt_hifreq_pred = register_diag_field('ocean_model', 'PFvBT_hifreq_pred', diag%axesCu1, Time, &
+  CS%id_PFv_bt_hifreq_pred = register_diag_field('ocean_model', 'PFvBT_hifreq_pred', diag%axesCv1, Time, &
       'High Frequency Meridional Anomalous Barotropic Pressure Force Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_Coru_bt_hifreq_pred = register_diag_field('ocean_model', 'CoruBT_hifreq_pred', diag%axesCu1, Time, &
       'High Frequency Zonal Barotropic Coriolis Acceleration (pred)', 'm s-2', conversion=US%L_T2_to_m_s2)
