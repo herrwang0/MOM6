@@ -110,6 +110,11 @@ type, public :: dyn_horgrid_type
     areaCv       !< The areas of the v-grid cells [L2 ~> m2].
 
   real, allocatable, dimension(:,:) :: &
+    porous_DminT, & !< minimum topographic height of h-cell [Z ~> m]
+    porous_DmaxT, & !< maximum topographic height of h-cell [Z ~> m]
+    porous_DavgT    !< average topographic height of h-cell [Z ~> m]
+
+  real, allocatable, dimension(:,:) :: &
     porous_DminU, & !< minimum topographic height of U-face [Z ~> m]
     porous_DmaxU, & !< maximum topographic height of U-face [Z ~> m]
     porous_DavgU    !< average topographic height of U-face [Z ~> m]
@@ -267,6 +272,10 @@ subroutine create_dyn_horgrid(G, HI, bathymetry_at_vel)
   allocate(G%IareaCu(IsdB:IedB,jsd:jed), source=0.0)
   allocate(G%IareaCv(isd:ied,JsdB:JedB), source=0.0)
 
+  allocate(G%porous_DminT(isd:ied,jsd:jed), source=0.0)
+  allocate(G%porous_DmaxT(isd:ied,jsd:jed), source=0.0)
+  allocate(G%porous_DavgT(isd:ied,jsd:jed), source=0.0)
+
   allocate(G%porous_DminU(IsdB:IedB,jsd:jed), source=0.0)
   allocate(G%porous_DmaxU(IsdB:IedB,jsd:jed), source=0.0)
   allocate(G%porous_DavgU(IsdB:IedB,jsd:jed), source=0.0)
@@ -325,6 +334,9 @@ subroutine rotate_dyn_horgrid(G_in, G, US, turns)
   call rotate_array(G_in%sin_rot, turns, G%sin_rot)
   call rotate_array(G_in%cos_rot, turns, G%cos_rot)
   call rotate_array(G_in%mask2dT, turns, G%mask2dT)
+  call rotate_array(G_in%porous_DminT, turns, G%porous_DminT)
+  call rotate_array(G_in%porous_DmaxU, turns, G%porous_DmaxU)
+  call rotate_array(G_in%porous_DavgT, turns, G%porous_DavgT)
 
   ! Face points
   call rotate_array_pair(G_in%geoLonCu, G_in%geoLonCv, turns, G%geoLonCu, G%geoLonCv)
@@ -513,6 +525,8 @@ subroutine destroy_dyn_horgrid(G)
   deallocate(G%geoLonCv) ; deallocate(G%geoLonBu)
 
   deallocate(G%dx_Cv) ; deallocate(G%dy_Cu)
+
+  deallocate(G%porous_DminT) ; deallocate(G%porous_DmaxT) ; deallocate(G%porous_DavgT)
 
   deallocate(G%porous_DminU) ; deallocate(G%porous_DmaxU) ; deallocate(G%porous_DavgU)
   deallocate(G%porous_DminV) ; deallocate(G%porous_DmaxV) ; deallocate(G%porous_DavgV)

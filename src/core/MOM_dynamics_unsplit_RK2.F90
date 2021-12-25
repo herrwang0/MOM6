@@ -48,7 +48,7 @@ module MOM_dynamics_unsplit_RK2
 !*                                                                     *
 !********+*********+*********+*********+*********+*********+*********+**
 
-use MOM_variables, only : vertvisc_type, thermo_var_ptrs, porous_barrier_ptrs
+use MOM_variables, only : vertvisc_type, thermo_var_ptrs, porous_barrier_ptrs, porous_media_ptrs
 use MOM_variables, only : ocean_internal_state, accel_diag_ptrs, cont_diag_ptrs
 use MOM_forcing_type, only : mech_forcing
 use MOM_checksum_packages, only : MOM_thermo_chksum, MOM_state_chksum, MOM_accel_chksum
@@ -186,7 +186,7 @@ contains
 !> Step the MOM6 dynamics using an unsplit quasi-2nd order Runge-Kutta scheme
 subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, G, GV, US, CS, &
-                  VarMix, MEKE, pbv)
+                  VarMix, MEKE, pbv, pmv)
   type(ocean_grid_type),             intent(inout) :: G       !< The ocean's grid structure.
   type(verticalGrid_type),           intent(in)    :: GV      !< The ocean's vertical grid structure.
   type(unit_scale_type),             intent(in)    :: US      !< A dimensional unit scaling type
@@ -231,6 +231,7 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
                                                               !! fields related to the Mesoscale
                                                               !! Eddy Kinetic Energy.
   type(porous_barrier_ptrs), intent(in) :: pbv                !< porous barrier fractional cell metrics
+  type(porous_media_ptrs), intent(in) :: pmv                !< porous media fractional cell metrics
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV))  :: h_av ! Averaged layer thicknesses [H ~> m or kg m-2]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV))  :: hp ! Predicted layer thicknesses [H ~> m or kg m-2]
@@ -283,7 +284,7 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   call cpu_clock_begin(id_clock_continuity)
   ! This is a duplicate calculation of the last continuity from the previous step
   ! and could/should be optimized out. -AJA
-  call continuity(u_in, v_in, h_in, hp, uh, vh, dt_pred, G, GV, US, CS%continuity_CSp, CS%OBC, pbv)
+  call continuity(u_in, v_in, h_in, hp, uh, vh, dt_pred, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, pmv)
   call cpu_clock_end(id_clock_continuity)
   call pass_var(hp, G%Domain, clock=id_clock_pass)
   call pass_vector(uh, vh, G%Domain, clock=id_clock_pass)
@@ -352,7 +353,7 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
 ! uh = up[n-1/2] * h[n-1/2]
 ! h_av = h + dt div . uh
   call cpu_clock_begin(id_clock_continuity)
-  call continuity(up, vp, h_in, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv)
+  call continuity(up, vp, h_in, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, pmv)
   call cpu_clock_end(id_clock_continuity)
   call pass_var(hp, G%Domain, clock=id_clock_pass)
   call pass_vector(uh, vh, G%Domain, clock=id_clock_pass)
@@ -407,7 +408,7 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
 ! uh = up[n] * h[n]  (up[n] might be extrapolated to damp GWs)
 ! h[n+1] = h[n] + dt div . uh
   call cpu_clock_begin(id_clock_continuity)
-  call continuity(up, vp, h_in, h_in, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv)
+  call continuity(up, vp, h_in, h_in, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, pmv)
   call cpu_clock_end(id_clock_continuity)
   call pass_var(h_in, G%Domain, clock=id_clock_pass)
   call pass_vector(uh, vh, G%Domain, clock=id_clock_pass)

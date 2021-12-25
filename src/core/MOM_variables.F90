@@ -314,6 +314,11 @@ type, public :: porous_barrier_ptrs
    real, pointer, dimension(:,:,:) :: por_layer_widthV => NULL() !< fractional open width of V-faces [nondim]
 end type porous_barrier_ptrs
 
+!> pointers to grids modifying cell metric at porous medias
+type, public :: porous_media_ptrs
+   real, pointer, dimension(:,:,:) :: por_face_areaT => NULL() !< fractional open area of h-cells [nondim]
+   real, pointer, dimension(:,:,:) :: por_layer_widthT => NULL() !< fractional open width of h-cells [nondim]
+end type porous_media_ptrs
 
 contains
 

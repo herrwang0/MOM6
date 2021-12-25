@@ -11,7 +11,7 @@ use MOM_grid, only : ocean_grid_type
 use MOM_open_boundary, only : ocean_OBC_type, OBC_segment_type, OBC_NONE
 use MOM_open_boundary, only : OBC_DIRECTION_E, OBC_DIRECTION_W, OBC_DIRECTION_N, OBC_DIRECTION_S
 use MOM_unit_scaling, only : unit_scale_type
-use MOM_variables, only : BT_cont_type, porous_barrier_ptrs
+use MOM_variables, only : BT_cont_type, porous_barrier_ptrs,porous_media_ptrs
 use MOM_verticalGrid, only : verticalGrid_type
 
 implicit none ; private
@@ -70,7 +70,7 @@ contains
 
 !> Time steps the layer thicknesses, using a monotonically limit, directionally split PPM scheme,
 !! based on Lin (1994).
-subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhbt, vhbt, &
+subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, pmv, uhbt, vhbt, &
                           visc_rem_u, visc_rem_v, u_cor, v_cor, BT_cont)
   type(ocean_grid_type),   intent(inout) :: G   !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV  !< Vertical grid structure.
@@ -91,6 +91,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
   type(continuity_PPM_CS), intent(in)    :: CS  !< Module's control structure.
   type(ocean_OBC_type),    pointer       :: OBC !< Open boundaries control structure.
   type(porous_barrier_ptrs), intent(in)  :: pbv !< pointers to porous barrier fractional cell metrics
+  type(porous_media_ptrs), intent(in)    :: pmv !< pointers to porous media fractional cell metrics
   real, dimension(SZIB_(G),SZJ_(G)), &
                  optional, intent(in)    :: uhbt !< The summed volume flux through zonal faces
                                                  !! [H L2 T-1 ~> m3 s-1 or kg s-1].
@@ -153,7 +154,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     call cpu_clock_begin(id_clock_update)
     !$OMP parallel do default(shared)
     do k=1,nz ; do j=LB%jsh,LB%jeh ; do i=LB%ish,LB%ieh
-      h(i,j,k) = hin(i,j,k) - dt * G%IareaT(i,j) * (uh(I,j,k) - uh(I-1,j,k))
+      h(i,j,k) = hin(i,j,k) - dt * G%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * (uh(I,j,k) - uh(I-1,j,k))
   !   Uncomment this line to prevent underflow.
   !   if (h(i,j,k) < h_min) h(i,j,k) = h_min
     enddo ; enddo ; enddo
@@ -169,7 +170,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     call cpu_clock_begin(id_clock_update)
     !$OMP parallel do default(shared)
     do k=1,nz ; do j=LB%jsh,LB%jeh ; do i=LB%ish,LB%ieh
-      h(i,j,k) = h(i,j,k) - dt * G%IareaT(i,j) * (vh(i,J,k) - vh(i,J-1,k))
+      h(i,j,k) = h(i,j,k) - dt * G%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * (vh(i,J,k) - vh(i,J-1,k))
   !   This line prevents underflow.
       if (h(i,j,k) < h_min) h(i,j,k) = h_min
     enddo ; enddo ; enddo
@@ -186,7 +187,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     call cpu_clock_begin(id_clock_update)
     !$OMP parallel do default(shared)
     do k=1,nz ; do j=LB%jsh,LB%jeh ; do i=LB%ish,LB%ieh
-      h(i,j,k) = hin(i,j,k) - dt * G%IareaT(i,j) * (vh(i,J,k) - vh(i,J-1,k))
+      h(i,j,k) = hin(i,j,k) - dt * G%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * (vh(i,J,k) - vh(i,J-1,k))
     enddo ; enddo ; enddo
     call cpu_clock_end(id_clock_update)
 
@@ -199,7 +200,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     call cpu_clock_begin(id_clock_update)
     !$OMP parallel do default(shared)
     do k=1,nz ; do j=LB%jsh,LB%jeh ; do i=LB%ish,LB%ieh
-      h(i,j,k) = h(i,j,k) - dt * G%IareaT(i,j) * (uh(I,j,k) - uh(I-1,j,k))
+      h(i,j,k) = h(i,j,k) - dt * G%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * (uh(I,j,k) - uh(I-1,j,k))
       ! This line prevents underflow.
       if (h(i,j,k) < h_min) h(i,j,k) = h_min
     enddo ; enddo ; enddo

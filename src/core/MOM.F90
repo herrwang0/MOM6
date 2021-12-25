@@ -127,7 +127,7 @@ use MOM_transcribe_grid,       only : copy_dyngrid_to_MOM_grid, copy_MOM_grid_to
 use MOM_unit_scaling,          only : unit_scale_type, unit_scaling_init
 use MOM_unit_scaling,          only : unit_scaling_end, fix_restart_unit_scaling
 use MOM_variables,             only : surface, allocate_surface_state, deallocate_surface_state
-use MOM_variables,             only : thermo_var_ptrs, vertvisc_type, porous_barrier_ptrs
+use MOM_variables,             only : thermo_var_ptrs, vertvisc_type, porous_barrier_ptrs, porous_media_ptrs
 use MOM_variables,             only : accel_diag_ptrs, cont_diag_ptrs, ocean_internal_state
 use MOM_variables,             only : rotate_surface_state
 use MOM_verticalGrid,          only : verticalGrid_type, verticalGridInit, verticalGridEnd
@@ -136,7 +136,7 @@ use MOM_verticalGrid,          only : get_thickness_units, get_flux_units, get_t
 use MOM_wave_interface,        only : wave_parameters_CS, waves_end
 use MOM_wave_interface,        only : Update_Stokes_Drift
 
-use MOM_porous_barriers,      only : porous_widths
+use MOM_porous_barriers,      only : porous_widths, por_media
 
 ! ODA modules
 use MOM_oda_driver_mod,        only : ODA_CS, oda, init_oda, oda_end
@@ -170,6 +170,7 @@ type MOM_diag_IDs
   !>@}
   !> 2-d state field diagnostic ID
   integer :: id_ssh_inst = -1
+  integer :: id_por_face_areaT = -1, id_por_layer_widthT = -1
 end type MOM_diag_IDs
 
 !> Control structure for the MOM module, including the variables that describe
@@ -399,6 +400,11 @@ type, public :: MOM_control_struct ; private
                                 !! ensemble model state vectors and data assimilation
                                 !! increments and priors
   type(porous_barrier_ptrs) :: pbv !< porous barrier fractional cell metrics
+  type(porous_media_ptrs)   :: pmv !< porous barrier fractional cell metrics
+  ! real ALLOCABLE_, dimension(NIMEM_,NJMEM_,NKMEM_) &
+  !                           :: por_face_areaT !< fractional open area of U-faces [nondim]
+  ! real ALLOCABLE_, dimension(NIMEM_,NJMEM_,NK_INTERFACE_) &
+  !                           :: por_layer_widthT !< fractional open width of U-faces [nondim]
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_,NKMEM_) &
                             :: por_face_areaU !< fractional open area of U-faces [nondim]
   real ALLOCABLE_, dimension(NIMEM_,NJMEMB_PTR_,NKMEM_) &
@@ -1060,6 +1066,15 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   !update porous barrier fractional cell metrics
   call porous_widths(h, CS%tv, G, GV, US, eta_por, CS%pbv)
+  call por_media(h, CS%tv, G, GV, US, eta_por, CS%pmv)
+  call pass_var(CS%pmv%por_face_areaT, G%domain)
+  call pass_var(CS%pmv%por_layer_widthT, G%domain)
+
+  call enable_averages(dt, Time_local, CS%diag)
+  ! These diagnostics are available after every time dynamics step.
+  if (IDs%id_por_layer_widthT > 0) call post_data(IDs%id_por_layer_widthT, CS%pmv%por_layer_widthT, CS%diag)
+  if (IDs%id_por_face_areaT > 0) call post_data(IDs%id_por_face_areaT, CS%pmv%por_face_areaT, CS%diag)
+  call disable_averaging(CS%diag)
 
   ! The bottom boundary layer properties need to be recalculated.
   if (bbl_time_int > 0.0) then
@@ -1090,7 +1105,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     call step_MOM_dyn_split_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                 p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
                 CS%eta_av_bc, G, GV, US, CS%dyn_split_RK2_CSp, calc_dtbt, CS%VarMix, &
-                CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, waves=waves)
+                CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, CS%pmv, waves=waves)
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_split (step_MOM)")
 
   elseif (CS%do_dynamics) then ! ------------------------------------ not SPLIT
@@ -1104,11 +1119,11 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     if (CS%use_RK2) then
       call step_MOM_dyn_unsplit_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
-               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_RK2_CSp, CS%VarMix, CS%MEKE, CS%pbv)
+               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_RK2_CSp, CS%VarMix, CS%MEKE, CS%pbv, CS%pmv)
     else
       call step_MOM_dyn_unsplit(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
-               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_CSp, CS%VarMix, CS%MEKE, CS%pbv, Waves=Waves)
+               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_CSp, CS%VarMix, CS%MEKE, CS%pbv, CS%pmv, Waves=Waves)
     endif
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_unsplit (step_MOM)")
 
@@ -2359,6 +2374,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   CS%time_in_cycle = 0.0 ; CS%time_in_thermo_cycle = 0.0
 
   !allocate porous topography variables
+  ALLOC_(CS%pmv%por_face_areaT(isd:ied,jsd:jed,nz)) ; CS%pmv%por_face_areaT(:,:,:) = 1.0
+  ALLOC_(CS%pmv%por_layer_widthT(isd:ied,jsd:jed,nz+1)) ; CS%pmv%por_layer_widthT(:,:,:) = 1.0
+
   ALLOC_(CS%por_face_areaU(IsdB:IedB,jsd:jed,nz)) ; CS%por_face_areaU(:,:,:) = 1.0
   ALLOC_(CS%por_face_areaV(isd:ied,JsdB:JedB,nz)) ; CS%por_face_areaV(:,:,:) = 1.0
   ALLOC_(CS%por_layer_widthU(IsdB:IedB,jsd:jed,nz+1)) ; CS%por_layer_widthU(:,:,:) = 1.0
@@ -2696,7 +2714,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
               CS%dt, CS%ADp, CS%CDp, MOM_internal_state, CS%VarMix, CS%MEKE, &
               CS%thickness_diffuse_CSp,                                      &
               CS%OBC, CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp,        &
-              CS%visc, dirs, CS%ntrunc, CS%pbv, calc_dtbt=calc_dtbt, cont_stencil=CS%cont_stencil)
+              CS%visc, dirs, CS%ntrunc, CS%pbv, CS%pmv, calc_dtbt=calc_dtbt, cont_stencil=CS%cont_stencil)
     if (CS%dtbt_reset_period > 0.0) then
       CS%dtbt_reset_interval = real_to_time(CS%dtbt_reset_period)
       ! Set dtbt_reset_time to be the next even multiple of dtbt_reset_interval.
@@ -2983,7 +3001,9 @@ subroutine register_diags(Time, G, GV, US, IDs, diag)
   IDs%id_h = register_diag_field('ocean_model', 'h_dyn', diag%axesTL, Time, &
       'Layer Thickness after the dynamics update', thickness_units, conversion=GV%H_to_MKS, &
       v_extensive=.true.)
-  IDs%id_ssh_inst = register_diag_field('ocean_model', 'SSH_inst', diag%axesT1, &
+  IDs%id_por_layer_widthT = register_diag_field('ocean_model', 'por_layer_widthT', diag%axesTi, &
+      Time, 'Instantaneous Sea Surface Height', 'm', conversion=US%Z_to_m)
+  IDs%id_por_face_areaT = register_diag_field('ocean_model', 'por_face_areaT', diag%axesTL, &
       Time, 'Instantaneous Sea Surface Height', 'm', conversion=US%Z_to_m)
 end subroutine register_diags
 
@@ -3649,6 +3669,8 @@ subroutine MOM_end(CS)
   !deallocate porous topography variables
   DEALLOC_(CS%por_face_areaU) ; DEALLOC_(CS%por_face_areaV)
   DEALLOC_(CS%por_layer_widthU) ; DEALLOC_(CS%por_layer_widthV)
+
+  DEALLOC_(CS%pmv%por_face_areaT) ; DEALLOC_(CS%pmv%por_layer_widthT)
 
   ! NOTE: Allocated in PressureForce_FV_Bouss
   if (associated(CS%tv%varT)) deallocate(CS%tv%varT)

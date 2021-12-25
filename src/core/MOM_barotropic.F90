@@ -28,6 +28,7 @@ use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : BT_cont_type, alloc_bt_cont_type
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_variables, only : accel_diag_ptrs
+use MOM_variables, only : porous_media_ptrs
 
 implicit none ; private
 
@@ -407,7 +408,7 @@ contains
 !! order 0.2 or greater.  A forwards-backwards treatment of the
 !! Coriolis terms is always used.
 subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, &
-                  eta_PF_in, U_Cor, V_Cor, accel_layer_u, accel_layer_v, &
+                  eta_PF_in, U_Cor, V_Cor, pmv, accel_layer_u, accel_layer_v, &
                   eta_out, uhbtav, vhbtav, G, GV, US, CS, &
                   visc_rem_u, visc_rem_v, ADp, OBC, BT_cont, eta_PF_start, &
                   taux_bot, tauy_bot, uh0, vh0, u_uh0, v_vh0, etaav)
@@ -439,6 +440,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                                                          !! calculate the Coriolis terms in bc_accel_u [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(in)  :: V_Cor      !< The (3-D) meridional velocities used to
                                                          !! calculate the Coriolis terms in bc_accel_u [L T-1 ~> m s-1].
+  type(porous_media_ptrs), intent(in)                     :: pmv !< pointers to porous media fractional cell metrics
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(out) :: accel_layer_u !< The zonal acceleration of each layer due
                                                          !! to the barotropic calculation [L T-2 ~> m s-2].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(out) :: accel_layer_v !< The meridional acceleration of each layer
@@ -1529,7 +1531,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         if (integral_BT_cont) then
           uint_cor = G%dxT(i,j) * CS%maxCFL_BT_cont
           vint_cor = G%dyT(i,j) * CS%maxCFL_BT_cont
-          eta_cor_max = (CS%IareaT(i,j) * &
+          eta_cor_max = (CS%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * &
                    (((find_uhbt(uint_cor, BTCL_u(I,j)) + dt*uhbt0(I,j)) - &
                      (find_uhbt(-uint_cor, BTCL_u(I-1,j)) + dt*uhbt0(I-1,j))) + &
                     ((find_vhbt(vint_cor, BTCL_v(i,J)) + dt*vhbt0(i,J)) - &
@@ -1537,7 +1539,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         else ! (use_BT_Cont) then
           u_max_cor = G%dxT(i,j) * (CS%maxCFL_BT_cont*Idt)
           v_max_cor = G%dyT(i,j) * (CS%maxCFL_BT_cont*Idt)
-          eta_cor_max = dt * (CS%IareaT(i,j) * &
+          eta_cor_max = dt * (CS%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * &
                    (((find_uhbt(u_max_cor, BTCL_u(I,j)) + uhbt0(I,j)) - &
                      (find_uhbt(-u_max_cor, BTCL_u(I-1,j)) + uhbt0(I-1,j))) + &
                     ((find_vhbt(v_max_cor, BTCL_v(i,J)) + vhbt0(i,J)) - &
@@ -1808,7 +1810,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         enddo ; enddo
         !$OMP do
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
-          eta_pred(i,j) = (eta_IC(i,j) + n*eta_src(i,j)) + CS%IareaT(i,j) * &
+          eta_pred(i,j) = (eta_IC(i,j) + n*eta_src(i,j)) + CS%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * &
                      ((uhbt_int(I-1,j) - uhbt_int(I,j)) + (vhbt_int(i,J-1) - vhbt_int(i,J)))
         enddo ; enddo
       elseif (use_BT_cont) then
@@ -1822,13 +1824,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         enddo ; enddo
         !$OMP do
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
-          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
+          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j) / pmv%por_face_areaT(i,j,k)) * &
                      ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
         enddo ; enddo
       else
         !$OMP do
         do j=jsv-1,jev+1 ; do i=isv-1,iev+1
-          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
+          eta_pred(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j) / pmv%por_face_areaT(i,j,k)) * &
               (((Datu(I-1,j)*ubt(I-1,j) + uhbt0(I-1,j)) - &
                 (Datu(I,j)*ubt(I,j) + uhbt0(I,j))) + &
                ((Datv(i,J-1)*vbt(i,J-1) + vhbt0(i,J-1)) - &
@@ -2335,14 +2337,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (integral_BT_cont) then
       !$OMP do
       do j=jsv,jev ; do i=isv,iev
-        eta(i,j) = (eta_IC(i,j) + n*eta_src(i,j)) + CS%IareaT(i,j) * &
+        eta(i,j) = (eta_IC(i,j) + n*eta_src(i,j)) + CS%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * &
                    ((uhbt_int(I-1,j) - uhbt_int(I,j)) + (vhbt_int(i,J-1) - vhbt_int(i,J)))
         eta_wtd(i,j) = eta_wtd(i,j) + eta(i,j) * wt_eta(n)
       enddo ; enddo
     else
       !$OMP do
       do j=jsv,jev ; do i=isv,iev
-        eta(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j)) * &
+        eta(i,j) = (eta(i,j) + eta_src(i,j)) + (dtbt * CS%IareaT(i,j) / pmv%por_face_areaT(i,j,k)) * &
                    ((uhbt(I-1,j) - uhbt(I,j)) + (vhbt(i,J-1) - vhbt(i,J)))
         eta_wtd(i,j) = eta_wtd(i,j) + eta(i,j) * wt_eta(n)
       enddo ; enddo

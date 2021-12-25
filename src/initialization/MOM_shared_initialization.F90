@@ -28,6 +28,7 @@ public set_rotation_planetary, set_rotation_beta_plane, initialize_grid_rotation
 public reset_face_lengths_named, reset_face_lengths_file, reset_face_lengths_list
 public read_face_length_list, set_velocity_depth_max, set_velocity_depth_min
 public compute_global_grid_integrals, write_ocean_geometry_file
+public read_depth_fit_params
 
 ! A note on unit descriptions in comments: MOM6 uses units that can be rescaled for dimensional
 ! consistency testing. These are noted in comments with units like Z, H, L, and T, along with
@@ -597,6 +598,38 @@ function modulo_around_point(x, xc, Lx) result(x_mod)
     x_mod = x
   endif
 end function modulo_around_point
+
+!> Read depth min, max and avg from file
+subroutine read_depth_fit_params(G, param_file, US)
+  type(dyn_horgrid_type),           intent(inout)  :: G !< The dynamic horizontal grid type
+  type(param_file_type),            intent(in)  :: param_file !< Parameter file structure
+  type(unit_scale_type),            intent(in)  :: US !< A dimensional unit scaling type
+  ! Local variables
+  character(len=200) :: filename, topo_file, inputdir ! Strings for file/path
+  character(len=200) :: topo_varname                  ! Variable name in file
+  character(len=40)  :: mdl = "initialize_topography_from_file" ! This subroutine's name.
+
+  call callTree_enter(trim(mdl)//"(), MOM_shared_initialization.F90")
+
+  call get_param(param_file, mdl, "INPUTDIR", inputdir, default=".")
+  inputdir = slasher(inputdir)
+  call get_param(param_file, mdl, "TOPO_POROUS_MEDIA_FILE", topo_file, &
+                 "The file from which the bathymetry is read.", &
+                 default="topog.nc")
+
+  filename = trim(inputdir)//trim(topo_file)
+  call log_param(param_file, mdl, "INPUTDIR/TOPO_SUBGRID_MEDIA_FILE", filename)
+
+  call MOM_read_data(filename, 'depth_min', G%porous_DminT, G%Domain, scale=US%m_to_Z)
+  call MOM_read_data(filename, 'depth_max', G%porous_DmaxT, G%Domain, scale=US%m_to_Z)
+  call MOM_read_data(filename, 'depth', G%porous_DavgT, G%Domain, scale=US%m_to_Z)
+
+  call pass_var(G%porous_DminT, G%Domain)
+  call pass_var(G%porous_DmaxT, G%Domain)
+  call pass_var(G%porous_DavgT, G%Domain)
+
+  call callTree_leave(trim(mdl)//'()')
+end subroutine read_depth_fit_params
 
 ! -----------------------------------------------------------------------------
 !>   This subroutine sets the open face lengths at selected points to restrict

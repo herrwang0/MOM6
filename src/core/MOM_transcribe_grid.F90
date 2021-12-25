@@ -57,6 +57,10 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
     oG%areaT(i,j) = dG%areaT(i+ido,j+jdo)
     oG%bathyT(i,j) = dG%bathyT(i+ido,j+jdo) - oG%Z_ref
 
+    oG%porous_DminT(i,j) = dG%porous_DminT(i+ido,j+jdo) - oG%Z_ref
+    oG%porous_DmaxT(i,j) = dG%porous_DmaxT(i+ido,j+jdo) - oG%Z_ref
+    oG%porous_DavgT(i,j) = dG%porous_DavgT(i+ido,j+jdo) - oG%Z_ref
+
     oG%dF_dx(i,j) = dG%dF_dx(i+ido,j+jdo)
     oG%dF_dy(i,j) = dG%dF_dy(i+ido,j+jdo)
     oG%sin_rot(i,j) = dG%sin_rot(i+ido,j+jdo)
@@ -210,6 +214,10 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
     dG%dyT(i,j) = oG%dyT(i+ido,j+jdo)
     dG%areaT(i,j) = oG%areaT(i+ido,j+jdo)
     dG%bathyT(i,j) = oG%bathyT(i+ido,j+jdo) + oG%Z_ref
+
+    dG%porous_DminT(i,j) = oG%porous_DminT(i+ido,j+jdo) + oG%Z_ref
+    dG%porous_DmaxT(i,j) = oG%porous_DmaxT(i+ido,j+jdo) + oG%Z_ref
+    dG%porous_DavgT(i,j) = oG%porous_DavgT(i+ido,j+jdo) + oG%Z_ref
 
     dG%dF_dx(i,j) = oG%dF_dx(i+ido,j+jdo)
     dG%dF_dy(i,j) = oG%dF_dy(i+ido,j+jdo)

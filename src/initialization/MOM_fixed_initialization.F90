@@ -24,6 +24,7 @@ use MOM_shared_initialization, only : set_rotation_planetary, set_rotation_beta_
 use MOM_shared_initialization, only : reset_face_lengths_named, reset_face_lengths_file, reset_face_lengths_list
 use MOM_shared_initialization, only : read_face_length_list, set_velocity_depth_max, set_velocity_depth_min
 use MOM_shared_initialization, only : compute_global_grid_integrals, write_ocean_geometry_file
+use MOM_shared_initialization, only : read_depth_fit_params
 use MOM_unit_scaling, only : unit_scale_type
 
 use user_initialization, only : user_initialize_topography
@@ -64,6 +65,7 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   character(len=200) :: config
   character(len=40)  :: mdl = "MOM_fixed_initialization" ! This module's name.
   logical :: debug
+  logical :: por_media
 ! This include declares and sets the variable "version".
 #include "version_variable.h"
 
@@ -105,6 +107,10 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
                   G%mask2dCv, G%HI)
     call qchksum(G%mask2dBu, 'MOM_initialize_fixed: mask2dBu ', G%HI)
   endif
+
+  call get_param(PF, mdl, "TOPO_POR_MEDIA", por_media, &
+        "Porous media switch", default=.False.)
+  if (por_media) call read_depth_fit_params(G, PF, US)
 
   ! Modulate geometric scales according to geography.
   call get_param(PF, mdl, "CHANNEL_CONFIG", config, &

@@ -7,7 +7,7 @@ module MOM_porous_barriers
 use MOM_error_handler, only : MOM_error, FATAL
 use MOM_grid, only : ocean_grid_type
 use MOM_unit_scaling, only : unit_scale_type
-use MOM_variables, only : thermo_var_ptrs, porous_barrier_ptrs
+use MOM_variables, only : thermo_var_ptrs, porous_barrier_ptrs, porous_media_ptrs
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_interface_heights, only : find_eta
 
@@ -15,7 +15,7 @@ implicit none ; private
 
 #include <MOM_memory.h>
 
-public porous_widths
+public porous_widths, por_media
 
 !> Calculates curve fit from D_min, D_max, D_avg
 interface porous_widths
@@ -23,6 +23,71 @@ interface porous_widths
 end interface porous_widths
 
 contains
+!> subroutine to assign cell face areas and layer widths for porous topography
+subroutine por_media(h, tv, G, GV, US, eta, pmv, eta_bt, halo_size, eta_to_m)
+  !eta_bt, halo_size, eta_to_m not currently used
+  !variables needed to call find_eta
+  type(ocean_grid_type),                      intent(in)  :: G   !< The ocean's grid structure.
+  type(verticalGrid_type),                    intent(in)  :: GV     !< The ocean's vertical grid structure.
+  type(unit_scale_type),                      intent(in)  :: US     !< A dimensional unit scaling type
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)),   intent(in)  :: h      !< Layer thicknesses [H ~> m or kg m-2]
+  type(thermo_var_ptrs),                      intent(in)  :: tv     !< A structure pointing to various
+                                                                    !! thermodynamic variables.
+  real, dimension(SZI_(G),SZJ_(G),SZK_(G)+1), intent(out) :: eta    !< layer interface heights
+                                                                    !! [Z ~> m] or 1/eta_to_m m).
+  real, dimension(SZI_(G),SZJ_(G)), optional, intent(in)  :: eta_bt !< optional barotropic
+             !! variable that gives the "correct" free surface height (Boussinesq) or total water
+             !! column mass per unit area (non-Boussinesq).  This is used to dilate the layer.
+             !! thicknesses when calculating interfaceheights [H ~> m or kg m-2].
+  integer,                          optional, intent(in)  :: halo_size !< width of halo points on
+                                                                       !! which to calculate eta.
+
+  real,                             optional, intent(in)  :: eta_to_m  !< The conversion factor from
+             !! the units of eta to m; by default this is US%Z_to_m.
+  type(porous_media_ptrs),           intent(inout) :: pmv  !< porous barrier fractional cell metrics
+
+  !local variables
+  integer :: ii, i, j, k, nk, isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
+  real :: w_layer, & ! fractional open width of layer interface [nondim]
+          A_layer, & ! integral of fractional open width from bottom to current layer[Z ~> m]
+          A_layer_prev, & ! integral of fractional open width from bottom to previous layer [Z ~> m]
+          eta_prev ! interface height of previous layer [Z ~> m]
+  isd = G%isd; ied = G%ied; jsd = G%jsd; jed = G%jed
+  IsdB = G%IsdB; IedB = G%IedB; JsdB = G%JsdB; JedB = G%JedB
+
+  !eta is zero at surface and decreases downward
+
+  nk = SZK_(G)
+
+  !currently no treatment for using optional find_eta arguments if present
+  call find_eta(h, tv, G, GV, US, eta)
+
+  do j=jsd,jed; do i=isd,isd
+    if (G%mask2dT(i,j) > 0.) then
+      do K = nk+1,1,-1
+        if (eta(i,j,K) <= G%porous_DminT(i,j)) then
+          pmv%por_layer_widthT(i,j,K) = 0.0
+          A_layer_prev = 0.0
+          if (K < nk+1) then
+            pmv%por_face_areaT(i,j,k) = 0.0; endif
+        else
+          call calc_por_layer(-G%porous_DmaxT(i,j), -G%porous_DminT(i,j), &
+            -G%porous_DavgT(i,j), eta(i,j,K), w_layer, A_layer)
+          pmv%por_layer_widthT(i,j,K) = w_layer
+          if (k <= nk) then
+            if ((eta(i,j,K) - eta_prev) > 0.0) then
+              pmv%por_face_areaT(i,j,k) = (A_layer - A_layer_prev)/&
+                   (eta(i,j,K)-eta_prev)
+            else
+              pmv%por_face_areaT(i,j,k) = 0.0; endif
+          endif
+          eta_prev = eta(i,j,K)
+          A_layer_prev = A_layer
+        endif
+      enddo
+    endif
+  enddo; enddo
+end subroutine por_media
 
 !> subroutine to assign cell face areas and layer widths for porous topography
 subroutine por_widths(h, tv, G, GV, US, eta, pbv, eta_bt, halo_size, eta_to_m)

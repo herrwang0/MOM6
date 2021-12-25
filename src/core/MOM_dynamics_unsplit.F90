@@ -50,7 +50,7 @@ module MOM_dynamics_unsplit
 !*                                                                     *
 !********+*********+*********+*********+*********+*********+*********+**
 
-use MOM_variables, only : vertvisc_type, thermo_var_ptrs, porous_barrier_ptrs
+use MOM_variables, only : vertvisc_type, thermo_var_ptrs, porous_barrier_ptrs, porous_media_ptrs
 use MOM_variables, only : accel_diag_ptrs, ocean_internal_state, cont_diag_ptrs
 use MOM_forcing_type, only : mech_forcing
 use MOM_checksum_packages, only : MOM_thermo_chksum, MOM_state_chksum, MOM_accel_chksum
@@ -184,7 +184,7 @@ contains
 !! 3rd order (for the inviscid momentum equations) order scheme
 subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, G, GV, US, CS, &
-                  VarMix, MEKE, pbv, Waves)
+                  VarMix, MEKE, pbv, pmv, Waves)
   type(ocean_grid_type),   intent(inout) :: G      !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV     !< The ocean's vertical grid structure.
   type(unit_scale_type),   intent(in)    :: US     !< A dimensional unit scaling type
@@ -218,6 +218,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   type(VarMix_CS),         intent(inout) :: VarMix !< Variable mixing control structure
   type(MEKE_type),         intent(inout) :: MEKE   !< MEKE fields
   type(porous_barrier_ptrs), intent(in) :: pbv     !< porous barrier fractional cell metrics
+  type(porous_media_ptrs), intent(in) :: pmv                !< porous media fractional cell metrics
   type(wave_parameters_CS), optional, pointer :: Waves !< A pointer to a structure containing
                                  !! fields related to the surface wave conditions
 
@@ -266,7 +267,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 ! uh = u*h
 ! hp = h + dt/2 div . uh
   call cpu_clock_begin(id_clock_continuity)
-  call continuity(u, v, h, hp, uh, vh, dt*0.5, G, GV, US, CS%continuity_CSp, CS%OBC, pbv)
+  call continuity(u, v, h, hp, uh, vh, dt*0.5, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, pmv)
   call cpu_clock_end(id_clock_continuity)
   call pass_var(hp, G%Domain, clock=id_clock_pass)
   call pass_vector(uh, vh, G%Domain, clock=id_clock_pass)
@@ -356,7 +357,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 ! uh = up * hp
 ! h_av = hp + dt/2 div . uh
   call cpu_clock_begin(id_clock_continuity)
-  call continuity(up, vp, hp, h_av, uh, vh, (0.5*dt), G, GV, US, CS%continuity_CSp, CS%OBC, pbv)
+  call continuity(up, vp, hp, h_av, uh, vh, (0.5*dt), G, GV, US, CS%continuity_CSp, CS%OBC, pbv, pmv)
   call cpu_clock_end(id_clock_continuity)
   call pass_var(h_av, G%Domain, clock=id_clock_pass)
   call pass_vector(uh, vh, G%Domain, clock=id_clock_pass)
@@ -416,7 +417,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 ! uh = upp * hp
 ! h = hp + dt/2 div . uh
   call cpu_clock_begin(id_clock_continuity)
-  call continuity(upp, vpp, hp, h, uh, vh, (dt*0.5), G, GV, US, CS%continuity_CSp, CS%OBC, pbv)
+  call continuity(upp, vpp, hp, h, uh, vh, (dt*0.5), G, GV, US, CS%continuity_CSp, CS%OBC, pbv, pmv)
   call cpu_clock_end(id_clock_continuity)
   call pass_var(h, G%Domain, clock=id_clock_pass)
   call pass_vector(uh, vh, G%Domain, clock=id_clock_pass)

@@ -112,6 +112,11 @@ type, public :: ocean_grid_type
     IareaCv, &   !< The masked inverse areas of v-grid cells [L-2 ~> m-2].
     areaCv       !< The areas of the v-grid cells [L2 ~> m2].
 
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
+    porous_DminT, & !< minimum topographic height of the h-cell [Z ~> m]
+    porous_DmaxT, & !< maximum topographic height of the h-cell [Z ~> m]
+    porous_DavgT    !< average topographic height of the h-cell [Z ~> m]
+
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_) :: &
     porous_DminU, & !< minimum topographic height of U-face [Z ~> m]
     porous_DmaxU, & !< maximum topographic height of U-face [Z ~> m]
@@ -587,6 +592,10 @@ subroutine allocate_metrics(G)
   ALLOC_(G%dx_Cv(isd:ied,JsdB:JedB))     ; G%dx_Cv(:,:) = 0.0
   ALLOC_(G%dy_Cu(IsdB:IedB,jsd:jed))     ; G%dy_Cu(:,:) = 0.0
 
+  ALLOC_(G%porous_DminT(isd:ied,jsd:jed)); G%porous_DminT(:,:) = 0.0
+  ALLOC_(G%porous_DmaxT(isd:ied,jsd:jed)); G%porous_DmaxT(:,:) = 0.0
+  ALLOC_(G%porous_DavgT(isd:ied,jsd:jed)); G%porous_DavgT(:,:) = 0.0
+
   ALLOC_(G%porous_DminU(IsdB:IedB,jsd:jed)); G%porous_DminU(:,:) = 0.0
   ALLOC_(G%porous_DmaxU(IsdB:IedB,jsd:jed)); G%porous_DmaxU(:,:) = 0.0
   ALLOC_(G%porous_DavgU(IsdB:IedB,jsd:jed)); G%porous_DavgU(:,:) = 0.0
@@ -650,6 +659,8 @@ subroutine MOM_grid_end(G)
   DEALLOC_(G%bathyT)  ; DEALLOC_(G%CoriolisBu)
   DEALLOC_(G%dF_dx)  ; DEALLOC_(G%dF_dy)
   DEALLOC_(G%sin_rot) ; DEALLOC_(G%cos_rot)
+
+  DEALLOC_(G%porous_DminT) ; DEALLOC_(G%porous_DmaxT) ; DEALLOC_(G%porous_DavgT)
 
   DEALLOC_(G%porous_DminU) ; DEALLOC_(G%porous_DmaxU) ; DEALLOC_(G%porous_DavgU)
   DEALLOC_(G%porous_DminV) ; DEALLOC_(G%porous_DmaxV) ; DEALLOC_(G%porous_DavgV)
