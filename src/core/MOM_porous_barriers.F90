@@ -10,6 +10,9 @@ use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : thermo_var_ptrs, porous_barrier_ptrs, porous_media_ptrs
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_interface_heights, only : find_eta
+use MOM_error_handler, only : callTree_enter, callTree_leave, callTree_waypoint
+use MOM_grid_initialize, only : Adcroft_reciprocal
+use MOM_error_handler,        only : MOM_error, MOM_mesg, FATAL, WARNING, is_root_pe
 
 implicit none ; private
 
@@ -35,6 +38,7 @@ subroutine por_media(h, tv, G, GV, US, eta, pmv, eta_bt, halo_size, eta_to_m)
                                                                     !! thermodynamic variables.
   real, dimension(SZI_(G),SZJ_(G),SZK_(G)+1), intent(out) :: eta    !< layer interface heights
                                                                     !! [Z ~> m] or 1/eta_to_m m).
+  type(porous_media_ptrs),           intent(inout) :: pmv  !< porous barrier fractional cell metrics
   real, dimension(SZI_(G),SZJ_(G)), optional, intent(in)  :: eta_bt !< optional barotropic
              !! variable that gives the "correct" free surface height (Boussinesq) or total water
              !! column mass per unit area (non-Boussinesq).  This is used to dilate the layer.
@@ -44,7 +48,6 @@ subroutine por_media(h, tv, G, GV, US, eta, pmv, eta_bt, halo_size, eta_to_m)
 
   real,                             optional, intent(in)  :: eta_to_m  !< The conversion factor from
              !! the units of eta to m; by default this is US%Z_to_m.
-  type(porous_media_ptrs),           intent(inout) :: pmv  !< porous barrier fractional cell metrics
 
   !local variables
   integer :: ii, i, j, k, nk, isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
@@ -52,6 +55,10 @@ subroutine por_media(h, tv, G, GV, US, eta, pmv, eta_bt, halo_size, eta_to_m)
           A_layer, & ! integral of fractional open width from bottom to current layer[Z ~> m]
           A_layer_prev, & ! integral of fractional open width from bottom to previous layer [Z ~> m]
           eta_prev ! interface height of previous layer [Z ~> m]
+  character(len=240) :: msg
+
+  call callTree_enter("por_media starts")
+
   isd = G%isd; ied = G%ied; jsd = G%jsd; jed = G%jed
   IsdB = G%IsdB; IedB = G%IedB; JsdB = G%JsdB; JedB = G%JedB
 
@@ -60,33 +67,68 @@ subroutine por_media(h, tv, G, GV, US, eta, pmv, eta_bt, halo_size, eta_to_m)
   nk = SZK_(G)
 
   !currently no treatment for using optional find_eta arguments if present
-  call find_eta(h, tv, G, GV, US, eta)
-
-  do j=jsd,jed; do i=isd,isd
-    if (G%mask2dT(i,j) > 0.) then
-      do K = nk+1,1,-1
-        if (eta(i,j,K) <= G%porous_DminT(i,j)) then
-          pmv%por_layer_widthT(i,j,K) = 0.0
-          A_layer_prev = 0.0
-          if (K < nk+1) then
-            pmv%por_face_areaT(i,j,k) = 0.0; endif
-        else
-          call calc_por_layer(-G%porous_DmaxT(i,j), -G%porous_DminT(i,j), &
-            -G%porous_DavgT(i,j), eta(i,j,K), w_layer, A_layer)
-          pmv%por_layer_widthT(i,j,K) = w_layer
-          if (k <= nk) then
-            if ((eta(i,j,K) - eta_prev) > 0.0) then
-              pmv%por_face_areaT(i,j,k) = (A_layer - A_layer_prev)/&
-                   (eta(i,j,K)-eta_prev)
-            else
-              pmv%por_face_areaT(i,j,k) = 0.0; endif
-          endif
-          eta_prev = eta(i,j,K)
-          A_layer_prev = A_layer
-        endif
-      enddo
+    do j=jsd,jed; do i=isd,ied; if (G%mask2dT(i,j) > 0.) then
+    if(h(i,j,1)==0.0) then
+      write(msg, '(a,a,2i4,a,f10.4,a,f10.4)') 'h == 0', 'at ', i+G%HI%idg_offset, j+G%HI%jdg_offset
+      call MOM_error(WARNING, trim(msg),all_print=.True.)
     endif
-  enddo; enddo
+  endif;enddo;enddo
+
+  call find_eta(h, tv, G, GV, US, eta, halo_size=4)
+    do j=jsd,jed; do i=isd,ied; if (G%mask2dT(i,j) > 0.) then
+    if(h(i,j,1)==0.0) then
+      write(msg, '(a,a,2i4,a,f10.4,a,f10.4)') 'h == 0', 'at ', i+G%HI%idg_offset, j+G%HI%jdg_offset
+      call MOM_error(WARNING, trim(msg),all_print=.True.)
+    endif
+    if(eta(i,j,1)==eta(i,j,2)) then
+      write(msg, '(a,a,2i4,a,f10.4,a,f10.4)') 'eta == etab', 'at ', i+G%HI%idg_offset, j+G%HI%jdg_offset
+      call MOM_error(WARNING, trim(msg),all_print=.True.)
+    endif
+    if(i+G%HI%idg_offset==2676 .and. j+G%HI%jdg_offset==1962) then
+      write(msg, '(a,2(f10.4,x), 2(e20.10,x))') 'eta(2676, 1962):', eta(i,j,1), eta(i,j,2), h(i,j,1), 1e-10
+      call MOM_error(WARNING, trim(msg),all_print=.True.)
+    endif
+  endif;enddo;enddo
+
+  do j=jsd,jed; do i=isd,ied; if (G%mask2dT(i,j) > 0.) then
+    eta_prev = eta(i,j,nk+1)
+    ! pmv%por_layer_widthT(i,j,nz+1) = 0.0
+    ! A_layer_prev = 0.0
+    call calc_por_layer(-G%porous_DmaxT(i,j), -G%porous_DminT(i,j), -G%porous_DavgT(i,j), eta(i,j,nk+1), &
+                        w_layer, A_layer)
+    pmv%por_layer_widthT(i,j,nk+1) = w_layer
+    A_layer_prev = A_layer
+    do K = nk,1,-1
+      call calc_por_layer(-G%porous_DmaxT(i,j), -G%porous_DminT(i,j), -G%porous_DavgT(i,j), eta(i,j,K), &
+                          w_layer, A_layer)
+      pmv%por_layer_widthT(i,j,K) = w_layer
+      pmv%por_face_areaT(i,j,k) = (A_layer - A_layer_prev) * Adcroft_reciprocal( eta(i,j,K)-eta_prev )
+      if (pmv%por_face_areaT(i,j,1)==0.0) then
+        write(msg, '(a, 2(i4,x))') 'Por_face_area == 0.: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+        write(msg, '(7(a,f10.4,x))') 'A_layer: ', A_layer, 'A_layer_prev = ',  A_layer_prev, &
+        'eta = ', eta(i,j,1), 'eta_pre = ', eta_prev, 'etab= ', eta(i,j,2), 'bathy=', G%bathyT(i,j), 'h=', h(i,j,1)
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+      endif
+      if (w_layer == 1.0) exit
+
+      write(msg, '(a,a,2i4,a,f10.4,a,f10.4)') 'Partial area detected: ', 'at ', i+G%HI%idg_offset, j+G%HI%jdg_offset, 'eta = ', eta(i,j,K), 'weight = ', w_layer
+      call MOM_error(WARNING, trim(msg))
+      eta_prev = eta(i,j,K)
+      A_layer_prev = A_layer
+    enddo
+  endif; enddo; enddo
+
+  ! do j=G%jsd,G%jed ; do i=G%isd,G%ied
+  !   if (G%mask2dT(i,j) > 0. .and. pmv%por_face_areaT(i,j,1)==0.0) then
+  !     write(msg, '(a, 2(i4,x))') 'Por_face_area == 0.: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+  !     call MOM_error(WARNING, trim(msg), all_print = .True.)
+  !     write(msg, '(4(a,f10.4,x))') 'A_layer: ', A_layer, 'A_layer_prev = ',  A_layer_prev, 'eta = ', eta(i,j,K), 'etab = ', eta_prev
+  !     call MOM_error(WARNING, trim(msg), all_print = .True.)
+  !   endif
+  ! enddo; enddo
+
+  call callTree_leave("por_media ends")
 end subroutine por_media
 
 !> subroutine to assign cell face areas and layer widths for porous topography

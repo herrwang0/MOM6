@@ -29,7 +29,7 @@ use MOM_variables, only : BT_cont_type, alloc_bt_cont_type
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_variables, only : accel_diag_ptrs
 use MOM_variables, only : porous_media_ptrs
-use MOM_grid_initialize, only : Adcroft_reciprocal
+use MOM_checksums, only : is_NaN
 
 implicit none ; private
 
@@ -709,7 +709,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
   integer :: l_seg
-
+character(len=240)::msg
   if (.not.CS%module_is_initialized) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
 
@@ -1629,6 +1629,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (id_clock_pass_pre > 0) call cpu_clock_end(id_clock_pass_pre)
     if (id_clock_calc_pre > 0) call cpu_clock_begin(id_clock_calc_pre)
   endif
+
+  do j=jsd, jed; do i=IsdB,IedB
+    if (is_NaN(CS%frhatu(i,j,1))) then
+      write(msg, '(a, 2(i4,x), f5.1, x, 3(f10.3,x))') 'frhatu at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset, G%mask2dCu(I,j),&
+      G%bathyT(I,j), G%bathyT(I+1,j), BT_cont%h_u(i,j,1)
+      call MOM_error(WARNING, trim(msg), all_print = .True.)
+    endif
+  enddo; enddo
+
+  do j=JsdB,JedB; do i=isd, ied
+    if (is_NaN(CS%frhatv(i,j,1))) then
+      write(msg, '(a, 2(i4,x), f5.1, x, 3(f10.3,x))') 'frhatv at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset, G%mask2dCv(I,j),&
+      G%bathyT(I,j), G%bathyT(I,j+1), BT_cont%h_v(i,j,1)
+      call MOM_error(WARNING, trim(msg), all_print = .True.)
+    endif
+  enddo; enddo
 
   if (CS%debug) then
     call uvchksum("BT [uv]hbt", uhbt, vhbt, CS%debug_BT_HI, haloshift=0, &
@@ -2729,11 +2745,12 @@ end subroutine btstep
 
 !> This subroutine automatically determines an optimal value for dtbt based
 !! on some state of the ocean.
-subroutine set_dtbt(G, GV, US, CS, eta, pbce, BT_cont, gtot_est, SSH_add)
+subroutine set_dtbt(G, GV, US, CS,  pmv, eta, pbce, BT_cont, gtot_est, SSH_add)
   type(ocean_grid_type),        intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type),      intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),        intent(in)    :: US   !< A dimensional unit scaling type
   type(barotropic_CS),          intent(inout) :: CS   !< Barotropic control structure
+  type(porous_media_ptrs), intent(in)                     :: pmv !< pointers to porous media fractional cell metrics
   real, dimension(SZI_(G),SZJ_(G)), optional, intent(in) :: eta  !< The barotropic free surface
                                                       !! height anomaly or column mass anomaly [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), optional, intent(in) :: pbce  !< The baroclinic pressure
@@ -2834,7 +2851,7 @@ subroutine set_dtbt(G, GV, US, CS, eta, pbce, BT_cont, gtot_est, SSH_add)
   do j=js,je ; do i=is,ie
     !   This is pretty accurate for gravity waves, but it is a conservative
     ! estimate since it ignores the stabilizing effect of the bottom drag.
-    Idt_max2 = 0.5 * (1.0 + 2.0*CS%bebt) * (G%IareaT(i,j) * &
+    Idt_max2 = 0.5 * (1.0 + 2.0*CS%bebt) * (G%IareaT(i,j) / pmv%por_face_areaT(i,j,k) * &
       ((gtot_E(i,j)*Datu(I,j)*G%IdxCu(I,j) + gtot_W(i,j)*Datu(I-1,j)*G%IdxCu(I-1,j)) + &
        (gtot_N(i,j)*Datv(i,J)*G%IdyCv(i,J) + gtot_S(i,j)*Datv(i,J-1)*G%IdyCv(i,J-1))) + &
       ((G%CoriolisBu(I,J)**2 + G%CoriolisBu(I-1,J-1)**2) + &
@@ -4240,11 +4257,12 @@ end subroutine bt_mass_source
 !> barotropic_init initializes a number of time-invariant fields used in the
 !! barotropic calculation and initializes any barotropic fields that have not
 !! already been initialized.
-subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, &
+subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, pmv, param_file, diag, CS, &
                            restart_CS, calc_dtbt, BT_cont, tides_CSp)
   type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),   intent(in)    :: US   !< A dimensional unit scaling type
+  type(porous_media_ptrs), intent(in)                     :: pmv !< pointers to porous media fractional cell metrics
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
                            intent(in)    :: u    !< The zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), &
@@ -4748,7 +4766,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   ! Estimate the maximum stable barotropic time step.
   gtot_estimate = 0.0
   do k=1,GV%ke ; gtot_estimate = gtot_estimate + GV%g_prime(K) ; enddo
-  call set_dtbt(G, GV, US, CS, gtot_est=gtot_estimate, SSH_add=SSH_extra)
+  call set_dtbt(G, GV, US, CS, pmv, gtot_est=gtot_estimate, SSH_add=SSH_extra)
 
   if (dtbt_input > 0.0) then
     CS%dtbt = US%s_to_T * dtbt_input
@@ -4926,14 +4944,14 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     Mean_SL = G%Z_ref
     do j=js,je ; do I=is-1,ie
       if (G%mask2dCu(I,j)>0.) then
-        CS%IDatu(I,j) = G%mask2dCu(I,j) * max(2.0*Adcroft_reciprocal((G%bathyT(i+1,j) + G%bathyT(i,j)) + 2.0*Mean_SL), 0.0)
+        CS%IDatu(I,j) = G%mask2dCu(I,j) * 2.0 / ((G%bathyT(i+1,j) + G%bathyT(i,j)) + 2.0*Mean_SL)
       else ! Both neighboring H points are masked out so IDatu(I,j) is meaningless
         CS%IDatu(I,j) = 0.
       endif
     enddo ; enddo
     do J=js-1,je ; do i=is,ie
       if (G%mask2dCv(i,J)>0.) then
-        CS%IDatv(i,J) = G%mask2dCv(i,J) * max(2.0*Adcroft_reciprocal((G%bathyT(i,j+1) + G%bathyT(i,j)) + 2.0*Mean_SL), 0.0)
+        CS%IDatv(i,J) = G%mask2dCv(i,J) * 2.0 / ((G%bathyT(i,j+1) + G%bathyT(i,j)) + 2.0*Mean_SL)
       else ! Both neighboring H points are masked out so IDatv(i,J) is meaningless
         CS%IDatv(i,J) = 0.
       endif

@@ -1036,12 +1036,17 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   real, dimension(SZI_(CS%G),SZJ_(CS%G),SZK_(CS%G)+1) :: eta_por ! layer interface heights
                                                     !! for porous topo. [Z ~> m or 1/eta_to_m]
+  type(porous_media_ptrs), pointer :: pmv => NULL() ! Porous.
+  character(len=240) :: msg
   G => CS%G ; GV => CS%GV ; US => CS%US ; IDs => CS%IDs
   is   = G%isc  ; ie   = G%iec  ; js   = G%jsc  ; je   = G%jec ; nz = GV%ke
   Isq  = G%IscB ; Ieq  = G%IecB ; Jsq  = G%JscB ; Jeq  = G%JecB
   isd  = G%isd  ; ied  = G%ied  ; jsd  = G%jsd  ; jed  = G%jed
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
   u => CS%u ; v => CS%v ; h => CS%h
+
+  pmv => CS%pmv
+
   showCallTree = callTree_showQuery()
 
   call cpu_clock_begin(id_clock_dynamics)
@@ -1064,16 +1069,41 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     call diag_update_remap_grids(CS%diag)
   endif
 
+   do j=js,je; do i=is,ie; if (G%mask2dT(i,j) > 0.) then
+    if(h(i,j,1)==0.0) then
+      write(msg, '(a,a,2i4,a,f10.4,a,f10.4)') 'h == 0', 'at ', i+G%HI%idg_offset, j+G%HI%jdg_offset
+      call MOM_error(WARNING, trim(msg),all_print=.True.)
+    endif
+  endif;enddo;enddo
+ 
   !update porous barrier fractional cell metrics
   call porous_widths(h, CS%tv, G, GV, US, eta_por, CS%pbv)
-  call por_media(h, CS%tv, G, GV, US, eta_por, CS%pmv)
-  call pass_var(CS%pmv%por_face_areaT, G%domain)
-  call pass_var(CS%pmv%por_layer_widthT, G%domain)
+  call por_media(h, CS%tv, G, GV, US, eta_por, pmv)
+  call pass_var(pmv%por_face_areaT, G%domain)
+  call pass_var(pmv%por_layer_widthT, G%domain)
+
+
+  
+!            write(msg, '(a,12(f10.4,x))') 'por_face_areaT: ', &
+!                    pmv%por_face_areaT(1:6,10,1),&
+!                    pmv%por_face_areaT(ubound(pmv%por_face_areaT,1)-1:ubound(pmv%por_face_areaT,1)+4,10,1)
+!       call MOM_error(WARNING, trim(msg),all_print=.True.)
+
+
+!  do j=jsd,jed; do i=isd,ied; if (G%mask2dT(i,j) > 0.) then
+!    if( i+G%HI%idg_offset == 990 .and.  j+G%HI%jdg_offset ==3522) then
+!            write(msg, '(a,a,2i4,a,f10.4,a,f10.4)') '(cal)por_face_areaT ', 'at ', i+G%HI%idg_offset, j+G%HI%jdg_offset, &
+!                    'weight= ',CS%pmv%por_face_areaT(i,j,1), 'weight_ptr= ',pmv%por_face_areaT(i,j,1)
+!       call MOM_error(WARNING, trim(msg),all_print=.True.)
+!    endif
+!  endif;enddo;enddo
+
+  ! if (showCallTree) call callTree_leave("finished porous (step_MOM)")
 
   call enable_averages(dt, Time_local, CS%diag)
   ! These diagnostics are available after every time dynamics step.
-  if (IDs%id_por_layer_widthT > 0) call post_data(IDs%id_por_layer_widthT, CS%pmv%por_layer_widthT, CS%diag)
-  if (IDs%id_por_face_areaT > 0) call post_data(IDs%id_por_face_areaT, CS%pmv%por_face_areaT, CS%diag)
+  if (IDs%id_por_layer_widthT > 0) call post_data(IDs%id_por_layer_widthT, pmv%por_layer_widthT, CS%diag)
+  if (IDs%id_por_face_areaT > 0) call post_data(IDs%id_por_face_areaT, pmv%por_face_areaT, CS%diag)
   call disable_averaging(CS%diag)
 
   ! The bottom boundary layer properties need to be recalculated.
@@ -1105,7 +1135,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     call step_MOM_dyn_split_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                 p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
                 CS%eta_av_bc, G, GV, US, CS%dyn_split_RK2_CSp, calc_dtbt, CS%VarMix, &
-                CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, CS%pmv, waves=waves)
+                CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, pmv, waves=waves)
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_split (step_MOM)")
 
   elseif (CS%do_dynamics) then ! ------------------------------------ not SPLIT
@@ -1119,11 +1149,11 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     if (CS%use_RK2) then
       call step_MOM_dyn_unsplit_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
-               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_RK2_CSp, CS%VarMix, CS%MEKE, CS%pbv, CS%pmv)
+               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_RK2_CSp, CS%VarMix, CS%MEKE, CS%pbv, pmv)
     else
       call step_MOM_dyn_unsplit(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
-               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_CSp, CS%VarMix, CS%MEKE, CS%pbv, CS%pmv, Waves=Waves)
+               CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_CSp, CS%VarMix, CS%MEKE, CS%pbv, pmv, Waves=Waves)
     endif
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_unsplit (step_MOM)")
 
@@ -2376,6 +2406,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, restart_CSp, &
   !allocate porous topography variables
   ALLOC_(CS%pmv%por_face_areaT(isd:ied,jsd:jed,nz)) ; CS%pmv%por_face_areaT(:,:,:) = 1.0
   ALLOC_(CS%pmv%por_layer_widthT(isd:ied,jsd:jed,nz+1)) ; CS%pmv%por_layer_widthT(:,:,:) = 1.0
+  ! call pass_var( CS%pmv%por_face_areaT, G%Domain)
+  ! call pass_var( CS%pmv%por_layer_widthT ,G%Domain)
+
+  ! CS%pmv%por_face_areaT => CS%por_face_areaT; CS%pmv%por_layer_widthT=> CS%por_layer_widthT
 
   ALLOC_(CS%por_face_areaU(IsdB:IedB,jsd:jed,nz)) ; CS%por_face_areaU(:,:,:) = 1.0
   ALLOC_(CS%por_face_areaV(isd:ied,JsdB:JedB,nz)) ; CS%por_face_areaV(:,:,:) = 1.0
@@ -2940,7 +2974,7 @@ subroutine finish_MOM_initialization(Time, dirs, CS, restart_CSp)
   type(MOM_restart_CS),    pointer :: restart_CSp_tmp => NULL()
   real, allocatable :: z_interface(:,:,:) ! Interface heights [m]
   type(vardesc) :: vd
-
+character(len=240) :: msg
   call cpu_clock_begin(id_clock_init)
   call callTree_enter("finish_MOM_initialization()")
 
@@ -2955,6 +2989,13 @@ subroutine finish_MOM_initialization(Time, dirs, CS, restart_CSp)
   if (CS%use_particles) then
     call particles_init(CS%particles, G, CS%Time, CS%dt_therm, CS%u, CS%v)
   endif
+
+!    do j=jsd,jed; do i=isd,isd; if (G%mask2dT(i,j) > 0.) then
+!    if(CS%h(i,j,k)==0.0) then
+!      write(msg, '(a,a,2(i4, x),a,e10.4,a,e10.4)') 'h == 0', 'at ', i+G%HI%idg_offset, j+G%HI%jdg_offset, 'h= ', CS%h(i,j,k)
+!      call MOM_error(WARNING, trim(msg),all_print=.True.)
+!    endif
+!  endif;enddo;enddo
 
   ! Write initial conditions
   if (CS%write_IC) then

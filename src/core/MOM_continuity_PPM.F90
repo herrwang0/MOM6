@@ -11,8 +11,9 @@ use MOM_grid, only : ocean_grid_type
 use MOM_open_boundary, only : ocean_OBC_type, OBC_segment_type, OBC_NONE
 use MOM_open_boundary, only : OBC_DIRECTION_E, OBC_DIRECTION_W, OBC_DIRECTION_N, OBC_DIRECTION_S
 use MOM_unit_scaling, only : unit_scale_type
-use MOM_variables, only : BT_cont_type, porous_barrier_ptrs,porous_media_ptrs
+use MOM_variables, only : BT_cont_type, porous_barrier_ptrs, porous_media_ptrs
 use MOM_verticalGrid, only : verticalGrid_type
+use MOM_checksums, only : is_NaN
 
 implicit none ; private
 
@@ -129,7 +130,15 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, pmv
   integer :: i, j, k
 
   logical :: x_first
+  character(len=240) :: msg
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
+
+  do j=G%jsd,G%jed ; do i=G%isd,G%ied
+    if (pmv%por_face_areaT(i,j,1)==0.0) then
+      write(msg, '(a, 2(i4,x))') 'Por_face_area == 0.: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+      call MOM_error(WARNING, trim(msg), all_print = .True.)
+    endif
+  enddo; enddo
 
   h_min = GV%Angstrom_H
 
@@ -151,6 +160,13 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, pmv
     call zonal_mass_flux(u, hin, uh, dt, G, GV, US, CS, LB, OBC, &
       pbv%por_face_areaU, uhbt, visc_rem_u, u_cor, BT_cont)
 
+      do j=LB%jsh,LB%jeh ; do i=LB%ish-1,LB%ieh
+        if (is_NaN(uh(i,j,1))) then
+          write(msg, '(a, 2(i4,x))') 'NaN uh at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+          call MOM_error(WARNING, trim(msg), all_print = .True.)
+        endif
+      enddo; enddo
+
     call cpu_clock_begin(id_clock_update)
     !$OMP parallel do default(shared)
     do k=1,nz ; do j=LB%jsh,LB%jeh ; do i=LB%ish,LB%ieh
@@ -162,10 +178,32 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, pmv
 
     LB%ish = G%isc ; LB%ieh = G%iec ; LB%jsh = G%jsc ; LB%jeh = G%jec
 
+    do j=LB%jsh,LB%jeh ; do i=LB%ish,LB%ieh
+      if (is_NaN(h(i,j,1))) then
+        write(msg, '(a, 2(i4,x))') 'NaN h (after x) at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+        write(msg, '(5(a, f10.3,x))') 'por_face_areaT= ',pmv%por_face_areaT(i,j,1)
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+      endif
+      if (abs(h(i,j,1))> huge(h(i,j,1))) then
+        write(msg, '(a, 2(i4,x))') 'Infinity h (after x) at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+        write(msg, '(5(a, f10.3,x))') 'por_face_areaT= ',pmv%por_face_areaT(i,j,1)
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+      endif
+    enddo; enddo
     !    Now advect meridionally, using the updated thicknesses to determine
     !  the fluxes.
     call meridional_mass_flux(v, h, vh, dt, G, GV, US, CS, LB, OBC, &
       pbv%por_face_areaV, vhbt, visc_rem_v, v_cor, BT_cont)
+
+      do j=LB%jsh-1,LB%jeh ; do i=LB%ish,LB%ieh
+        if (is_NaN(vh(i,j,1))) then
+          write(msg, '(a, 2(i4,x))') 'NaN vh at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+          call MOM_error(WARNING, trim(msg), all_print = .True.)
+        endif
+      enddo; enddo
+
 
     call cpu_clock_begin(id_clock_update)
     !$OMP parallel do default(shared)
@@ -174,6 +212,21 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, pmv
   !   This line prevents underflow.
       if (h(i,j,k) < h_min) h(i,j,k) = h_min
     enddo ; enddo ; enddo
+
+    do j=LB%jsh,LB%jeh ; do i=LB%ish,LB%ieh
+      if (is_NaN(h(i,j,1))) then
+        write(msg, '(a, 2(i4,x))') 'NaN h (after y) at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+        write(msg, '(5(a, f10.3,x))') 'por_face_areaT= ',pmv%por_face_areaT(i,j,1)
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+      endif
+      if (abs(h(i,j,1))> huge(h(i,j,1))) then
+        write(msg, '(a, 2(i4,x))') 'Infinity h (after x) at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+        write(msg, '(5(a, f10.3,x))') 'por_face_areaT= ',pmv%por_face_areaT(i,j,1)
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+      endif
+    enddo; enddo
     call cpu_clock_end(id_clock_update)
 
   else  ! .not. x_first
@@ -1094,7 +1147,7 @@ subroutine meridional_mass_flux(v, h_in, vh, dt, G, GV, US, CS, LB, OBC, por_fac
   logical :: local_specified_BC, use_visc_rem, set_BT_cont, any_simple_OBC
   logical :: local_Flather_OBC, is_simple, local_open_BC
   type(OBC_segment_type), pointer :: segment => NULL()
-
+character(len=240)::msg
   use_visc_rem = present(visc_rem_v)
   local_specified_BC = .false. ; set_BT_cont = .false. ; local_Flather_OBC = .false.
   local_open_BC = .false.
@@ -1160,6 +1213,21 @@ subroutine meridional_mass_flux(v, h_in, vh, dt, G, GV, US, CS, LB, OBC, por_fac
     if ((.not.use_visc_rem) .or. (.not.CS%use_visc_rem_max)) then ; do i=ish,ieh
       visc_rem_max(i) = 1.0
     enddo ; endif
+
+    do i=ish,ieh
+      if (is_NaN(vh(i,j,1))) then
+        write(msg, '(a, 2(i4,x))') '[MMF] NaN vh (before vhbt adjust) at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+        if (v(i,J,1)>0) then
+            write(msg, '(5(a, f10.3,x))') 'hL= ', h_L(i,j,1), 'hR= ', h_R(i,j,1), 'h= ', h_in(i,j,1)
+        elseif (v(i,J,1) < 0.0) then
+            write(msg, '(5(a, f10.3,x))') 'hL= ', h_L(i,j+1,1), 'hR= ', h_R(i,j+1,1), 'h= ', h_in(i,j+1,1)
+        else
+          write(msg, '(5(a, f10.3,x))') 'hL= ', h_L(i,j+1,1), 'hR= ', h_R(i,j,1)
+        endif
+        call MOM_error(WARNING, trim(msg), all_print = .True.)
+      endif
+    enddo
 
     if (present(vhbt) .or. set_BT_cont) then
       !   Set limits on dv that will keep the CFL number between -1 and 1.
@@ -1299,7 +1367,12 @@ subroutine meridional_mass_flux(v, h_in, vh, dt, G, GV, US, CS, LB, OBC, por_fac
       endif ! set_BT_cont
 
     endif ! present(vhbt) or set_BT_cont
-
+    ! do i=ish,ieh
+    !   if (is_NaN(vh(i,j,1))) then
+    !     write(msg, '(a, 2(i4,x))') '[MMF] NaN vh (after vhbt adjust) at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+    !     call MOM_error(WARNING, trim(msg), all_print = .True.)
+    !   endif
+    ! enddo
   enddo ! j-loop
 
   if (local_open_BC .and. set_BT_cont) then
@@ -1466,6 +1539,7 @@ subroutine merid_face_thickness(v, h, h_L, h_R, h_v, dt, G, GV, US, LB, vol_CFL,
   real :: h_marg ! The marginal thickness of a flux [H ~> m or kg m-2].
   logical :: local_open_BC
   integer :: i, j, k, ish, ieh, jsh, jeh, n, nz
+  character(len=240) :: msg
   ish = LB%ish ; ieh = LB%ieh ; jsh = LB%jsh ; jeh = LB%jeh ; nz = GV%ke
 
   !$OMP parallel do default(shared) private(CFL,curv_3,h_marg,h_avg)
@@ -1505,6 +1579,25 @@ subroutine merid_face_thickness(v, h, h_L, h_R, h_v, dt, G, GV, US, LB, vol_CFL,
       h_v(i,J,k) = h_v(i,J,k) * visc_rem_v(i,J,k) !### * por_face_areaV(i,J,k)
     enddo ; enddo ; enddo
   endif
+
+  do J=jsh-1,jeh ; do i=ish,ieh
+    if (is_NaN(h_v(i,j,1))) then
+      write(msg, '(a, 2(i4,x))') 'NaN h_v at: ',i + G%HI%idg_offset, j + G%HI%jdg_offset
+      call MOM_error(WARNING, trim(msg), all_print = .True.)
+
+      write(msg, '(5(a, f10.3,x))') 'visc_rem= ',visc_rem_v(i,J,1), 'v= ',v(i,J,1)
+      call MOM_error(WARNING, trim(msg), all_print = .True.)
+      if (v(i,J,1)>0) then
+          write(msg, '(5(a, f10.3,x))') 'hL= ', h_L(i,j,1), 'hR= ', h_R(i,j,1), 'h= ', h(i,j,1)
+      elseif (v(i,J,1) < 0.0) then
+          write(msg, '(5(a, f10.3,x))') 'hL= ', h_L(i,j+1,1), 'hR= ', h_R(i,j+1,1), 'h= ', h(i,j+1,1)
+      else
+        write(msg, '(5(a, f10.3,x))') 'hL= ', h_L(i,j+1,1), 'hR= ', h_R(i,j,1)
+      endif
+      call MOM_error(WARNING, trim(msg), all_print = .True.)
+
+    endif
+  enddo; enddo
 
   local_open_BC = .false.
   if (associated(OBC)) local_open_BC = OBC%open_v_BCs_exist_globally
