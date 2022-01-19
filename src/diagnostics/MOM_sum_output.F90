@@ -1208,12 +1208,23 @@ subroutine create_depth_list(G, DL, min_depth_inc)
   integer :: mls, list_size
   integer :: list_pos, i_global, j_global
   integer :: i, j, k, kl
-
-  mls = G%Domain%niglobal*G%Domain%njglobal
+character(len=240) :: msg
+write(msg, '(a)') 'Enter create_depth'
+call MOM_error(WARNING, trim(msg))
+mls = G%Domain%niglobal*G%Domain%njglobal
+!write(msg, '(a,  4(a, i4,x))') 'before init dlist', &
+!        'idg_offset: ', G%idg_offset, 'jdg_offset: ', G%jdg_offset, 'isg: ', G%isg, 'isg: ', G%jsg
+!call MOM_error(WARNING, trim(msg), all_print = .True.)
 
 ! Need to collect the global data from compute domains to a 1D array for sorting.
-  Dlist(:) = 0.0
-  Arealist(:) = 0.0
+!  Dlist(:) = 0.0
+!  Arealist(:) = 0.0
+   do i = 1,G%Domain%niglobal*G%Domain%njglobal + 1
+    Dlist(i) = 0.0
+    Arealist(i) = 0.0
+    enddo
+write(msg, '(a,  4(a, i4,x))') 'before init dlist 2'
+call MOM_error(WARNING, trim(msg), all_print = .True.)
   do j=G%jsc,G%jec ; do i=G%isc,G%iec
     ! Set global indices that start the global domain at 1 (Fortran convention).
     j_global = j + G%jdg_offset - (G%jsg-1)
@@ -1224,11 +1235,17 @@ subroutine create_depth_list(G, DL, min_depth_inc)
     Arealist(list_pos) = G%mask2dT(i,j) * G%areaT(i,j)
   enddo ; enddo
 
+write(msg, '(a, i4, x, i4, x, 4(a, i4,x))') 'before calling sum_across_PEs', shape(Dlist), &
+        'idg_offset: ', G%idg_offset, 'jdg_offset: ', G%jdg_offset, 'isg: ', G%isg, 'isg: ', G%jsg
+call MOM_error(WARNING, trim(msg))
   ! These sums reproduce across PEs because the arrays are only nonzero on one PE.
   call sum_across_PEs(Dlist, mls+1)
   call sum_across_PEs(Arealist, mls+1)
 
-  do j=1,mls+1 ; indx2(j) = j ; enddo
+write(msg, '(a, i4, x, i4)') 'after calling sum_across_PEs', shape(Dlist)
+call MOM_error(WARNING, trim(msg))
+
+do j=1,mls+1 ; indx2(j) = j ; enddo
   k = mls / 2  + 1 ; ir = mls
   do
     if (k > 1) then
@@ -1251,6 +1268,9 @@ subroutine create_depth_list(G, DL, min_depth_inc)
     indx2(i) = indxt
   enddo
 
+write(msg, '(a)') 'After assigning'
+call MOM_error(WARNING, trim(msg))
+
 !  At this point, the lists should perhaps be culled to save memory.
 ! Culling: (1) identical depths (e.g. land) - take the last one.
 !          (2) the topmost and bottommost depths are always saved.
@@ -1266,7 +1286,8 @@ subroutine create_depth_list(G, DL, min_depth_inc)
       D_list_prev = Dlist(indx2(k))
     endif
   enddo
-
+write(msg, '(a)') 'After sorting'
+call MOM_error(WARNING, trim(msg))
   DL%listsize = list_size+1
   allocate(DL%depth(DL%listsize), DL%area(DL%listsize), DL%vol_below(DL%listsize))
 
@@ -1296,7 +1317,8 @@ subroutine create_depth_list(G, DL, min_depth_inc)
     endif
     Dprev = Dlist(i)
   enddo
-
+write(msg, '(a)') 'before volume'
+call MOM_error(WARNING, trim(msg))
   do while (kl+1 < DL%listsize)
     ! I don't understand why this is needed... RWH
     kl = kl+1
