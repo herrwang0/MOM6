@@ -23,6 +23,7 @@ use MOM_open_boundary,         only : OBC_DIRECTION_N, OBC_DIRECTION_S, OBC_NONE
 use MOM_unit_scaling,          only : unit_scale_type
 use MOM_verticalGrid,          only : verticalGrid_type
 use MOM_variables,             only : accel_diag_ptrs
+use MOM_coms,            only : min_across_PEs, max_across_PEs
 
 implicit none ; private
 
@@ -207,8 +208,12 @@ type, public :: hor_visc_CS ; private
   integer :: id_KE_tot = -1, id_KE_tot_div = -1, id_KE_tot_sqd = -1, &
              id_KE_Lap = -1, id_KE_Lap_div = -1, id_KE_Lap_sqd = -1, &
              id_KE_bih = -1, id_KE_bih_div1 = -1, id_KE_bih_sqd1 = -1, id_KE_bih_div2 = -1, id_KE_bih_sqd2 = -1
+  integer :: id_ke_bih_sqd2_d2 = -1, id_ke_bih_sqd2_Ah = -1, id_ke_bih_sqd2_dh = -1, id_ke_bih_sqd2_da = -1
+  integer :: id_ke_bih_sqd2_da_dahdx = -1, id_ke_bih_sqd2_da_dahdy = -1, id_ke_bih_sqd2_da_daqdx = -1, id_ke_bih_sqd2_da_daqdy = -1, &
+             id_ke_bih_sqd2_dh_dhhdx = -1, id_ke_bih_sqd2_dh_dhhdy = -1, id_ke_bih_sqd2_dh_dhqdx = -1, id_ke_bih_sqd2_dh_dhqdy = -1
+  integer :: id_ke_bih_sqd2_ah_madh = -1, id_ke_bih_sqd2_ah_damh = -1, id_ke_bih_sqd2_ah_xh = -1, id_ke_bih_sqd2_ah_xq = -1
   !>@}
-
+integer :: i_p, j_p
 end type hor_visc_CS
 
 contains
@@ -428,6 +433,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     ke_bih_sqd1, &    ! Residual term from the first layer decomposition of biharmonic KE [L2 T-3 ~> m2 s-3]
     ke_bih_div2, &    ! Divergence of fluxes term from biharmonic KE (second decomposition) [L2 T-3 ~> m2 s-3]
     ke_bih_sqd2       ! Negative-squared-like term from biharmonic KE [L2 T-3 ~> m2 s-3]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: &
+    ke_bih_sqd2_d2, ke_bih_sqd2_Ah, ke_bih_sqd2_dh, ke_bih_sqd2_da
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: &
+    ke_bih_sqd2_dh_dhhdx, ke_bih_sqd2_dh_dhhdy, ke_bih_sqd2_dh_dhqdx, ke_bih_sqd2_dh_dhqdy, &
+    ke_bih_sqd2_da_dahdx, ke_bih_sqd2_da_dahdy, ke_bih_sqd2_da_daqdx, ke_bih_sqd2_da_daqdy
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: &
+    ke_bih_sqd2_ah_madh, ke_bih_sqd2_ah_damh, ke_bih_sqd2_ah_xh, ke_bih_sqd2_ah_xq
   real, dimension(SZI_(G),SZJ_(G)) :: &
     lpstr_xx
   real, dimension(SZIB_(G),SZJB_(G)) :: &
@@ -440,9 +452,16 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     bhstr_xy_fct
   real, dimension(SZI_(G),SZJ_(G)) :: &
     bhstr_xx_fct
-  character(len=240)::msg
+real, dimension(SZIB_(G),SZJ_(G)) :: &
+  diffu1, diffu2
+real, dimension(SZI_(G),SZJB_(G)) :: &
+  diffv1, diffv2
+character(len=300)::msg
+real :: diffmax, rerr, tempvar
+integer :: ii_p, jj_p
   real :: ke1, ke2, ke3, ke4, kef1, kef2, kef3, kef4, kes1, kes2, kes3, kes4
 
+ii_p = CS%i_p; jj_p = CS%j_p
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
 
@@ -1163,7 +1182,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
       endif
 
-      if ((CS%id_Ah_h>0) .or. CS%debug) then
+      if ((CS%id_Ah_h>0) .or. CS%debug .or. CS%decomp_ke) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           Ah_h(i,j,k) = Ah(i,j)
         enddo ; enddo
@@ -1473,7 +1492,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
       endif
 
-      if (CS%id_Ah_q>0 .or. CS%debug) then
+      if (CS%id_Ah_q>0 .or. CS%debug .or. CS%decomp_ke) then
         do J=js-1,Jeq ; do I=is-1,Ieq
           Ah_q(I,J,k) = Ah(I,J)
         enddo ; enddo
@@ -1697,17 +1716,72 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     endif ! find_FrictWork and associated(mom_src)
 
     if (CS%decomp_ke) then
+do j=js,je ; do I=Isq,Ieq
+  diffu1(I,j) = G%IdyCu(I,j)*(CS%dy2h(i,j) *str_xx(i,j) - &
+                                CS%dy2h(i+1,j)*str_xx(i+1,j)) * &
+                G%IareaCu(I,j) / (h_u(I,j) + h_neglect)
+  diffu2(I,j) = G%IdxCu(I,j)*(CS%dx2q(I,J-1)*str_xy(I,J-1) - &
+                                CS%dx2q(I,J) *str_xy(I,J)) * &
+                G%IareaCu(I,j) / (h_u(I,j) + h_neglect)
+enddo; enddo
+do J=Jsq,Jeq ; do i=is,ie
+  diffv1(i,J) = G%IdyCv(i,J)*(CS%dy2q(I-1,J)*str_xy(I-1,J) - &
+                                CS%dy2q(I,J) *str_xy(I,J)) * &
+                  G%IareaCv(i,J) / (h_v(i,J) + h_neglect)
+  diffv2(i,J) =-G%IdxCv(i,J)*(CS%dx2h(i,j) *str_xx(i,j) - &
+                                CS%dx2h(i,j+1)*str_xx(i,j+1)) * &
+                  G%IareaCv(i,J) / (h_v(i,J) + h_neglect)
+enddo ; enddo
+
+do j=js,je ; do i=is,ie; if (i + G%HI%idg_offset == ii_p .and. j + G%HI%jdg_offset == jj_p) then
+  write(msg, '(2(a, i5,x), 5(a, ES23.16, x))') 'i:', ii_p, 'j:', jj_p ,'diffu: ', diffu(i,j,1), 'diffu1+diffu2: ', diffu1(i,j) + diffu2(i,j), &
+  'diffu1: ', diffu1(i,j), 'diffu2: ', diffu2(i,j), 'diff: ', diffu(i,j,1) - (diffu1(i,j) + diffu2(i,j))
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+  write(msg, '(5(a, ES23.16, x))') 'diffv: ', diffv(i,j,1), 'diffv1+diffv2: ', diffv1(i,j) + diffv2(i,j), &
+  'diffv1: ', diffv1(i,j), 'diffv2: ', diffv2(i,j), 'diff: ', diffv(i,j,1) - (diffv1(i,j) + diffv2(i,j))
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+endif; enddo; enddo
+
+diffmax = 0.0
+do j=js,je ; do I=Isq,Ieq
+  rerr = abs(diffu(i,j,1)-(diffu1(i,j) + diffu2(i,j))) / max(abs(diffu(i,j,1)), abs(diffu1(i,j)), abs(diffu2(i,j)))
+  if (diffmax < rerr) diffmax = rerr
+enddo; enddo
+call max_across_PEs(diffmax)
+write(msg, '(2(a, ES23.16, x))') 'diffu dmax: ', diffmax
+call MOM_error(WARNING, trim(msg))
+
+diffmax = 0.0
+do J=Jsq,Jeq ; do i=is,ie
+  rerr = abs(diffv(i,j,1)-(diffv1(i,j) + diffv2(i,j))) / max(abs(diffv(i,j,1)), abs(diffv1(i,j)), abs(diffv2(i,j)))
+  if (diffmax < rerr) diffmax = rerr
+enddo; enddo
+call max_across_PEs(diffmax)
+write(msg, '(2(a, ES23.16, x))') 'diffv dmax: ', diffmax
+call MOM_error(WARNING, trim(msg))
+
+! diffmax = maxval( abs((diffu(Isq:Ieq,js:je,1)-(diffu1(Isq:Ieq,js:je) + diffu2(Isq:Ieq,js:je)))/diffu(Isq:Ieq,js:je,1)) )
+
+! call min_across_PEs(diffmin)
+
+! write(msg, '(2(a, ES23.16, x))') 'diffu (hand max) dmax: ', diffmax, 'dmin: ', diffmin
+! call MOM_error(WARNING, trim(msg))
+
+! diffmax = maxval( abs(diffv(is:ie,Jsq:Jeq,1)-(diffv1(is:ie,Jsq:Jeq) + diffv2(is:ie,Jsq:Jeq))) )
+! call max_across_PEs(diffmax)
+! write(msg, '(2(a, ES23.16, x))') 'diffv dmax: ', diffmax
+! call MOM_error(WARNING, trim(msg))
       do j=js,je ; do i=is,ie
         ke_tot(i,j,k) = ( ( u(I  ,j,k) * diffu(I  ,j,k) * h_u(I  ,j) * G%areaCu(I  ,j)    &
-                          + u(I-1,j,k) * diffu(I-1,j,k) * h_u(I-1,j) * G%areaCu(I-1,j))   &
-                        + ( v(i,J  ,k) * diffv(i,J  ,k) * h_v(i,J  ) * G%areaCv(i,J  )    &
-                          + v(i,J-1,k) * diffv(i,J-1,k) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
+                           +u(I-1,j,k) * diffu(I-1,j,k) * h_u(I-1,j) * G%areaCu(I-1,j))   &
+                         +( v(i,J  ,k) * diffv(i,J  ,k) * h_v(i,J  ) * G%areaCv(i,J  )    &
+                           +v(i,J-1,k) * diffv(i,J-1,k) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
                         * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
         ke_tot_div(i,j,k) = &
           ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i-1,j)*str_xx(i-1,j)) &
                   -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i+1,j)*str_xx(i+1,j)) ) &
            +0.25*( ( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j-1,k)*G%IdxCu(I  ,j-1)) * (CS%dx2q(I  ,J-1)*str_xy(I  ,J-1)) &
-                    +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j-1,k)*G%IdxCu(I-31,j-1)) * (CS%dx2q(I-1,J-1)*str_xy(I-1,J-1)))  &
+                    +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * (CS%dx2q(I-1,J-1)*str_xy(I-1,J-1)))  &
                   -( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j+1,k)*G%IdxCu(I  ,j+1)) * (CS%dx2q(I  ,J  )*str_xy(I  ,J  )) &
                     +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j+1,k)*G%IdxCu(I-1,j+1)) * (CS%dx2q(I-1,J  )*str_xy(I-1,J  ))) ) &
            +0.25*( ( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i-1,J  ,k)*G%IdyCv(i-1,J  )) * (CS%dy2q(I-1,J  )*str_xy(I-1,J  )) &
@@ -1729,8 +1803,29 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                     +(v(i+1,J-1,k)*G%IdyCv(i+1,J-1)-v(i,J-1,k)*G%IdyCv(i,J-1)) * CS%dy2q(I,J-1)*str_xy(I,J-1) ) ) &
            -(v(i,J,k)*G%IdxCv(i,J) - v(i,J-1,k)*G%IdxCv(i,J-1)) * CS%dx2h(i,j)*str_xx(i,j) ) &
           * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
-      enddo ; enddo
+if (i + G%HI%idg_offset == ii_p .and. j + G%HI%jdg_offset == jj_p) then
+  write(msg, '(5(a, ES23.16, x))') 'tot: ', ke_tot(i,j,1), 'tot_div+tot_sqd: ', ke_tot_div(i,j,1) + ke_tot_sqd(i,j,1), &
+  'ke_tot_div: ', ke_tot_div(i,j,1), 'ke_tot_sqd: ', ke_tot_sqd(i,j,1), 'diff: ', ke_tot(i,j,1) - (ke_tot_div(i,j,1) + ke_tot_sqd(i,j,1))
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
 
+  tempvar = ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i-1,j)*str_xx(i-1,j)) &
+  -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i+1,j)*str_xx(i+1,j)) ) &
++0.25*( ( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j-1,k)*G%IdxCu(I  ,j-1)) * (CS%dx2q(I  ,J-1)*str_xy(I  ,J-1)) &
+    +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * (CS%dx2q(I-1,J-1)*str_xy(I-1,J-1)))  &
+  -( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j+1,k)*G%IdxCu(I  ,j+1)) * (CS%dx2q(I  ,J  )*str_xy(I  ,J  )) &
+    +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j+1,k)*G%IdxCu(I-1,j+1)) * (CS%dx2q(I-1,J  )*str_xy(I-1,J  ))) ) &
++0.25*( ( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i-1,J  ,k)*G%IdyCv(i-1,J  )) * (CS%dy2q(I-1,J  )*str_xy(I-1,J  )) &
+    +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i-1,J-1,k)*G%IdyCv(i-1,J-1)) * (CS%dy2q(I-1,J-1)*str_xy(I-1,J-1))) &
+  -( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i+1,J  ,k)*G%IdyCv(i+1,J  )) * (CS%dy2q(I  ,J  )*str_xy(I  ,J  )) &
+    +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i+1,J-1,k)*G%IdyCv(i+1,J-1)) * (CS%dy2q(I  ,J-1)*str_xy(I  ,J-1))) ) &
+-0.5 *( v(i,J-1,k)*G%IdxCv(i,J-1) * (CS%dx2h(i,j)*str_xx(i,j)+CS%dx2h(i,j-1)*str_xx(i,j-1)) &
+  -v(i,J  ,k)*G%IdxCv(i,J  ) * (CS%dx2h(i,j)*str_xx(i,j)+CS%dx2h(i,j+1)*str_xx(i,j+1)) ) )
+
+  write(msg, '(5(a, ES23.16, x))') 'h: ', h(i,j,1), 'h+h_ngl: ', h(i,j,k) + h_neglect, &
+  '1/a/h: ', G%IareaT(i,j) / (h(i,j,k) + h_neglect), 'flx: ', tempvar
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+endif
+      enddo ; enddo
       if (CS%Laplacian) then
         do j=js,je ; do I=Isq,Ieq
           lpdiffu(I,j) = ( ( G%IdyCu(I,j) * ( CS%dy2h(i  ,j) * lpstr_xx(i  ,j) &
@@ -1874,7 +1969,288 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                 * (bhstr_xy_fct(I-1,J-1)*CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - bhstr_xy_fct(I-1,J)*CS%dx2q(I-1,J)*sh_xy(I-1,J)) ) ) &
             * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
         enddo ; enddo
+
+        do j=js,je ; do i=is,ie
+          ke_bih_sqd2_d2(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                 +Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) - CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) ) &
+                * (bhstr_xx_fct(i+1,j)+bhstr_xx_fct(i,j)+bhstr_xy_fct(I  ,J)+bhstr_xy_fct(I  ,J-1)) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) - CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                 +Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) ) &
+                * (bhstr_xx_fct(i-1,j)+bhstr_xx_fct(i,j)+bhstr_xy_fct(I-1,J)+bhstr_xy_fct(I-1,J-1)) ) &
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) - CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                 -Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) ) &
+                * (bhstr_xx_fct(i,j+1)+bhstr_xx_fct(i,j)+bhstr_xy_fct(I,J  )+bhstr_xy_fct(I-1,J  )) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                 -Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) - CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) ) &
+                * (bhstr_xx_fct(i,j)+bhstr_xx_fct(i,j-1)+bhstr_xy_fct(I,J-1)+bhstr_xy_fct(I-1,J-1)) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_ah(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                 -Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) - CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) ) &
+                * ( (bhstr_xx_fct(i+1,j)+bhstr_xx_fct(i,j)) - (bhstr_xy_fct(I  ,J)+bhstr_xy_fct(I  ,J-1)) ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) - CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                 -Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) ) &
+                * ( (bhstr_xx_fct(i-1,j)+bhstr_xx_fct(i,j)) - (bhstr_xy_fct(I-1,J)+bhstr_xy_fct(I-1,J-1)) ) ) &
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) - CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                 +Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) ) &
+                * ( (bhstr_xy_fct(I,J  )+bhstr_xy_fct(I-1,J  )) - (bhstr_xx_fct(i,j+1)+bhstr_xx_fct(i,j)) ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                 +Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) - CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) ) &
+                * ( (bhstr_xy_fct(I,J-1)+bhstr_xy_fct(I-1,J-1)) - (bhstr_xx_fct(i,j)+bhstr_xx_fct(i,j-1)) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_ah_madh(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                 -Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) - CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) ) &
+                * ( ( (Ah_h(i+1,j,k)+Ah_h(i,j,k)) + (Ah_q(I,J-1,k)+Ah_q(I,J,k)) ) &
+                   *( (h(i,j,k)*CS%reduction_xx(i,j)+h(i+1,j,k)*CS%reduction_xx(i+1,j)) &
+                     -(hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1)+hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J)) ) * 0.25 ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) - CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                 -Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) ) &
+                * ( ( (Ah_h(i-1,j,k)+Ah_h(i,j,k)) + (Ah_q(I-1,J-1,k)+Ah_q(I-1,J,k)) ) &
+                   *( (h(i,j,k)*CS%reduction_xx(i,j)+h(i-1,j,k)*CS%reduction_xx(i-1,j)) &
+                     -(hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1)+hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J)) ) * 0.25 ) ) &
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) - CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                 +Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) ) &
+                * ( ( (Ah_h(i,j+1,k)+Ah_h(i,j,k)) + (Ah_q(I-1,J,k)+Ah_q(I,J,k)) ) &
+                   *( (hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J)+hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J)) &
+                     -(h(i,j,k)*CS%reduction_xx(i,j)+h(i,j+1,k)*CS%reduction_xx(i,j+1)) ) * 0.25 ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                 +Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) - CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) ) &
+                * ( ( (Ah_h(i,j-1,k)+Ah_h(i,j,k)) + (Ah_q(I-1,J-1,k)+Ah_q(I,J-1,k)) ) &
+                   *( (hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1)+hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1)) &
+                     -(h(i,j,k)*CS%reduction_xx(i,j)+h(i,j-1,k)*CS%reduction_xx(i,j-1)) ) * 0.25 ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_ah_damh(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                 -Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) - CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) ) &
+                * ( ( (Ah_h(i+1,j,k)+Ah_h(i,j,k)) - (Ah_q(I,J-1,k)+Ah_q(I,J,k)) ) &
+                   *( (h(i,j,k)*CS%reduction_xx(i,j)+h(i+1,j,k)*CS%reduction_xx(i+1,j)) &
+                     +(hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1)+hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J)) ) * 0.25 ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) - CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                 -Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) ) &
+                * ( ( (Ah_h(i-1,j,k)+Ah_h(i,j,k)) - (Ah_q(I-1,J-1,k)+Ah_q(I-1,J,k)) ) &
+                   *( (h(i,j,k)*CS%reduction_xx(i,j)+h(i-1,j,k)*CS%reduction_xx(i-1,j)) &
+                     +(hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1)+hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J)) ) * 0.25 ) ) &
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) - CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                 +Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) ) &
+                * ( ( (Ah_q(I-1,J,k)+Ah_q(I,J,k)) - (Ah_h(i,j+1,k)+Ah_h(i,j,k)) ) &
+                   *( (hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J)+hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J)) &
+                     +(h(i,j,k)*CS%reduction_xx(i,j)+h(i,j+1,k)*CS%reduction_xx(i,j+1)) ) * 0.25 ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                 +Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) - CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) ) &
+                * ( ( (Ah_q(I-1,J-1,k)+Ah_q(I,J-1,k)) - (Ah_h(i,j-1,k)+Ah_h(i,j,k)) ) &
+                   *( (hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1)+hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1)) &
+                     +(h(i,j,k)*CS%reduction_xx(i,j)+h(i,j-1,k)*CS%reduction_xx(i,j-1)) ) * 0.25 ) ) )&
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_ah_xh(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                 -Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) - CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) ) &
+                * ( ( Ah_h(i+1,j,k)-Ah_h(i,j,k) ) * ( h(i+1,j,k)*CS%reduction_xx(i+1,j)-h(i,j,k)*CS%reduction_xx(i,j) ) * 0.5 ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) - CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                 -Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) ) &
+                * ( ( Ah_h(i,j,k)-Ah_h(i-1,j,k) ) * ( h(i,j,k)*CS%reduction_xx(i,j)-h(i-1,j,k)*CS%reduction_xx(i-1,j) ) * 0.5 ) ) &
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) - CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                 +Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) ) &
+                * (-( Ah_h(i,j+1,k)-Ah_h(i,j,k) ) * ( h(i,j+1,k)*CS%reduction_xx(i,j+1)-h(i,j,k)*CS%reduction_xx(i,j) ) * 0.5 ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                 +Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) - CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) ) &
+                * (-( Ah_h(i,j,k)-Ah_h(i,j-1,k) ) * ( h(i,j,k)*CS%reduction_xx(i,j)-h(i,j-1,k)*CS%reduction_xx(i,j-1) ) * 0.5 ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_ah_xq(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                 -Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) - CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) ) &
+                * (-( Ah_q(I,J,k)-Ah_q(I,J-1,k) ) * ( hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J)-hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) ) * 0.5 ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) - CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                 -Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) ) &
+                * (-( Ah_q(I-1,J,k)-Ah_q(I-1,J-1,k) ) * ( hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J)-hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) ) * 0.5 ) ) &
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) - CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                 +Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) - CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) ) &
+                * ( ( Ah_q(I,J,k)-Ah_q(I-1,J,k) ) * ( hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J)-hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) ) * 0.5 ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                 +Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) - CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) ) &
+                * ( ( Ah_q(I,J-1,k)-Ah_q(I-1,J-1,k) ) * ( hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1)-hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) ) * 0.5 ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_dh(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                  * ( Ah_h(i,j,k) + Ah_h(i+1,j,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) - h(i+1,j,k)*CS%reduction_xx(i+1,j) ) &
+                 +Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) + CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I,J-1,k) + Ah_q(I,J,k) ) &
+                  * ( hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) - hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) + CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i-1,j,k) + Ah_h(i,j,k)) &
+                  * ( h(i-1,j,k)*CS%reduction_xx(i-1,j) - h(i,j,k)*CS%reduction_xx(i,j) ) &
+                 +Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) &
+                  * ( Ah_q(I-1,J,k) + Ah_q(I-1,J-1,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) - hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) ) ) )&
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) + CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I-1,J,k) + Ah_q(I,J,k) ) &
+                  * ( hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) - hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) &
+                 -Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) &
+                  * ( Ah_h(i,j,k) + Ah_h(i,j+1,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) - h(i,j+1,k)*CS%reduction_xx(i,j+1) ) ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                  * ( Ah_q(I-1,J-1,k) + Ah_q(I,J-1,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) - hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) ) &
+                 -Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) + CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i,j,k) + Ah_h(i,j-1,k) ) &
+                  * ( h(i,j-1,k)*CS%reduction_xx(i,j-1) - h(i,j,k)*CS%reduction_xx(i,j) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_dh_dhhdx(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                  * ( Ah_h(i,j,k) + Ah_h(i+1,j,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) - h(i+1,j,k)*CS%reduction_xx(i+1,j) ) )&
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) + CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i-1,j,k) + Ah_h(i,j,k)) &
+                  * ( h(i-1,j,k)*CS%reduction_xx(i-1,j) - h(i,j,k)*CS%reduction_xx(i,j) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_dh_dhhdy(i,j,k) = &
+            ( ( (-Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) &
+                  * ( Ah_h(i,j,k) + Ah_h(i,j+1,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) - h(i,j+1,k)*CS%reduction_xx(i,j+1) ) ) &
+               +(-Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) + CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i,j,k) + Ah_h(i,j-1,k) ) &
+                  * ( h(i,j-1,k)*CS%reduction_xx(i,j-1) - h(i,j,k)*CS%reduction_xx(i,j) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_dh_dhqdx(i,j,k) = &
+            ( ( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) + CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I-1,J,k) + Ah_q(I,J,k) ) &
+                  * ( hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) - hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                  * ( Ah_q(I-1,J-1,k) + Ah_q(I,J-1,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) - hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_dh_dhqdy(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) + CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I,J-1,k) + Ah_q(I,J,k) ) &
+                  * ( hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) - hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) ) &
+               +( Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) &
+                  * ( Ah_q(I-1,J,k) + Ah_q(I-1,J-1,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) - hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_da(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                  * ( Ah_h(i,j,k) - Ah_h(i+1,j,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) + h(i+1,j,k)*CS%reduction_xx(i+1,j) ) &
+                 +Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) + CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I,J-1,k) - Ah_q(I,J,k) ) &
+                  * ( hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) + hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) + CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i-1,j,k) - Ah_h(i,j,k) ) &
+                  * ( h(i-1,j,k)*CS%reduction_xx(i-1,j) + h(i,j,k)*CS%reduction_xx(i,j) ) &
+                 +Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) &
+                  * ( Ah_q(I-1,J-1,k) - Ah_q(I-1,J,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) + hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) ) ) )&
+             +( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) + CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I-1,J,k) - Ah_q(I,J,k) ) &
+                  * ( hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) + hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) &
+                 -Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) &
+                  * ( Ah_h(i,j,k) - Ah_h(i,j+1,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) + h(i,j+1,k)*CS%reduction_xx(i,j+1) ) ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                  * ( Ah_q(I-1,J-1,k) - Ah_q(I,J-1,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) + hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) ) &
+                 -Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) + CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i,j-1,k) - Ah_h(i,j,k)) &
+                  * ( h(i,j-1,k)*CS%reduction_xx(i,j-1) + h(i,j,k)*CS%reduction_xx(i,j) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_da_dahdx(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) * (CS%dy2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dy2h(i+1,j  )*sh_xx(i+1,j  )) &
+                  * ( Ah_h(i,j,k) - Ah_h(i+1,j,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) + h(i+1,j,k)*CS%reduction_xx(i+1,j) ) ) &
+               +( Del2u(I-1,j)*G%IdyCu(I-1,j) * (CS%dy2h(i-1,j  )*sh_xx(i-1,j  ) + CS%dy2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i-1,j,k) - Ah_h(i,j,k) ) &
+                  * ( h(i-1,j,k)*CS%reduction_xx(i-1,j) + h(i,j,k)*CS%reduction_xx(i,j) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_da_dahdy(i,j,k) = &
+            ( ( (-Del2v(i,J  )*G%IdxCv(i,J  ) * (CS%dx2h(i  ,j  )*sh_xx(i  ,j  ) + CS%dx2h(i  ,j+1)*sh_xx(i  ,j+1)) &
+                  * ( Ah_h(i,j,k) - Ah_h(i,j+1,k) ) &
+                  * ( h(i,j,k)*CS%reduction_xx(i,j) + h(i,j+1,k)*CS%reduction_xx(i,j+1) ) ) &
+               +(-Del2v(i,J-1)*G%IdxCv(i,J-1) * (CS%dx2h(i  ,j-1)*sh_xx(i  ,j-1) + CS%dx2h(i  ,j  )*sh_xx(i  ,j  )) &
+                  * ( Ah_h(i,j-1,k) - Ah_h(i,j,k)) &
+                  * ( h(i,j-1,k)*CS%reduction_xx(i,j-1) + h(i,j,k)*CS%reduction_xx(i,j) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_da_daqdx(i,j,k) = &
+            ( ( ( Del2v(i,J  )*G%IdyCv(i,J  ) * (CS%dy2q(I-1,J  )*sh_xy(I-1,J  ) + CS%dy2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I-1,J,k) - Ah_q(I,J,k) ) &
+                  * ( hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) + hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) ) &
+               +( Del2v(i,J-1)*G%IdyCv(i,J-1) * (CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dy2q(I  ,J-1)*sh_xy(I  ,J-1)) &
+                  * ( Ah_q(I-1,J-1,k) - Ah_q(I,J-1,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) + hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2_da_daqdy(i,j,k) = &
+            ( ( ( Del2u(I  ,j)*G%IdxCu(I  ,j) * (CS%dx2q(I  ,J-1)*sh_xy(I  ,J-1) + CS%dx2q(I  ,J  )*sh_xy(I  ,J  )) &
+                  * ( Ah_q(I,J-1,k) - Ah_q(I,J,k) ) &
+                  * ( hq(I,J-1)*G%mask2dBu(I,J-1)*CS%reduction_xy(I,J-1) + hq(I,J)*G%mask2dBu(I,J)*CS%reduction_xy(I,J) ) ) &
+               +( Del2u(I-1,j)*G%IdxCu(I-1,j) * (CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) + CS%dx2q(I-1,J  )*sh_xy(I-1,J  )) &
+                  * ( Ah_q(I-1,J-1,k) - Ah_q(I-1,J,k) ) &
+                  * ( hq(I-1,J-1)*G%mask2dBu(I-1,J-1)*CS%reduction_xy(I-1,J-1) + hq(I-1,J)*G%mask2dBu(I-1,J)*CS%reduction_xy(I-1,J) ) ) ) ) &
+            * 0.125 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+        enddo ; enddo
       endif
+do j=js,je ; do i=is,ie; if (i + G%HI%idg_offset == ii_p .and. j + G%HI%jdg_offset == jj_p) then
+  write(msg, '(4(a, ES23.16, x))') 'ke_tot: ', ke_tot(i,j,1), 'ke_tot_div+ke_tot_sqd: ', ke_tot_div(i,j,1) + ke_tot_sqd(i,j,1), &
+  'ke_tot_div: ', ke_tot_div(i,j,1), 'ke_tot_sqd: ', ke_tot_sqd(i,j,1)
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+  write(msg, '(4(a, ES23.16, x))') 'ke_tot: ', ke_tot(i,j,1), 'ke_lap+ke_bih: ', ke_lap(i,j,1) + ke_bih(i,j,1), &
+  'ke_lap: ', ke_lap(i,j,1), 'ke_bih: ', ke_bih(i,j,1)
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+  write(msg, '(4(a, ES23.16, x))') 'ke_lap: ', ke_lap(i,j,1), 'ke_lap_div+ke_lap_sqd: ', ke_lap_div(i,j,1) + ke_lap_sqd(i,j,1), &
+  'ke_lap_div: ', ke_lap_div(i,j,1), 'ke_lap_sqd: ', ke_lap_sqd(i,j,1)
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+  write(msg, '(4(a, ES23.16, x))') 'ke_bih: ', ke_bih(i,j,1), 'ke_bih_div+ke_bih_sqd: ', ke_bih_div1(i,j,1) + ke_bih_sqd1(i,j,1), &
+  'ke_bih_div1: ', ke_bih_div1(i,j,1), 'ke_bih_sqd1: ', ke_bih_sqd1(i,j,1)
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+  write(msg, '(4(a, ES23.16, x))') 'ke_bih_sqd1: ', ke_bih_sqd1(i,j,1), 'ke_bih_div2+ke_bih_sqd2: ', ke_bih_div2(i,j,1) + ke_bih_sqd2(i,j,1), &
+  'ke_bih_div2: ', ke_bih_div2(i,j,1), 'ke_bih_sqd2: ', ke_bih_sqd2(i,j,1)
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+
+  write(msg, '(6(a, ES23.16, x))') 'ke_bih_sqd2: ', ke_bih_sqd2(i,j,1), &
+  'ke_bih_sqd2 (c): ', ke_bih_sqd2_d2(i,j,1) + ke_bih_sqd2_Ah(i,j,1) + ke_bih_sqd2_dh(i,j,1) + ke_bih_sqd2_da(i,j,1), &
+  'ke_bih_sqd2_d2: ', ke_bih_sqd2_d2(i,j,1), 'ke_bih_sqd2_Ah: ', ke_bih_sqd2_Ah(i,j,1), &
+  'ke_bih_sqd2_dh: ', ke_bih_sqd2_dh(i,j,1), 'ke_bih_sqd2_da: ', ke_bih_sqd2_da(i,j,1)
+  call MOM_error(WARNING, trim(msg), all_print = .True.)
+endif; enddo; enddo
+
+diffmax = 0.0
+do j=js,je ; do i=is,ie
+  rerr = abs(ke_tot(i,j,1)-(ke_tot_div(i,j,1) + ke_tot_sqd(i,j,1))) / max(abs(ke_tot(i,j,1)), abs(ke_tot_div(i,j,1)), abs(ke_tot_sqd(i,j,1)))
+  if (diffmax < rerr) diffmax = rerr
+enddo; enddo
+! diffmax = maxval( abs(ke_tot(is:ie,js:je,1)-(ke_tot_div(is:ie,js:je,1) + ke_tot_sqd(is:ie,js:je,1))) )
+call max_across_PEs(diffmax)
+write(msg, '(2(a, ES23.16, x))') 'ke_tot [div+sqd] dmax: ', diffmax
+call MOM_error(WARNING, trim(msg))
+
+diffmax = 0.0
+do j=js,je ; do i=is,ie
+  rerr = abs(ke_tot(i,j,1)-(ke_lap(i,j,1) + ke_bih(i,j,1))) / max(abs(ke_tot(i,j,1)), abs(ke_lap(i,j,1)), abs(ke_bih(i,j,1)))
+  if (diffmax < rerr) diffmax = rerr
+enddo; enddo
+! diffmax = maxval( abs(ke_tot(is:ie,js:je,1)-(ke_lap(is:ie,js:je,1) + ke_bih(is:ie,js:je,1))) )
+call max_across_PEs(diffmax)
+write(msg, '(2(a, ES23.16, x))') 'ke_tot [lap+bih] dmax: ', diffmax
+call MOM_error(WARNING, trim(msg))
+
+diffmax = 0.0
+do j=js,je ; do i=is,ie
+  rerr = abs(ke_lap(i,j,1)-(ke_lap_div(i,j,1) + ke_lap_sqd(i,j,1))) / max(abs(ke_lap(i,j,1)), abs(ke_lap_div(i,j,1)), abs(ke_lap_sqd(i,j,1)))
+  if (diffmax < rerr) diffmax = rerr
+enddo; enddo
+call max_across_PEs(diffmax)
+write(msg, '(2(a, ES23.16, x))') 'ke_lap [div+sqd] dmax: ', diffmax
+call MOM_error(WARNING, trim(msg))
+
+diffmax = 0.0
+do j=js,je ; do i=is,ie
+  rerr = abs(ke_bih(i,j,1)-(ke_bih_div1(i,j,1) + ke_bih_sqd1(i,j,1))) / max(abs(ke_bih(i,j,1)), abs(ke_bih_div1(i,j,1)), abs(ke_bih_sqd1(i,j,1)))
+  if (diffmax < rerr) diffmax = rerr
+enddo; enddo
+call max_across_PEs(diffmax)
+write(msg, '(2(a, ES23.16, x))') 'ke_bih [div+sqd] dmax: ', diffmax
+call MOM_error(WARNING, trim(msg))
+
     endif
   enddo ! end of k loop
 
@@ -1953,6 +2329,22 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     if (CS%id_KE_bih_sqd1>0) call post_data(CS%id_KE_bih_sqd1, ke_bih_sqd1, CS%diag)
     if (CS%id_KE_bih_div2>0) call post_data(CS%id_KE_bih_div2, ke_bih_div2, CS%diag)
     if (CS%id_KE_bih_sqd2>0) call post_data(CS%id_KE_bih_sqd2, ke_bih_sqd2, CS%diag)
+    if (CS%id_KE_bih_sqd2_d2>0) call post_data(CS%id_KE_bih_sqd2_d2, ke_bih_sqd2_d2, CS%diag)
+    if (CS%id_KE_bih_sqd2_Ah>0) call post_data(CS%id_KE_bih_sqd2_Ah, ke_bih_sqd2_Ah, CS%diag)
+    if (CS%id_KE_bih_sqd2_da>0) call post_data(CS%id_KE_bih_sqd2_da, ke_bih_sqd2_da, CS%diag)
+    if (CS%id_KE_bih_sqd2_dh>0) call post_data(CS%id_KE_bih_sqd2_dh, ke_bih_sqd2_dh, CS%diag)
+    if (CS%id_ke_bih_sqd2_da_dahdx>0) call post_data(CS%id_ke_bih_sqd2_da_dahdx, ke_bih_sqd2_da_dahdx, CS%diag)
+    if (CS%id_ke_bih_sqd2_da_dahdy>0) call post_data(CS%id_ke_bih_sqd2_da_dahdy, ke_bih_sqd2_da_dahdy, CS%diag)
+    if (CS%id_ke_bih_sqd2_da_daqdx>0) call post_data(CS%id_ke_bih_sqd2_da_daqdx, ke_bih_sqd2_da_daqdx, CS%diag)
+    if (CS%id_ke_bih_sqd2_da_daqdy>0) call post_data(CS%id_ke_bih_sqd2_da_daqdy, ke_bih_sqd2_da_daqdy, CS%diag)
+    if (CS%id_ke_bih_sqd2_dh_dhhdx>0) call post_data(CS%id_ke_bih_sqd2_dh_dhhdx, ke_bih_sqd2_dh_dhhdx, CS%diag)
+    if (CS%id_ke_bih_sqd2_dh_dhhdy>0) call post_data(CS%id_ke_bih_sqd2_dh_dhhdy, ke_bih_sqd2_dh_dhhdy, CS%diag)
+    if (CS%id_ke_bih_sqd2_dh_dhqdx>0) call post_data(CS%id_ke_bih_sqd2_dh_dhqdx, ke_bih_sqd2_dh_dhqdx, CS%diag)
+    if (CS%id_ke_bih_sqd2_dh_dhqdy>0) call post_data(CS%id_ke_bih_sqd2_dh_dhqdy, ke_bih_sqd2_dh_dhqdy, CS%diag)
+    if (CS%id_ke_bih_sqd2_ah_damh>0) call post_data(CS%id_ke_bih_sqd2_ah_damh, ke_bih_sqd2_ah_damh, CS%diag)
+    if (CS%id_ke_bih_sqd2_ah_madh>0) call post_data(CS%id_ke_bih_sqd2_ah_madh, ke_bih_sqd2_ah_madh, CS%diag)
+    if (CS%id_ke_bih_sqd2_ah_xh>0) call post_data(CS%id_ke_bih_sqd2_ah_xh, ke_bih_sqd2_ah_xh, CS%diag)
+    if (CS%id_ke_bih_sqd2_ah_xq>0) call post_data(CS%id_ke_bih_sqd2_ah_xq, ke_bih_sqd2_ah_xq, CS%diag)
   endif
 end subroutine horizontal_viscosity
 
@@ -2050,6 +2442,12 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "viscosity.  The decomposition includes a full flux term and a squared term for both Laplacian "//&
                  "and Biharmonic viscosity.  The squared term is non-positive for Laplacian viscosity, "//&
                  "but not for Biharmonic viscosity, with the current implementation.", default=.false.)
+  call get_param(param_file, mdl, "I_P", CS%i_p, &
+                 "print ix", &
+                 default=10)
+  call get_param(param_file, mdl, "J_P", CS%j_p, &
+                 "print iy", &
+                 default=10)
   call get_param(param_file, mdl, "KH", Kh,                      &
                  "The background Laplacian horizontal viscosity.", &
                  units="m2 s-1", default=0.0, scale=US%m_to_L**2*US%T_to_s, &
@@ -2810,6 +3208,54 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         'Divergence of the second flux term from decomposing KE due to Biharmonic horizontal viscosity', &
         'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
       CS%id_KE_bih_sqd2 = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_d2 = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_d2', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_Ah = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_Ah', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_da = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_da', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_dh = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_dh', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_da_dahdx = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_da_dahdx', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_da_dahdy = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_da_dahdy', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_da_daqdx = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_da_daqdx', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_da_daqdy = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_da_daqdy', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_dh_dhhdx = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_dh_dhhdx', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_dh_dhhdy = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_dh_dhhdy', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_dh_dhqdx = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_dh_dhqdx', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_dh_dhqdy = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_dh_dhqdy', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_ah_madh = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_ah_madh', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_ah_damh = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_ah_damh', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_ah_xh = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_ah_xh', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_ke_bih_sqd2_ah_xq = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2_ah_xq', diag%axesTL, Time, &
         'Squared term from decomposing KE due to Biharmonic horizontal viscosity', &
         'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
   endif
