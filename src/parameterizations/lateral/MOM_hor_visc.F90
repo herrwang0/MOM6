@@ -20,6 +20,7 @@ use MOM_io,                    only : MOM_read_data, slasher
 use MOM_MEKE_types,            only : MEKE_type
 use MOM_open_boundary,         only : ocean_OBC_type, OBC_DIRECTION_E, OBC_DIRECTION_W
 use MOM_open_boundary,         only : OBC_DIRECTION_N, OBC_DIRECTION_S, OBC_NONE
+use MOM_string_functions,      only : uppercase
 use MOM_unit_scaling,          only : unit_scale_type
 use MOM_verticalGrid,          only : verticalGrid_type
 use MOM_variables,             only : accel_diag_ptrs
@@ -35,6 +36,10 @@ type, public :: hor_visc_CS ; private
   logical :: initialized = .false. !< True if this control structure has been initialized.
   logical :: Laplacian       !< Use a Laplacian horizontal viscosity if true.
   logical :: biharmonic      !< Use a biharmonic horizontal viscosity if true.
+  integer :: biharmonic_scheme !< Scheme for biharmonic viscosity.
+                               !! Valid values are:
+                               !! - SIMPLE: default scheme. Energy sink is not guaranteed.
+                               !! - variants of energy consistent schemes: SQRT_AH, SQRT_A
   logical :: debug           !< If true, write verbose checksums for debugging purposes.
   logical :: decomp_ke       !< If true, kinetic energy source from horizontal viscosity is
                              !! decomposed into a divergence term and a "squared" term.
@@ -216,6 +221,15 @@ type, public :: hor_visc_CS ; private
 
 end type hor_visc_CS
 
+!>@{ Enumeration values for biharmonic_scheme
+integer, parameter :: SIMPLE  = 0
+integer, parameter :: SQRT_AH = 1
+integer, parameter :: SQRT_A  = 2
+
+character(len=20), parameter :: SIMPLE_STRING = "DEFAULT"
+character(len=20), parameter :: SQRT_AH_STRING = "SQRT_AH"
+character(len=20), parameter :: SQRT_A_STRING = "SQRT_A"
+!>@}
 contains
 
 !> Calculates the acceleration due to the horizontal viscosity.
@@ -609,7 +623,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   !$OMP   h_neglect, h_neglect3, FWfrac, inv_PI3, inv_PI6, H0_GME, &
   !$OMP   diffu, diffv, Kh_h, Kh_q, Ah_h, Ah_q, FrictWork, FrictWork_GME, &
   !$OMP   div_xx_h, sh_xx_h, vort_xy_q, sh_xy_q, GME_coeff_h, GME_coeff_q, &
-  !$OMP   KH_u_GME, KH_v_GME, grid_Re_Kh, grid_Re_Ah, NoSt, ShSt &
+  !$OMP   KH_u_GME, KH_v_GME, grid_Re_Kh, grid_Re_Ah, NoSt, ShSt, &
+  !$OMP   ke_tot, ke_tot_div, ke_tot_sqd, ke_lap, ke_lap_div, ke_lap_sqd, &
+  !$OMP   ke_bih, ke_bih_div1, ke_bih_sqd1, ke_bih_div2, ke_bih_sqd2 &
   !$OMP ) &
   !$OMP private( &
   !$OMP   i, j, k, n, &
@@ -625,7 +641,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   !$OMP   grid_Ah, grid_Kh, d_Del2u, d_Del2v, d_str, &
   !$OMP   Kh, Ah, AhSm, AhLth, local_strain, Sh_F_pow, &
   !$OMP   dDel2vdx, dDel2udy, DY_dxCv, DX_dyCu, Del2vort_q, Del2vort_h, KE, &
-  !$OMP   h2uq, h2vq, hu, hv, hq, FatH, RoScl, GME_coeff &
+  !$OMP   h2uq, h2vq, hu, hv, hq, FatH, RoScl, GME_coeff, &
+  !$OMP   lpstr_xx, lpstr_xy, bhstr_xx_fct, bhstr_xy_fct, lpdiffu, lpdiffv, bhdiffu, bhdiffv &
   !$OMP )
   do k=1,nz
 
@@ -1192,22 +1209,37 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         enddo ; enddo
       endif
 
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        d_del2u = G%IdyCu(I,j) * Del2u(I,j) - G%IdyCu(I-1,j) * Del2u(I-1,j)
-        d_del2v = G%IdxCv(i,J) * Del2v(i,J) - G%IdxCv(i,J-1) * Del2v(i,J-1)
-        d_str = Ah(i,j) * (CS%DY_dxT(i,j) * d_del2u - CS%DX_dyT(i,j) * d_del2v)
-
-        str_xx(i,j) = str_xx(i,j) + d_str
-
-        ! Keep a copy of the biharmonic contribution for backscatter parameterization
-        bhstr_xx(i,j) = d_str * (h(i,j,k) * CS%reduction_xx(i,j))
-      enddo ; enddo
-
-      ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xx
-      if (CS%decomp_ke) then
+      if (CS%biharmonic_scheme == SIMPLE) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-          bhstr_xx_fct(i,j) = Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
+          d_del2u = G%IdyCu(I,j) * Del2u(I,j) - G%IdyCu(I-1,j) * Del2u(I-1,j)
+          d_del2v = G%IdxCv(i,J) * Del2v(i,J) - G%IdxCv(i,J-1) * Del2v(i,J-1)
+          d_str = Ah(i,j) * (CS%DY_dxT(i,j) * d_del2u - CS%DX_dyT(i,j) * d_del2v)
+
+          str_xx(i,j) = str_xx(i,j) + d_str
+          ! Keep a copy of the biharmonic contribution for backscatter parameterization
+          bhstr_xx(i,j) = d_str * (h(i,j,k) * CS%reduction_xx(i,j))
         enddo ; enddo
+        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xx
+        if (CS%decomp_ke) then
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            bhstr_xx_fct(i,j) = Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
+          enddo ; enddo
+        endif
+      else
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          d_del2u = G%IdyCu(I,j) * Del2u(I,j) - G%IdyCu(I-1,j) * Del2u(I-1,j)
+          d_del2v = G%IdxCv(i,J) * Del2v(i,J) - G%IdxCv(i,J-1) * Del2v(i,J-1)
+          d_str = Ah(i,j) * (CS%DY_dxT(i,j) * d_del2u - CS%DX_dyT(i,j) * d_del2v)
+
+          ! Separate out biharmonic contribution
+          bhstr_xx(i,j) = d_str * (h(i,j,k) * CS%reduction_xx(i,j))
+        enddo ; enddo
+        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xx
+        if (CS%decomp_ke) then
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            bhstr_xx_fct(i,j) = Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
+          enddo ; enddo
+        endif
       endif
     endif
 
@@ -1496,20 +1528,33 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       endif
 
       ! Again, need to initialize str_xy as if its biharmonic
-      do J=js-1,Jeq ; do I=is-1,Ieq
-        d_str = Ah(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
-
-        str_xy(I,J) = str_xy(I,J) + d_str
-
-        ! Keep a copy of the biharmonic contribution for backscatter parameterization
-        bhstr_xy(I,J) = d_str * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
-      enddo ; enddo
-
-      ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xy
-      if (CS%decomp_ke) then
+      if (CS%biharmonic_scheme == SIMPLE) then
         do J=js-1,Jeq ; do I=is-1,Ieq
-          bhstr_xy_fct(I,J) = Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+          d_str = Ah(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
+
+          str_xy(I,J) = str_xy(I,J) + d_str
+          ! Keep a copy of the biharmonic contribution for backscatter parameterization
+          bhstr_xy(I,J) = d_str * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
         enddo ; enddo
+        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xy
+        if (CS%decomp_ke) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            bhstr_xy_fct(I,J) = Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+          enddo ; enddo
+        endif
+      else
+        do J=js-1,Jeq ; do I=is-1,Ieq
+          d_str = Ah(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
+
+          ! Separate out biharmonic contribution
+          bhstr_xy(I,J) = d_str * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+        enddo ; enddo
+        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xy
+        if (CS%decomp_ke) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            bhstr_xy_fct(I,J) = Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+          enddo ; enddo
+        endif
       endif
     endif
 
@@ -1552,18 +1597,34 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       endif
 
     else ! .not. use_GME
-      do J=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        str_xx(i,j) = str_xx(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
-      enddo ; enddo
+      if (CS%biharmonic_scheme == SIMPLE) then
+        do J=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          str_xx(i,j) = str_xx(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
+        enddo ; enddo
 
-      if (CS%no_slip) then
-        do J=js-1,Jeq ; do I=is-1,Ieq
-          str_xy(I,J) = str_xy(I,J) * (hq(I,J) * CS%reduction_xy(I,J))
-        enddo ; enddo
+        if (CS%no_slip) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) * (hq(I,J) * CS%reduction_xy(I,J))
+          enddo ; enddo
+        else
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+          enddo ; enddo
+        endif
       else
-        do J=js-1,Jeq ; do I=is-1,Ieq
-          str_xy(I,J) = str_xy(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+        do J=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          str_xx(i,j) = str_xx(i,j) * (h(i,j,k) * CS%reduction_xx(i,j)) + bhstr_xx(i,j)
         enddo ; enddo
+
+        if (CS%no_slip) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) * (hq(I,J) * CS%reduction_xy(I,J)) + bhstr_xy(I,J)
+          enddo ; enddo
+        else
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            str_xy(I,J) = str_xy(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J)) + bhstr_xy(I,J)
+          enddo ; enddo
+        endif
       endif
     endif ! use_GME
 
@@ -2046,6 +2107,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_hor_visc"  ! module name
+  character(len=20)  :: tmpstr
   is   = G%isc  ; ie   = G%iec  ; js   = G%jsc  ; je   = G%jec ; nz = GV%ke
   Isq  = G%IscB ; Ieq  = G%IecB ; Jsq  = G%JscB ; Jeq  = G%JecB
   isd  = G%isd  ; ied  = G%ied  ; jsd  = G%jsd  ; jed  = G%jed
@@ -2173,6 +2235,29 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "If true, use a biharmonic horizontal viscosity. "//&
                  "BIHARMONIC may be used with LAPLACIAN.", &
                  default=.true.)
+  if (CS%biharmonic) then
+    call get_param(param_file, mdl, "BIHARMONIC_SCHEME", tmpstr, &
+                  "BIHARMONIC_SCHEME selects the discretization for the "//&
+                  "biharmonic terms. Valid values are: \n"//&
+                  "\t DEFAULT - Ah.h are inside of the first (outermost) derivatives. \n"//&
+                  "\t           Energy sink is not guaranteed.\n"//&
+                  "\t SQRT_AH - sqrt(Ah.h) is inside the first and third derivatives. \n"//&
+                  "\t SQRT_A  - sqrt(Ah) is inside the first and third derivatives and \n"//&
+                  "\t           h is inside the second derivatives. ", &
+                  default=SIMPLE_STRING, do_not_log=.not.CS%biharmonic)
+    tmpstr = uppercase(tmpstr)
+    select case (tmpstr)
+      case (SIMPLE_STRING)
+        CS%biharmonic_scheme = SIMPLE
+      case (SQRT_AH_STRING)
+        CS%biharmonic_scheme = SQRT_AH
+      case (SQRT_A_STRING)
+        CS%biharmonic_scheme = SQRT_A
+      case default
+        call MOM_error(FATAL, "hor_visc_init: Unrecognized setting "// &
+              "#define BIHARMONIC_SCHEME "//trim(tmpstr)//" found in input file.")
+    endselect
+  endif
   call get_param(param_file, mdl, "AH", Ah, &
                  "The background biharmonic horizontal viscosity.", &
                  units="m4 s-1", default=0.0, scale=US%m_to_L**4*US%T_to_s, &
