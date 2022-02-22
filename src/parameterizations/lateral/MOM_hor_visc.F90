@@ -36,6 +36,10 @@ type, public :: hor_visc_CS ; private
   logical :: Laplacian       !< Use a Laplacian horizontal viscosity if true.
   logical :: biharmonic      !< Use a biharmonic horizontal viscosity if true.
   logical :: debug           !< If true, write verbose checksums for debugging purposes.
+  logical :: decomp_ke       !< If true, kinetic energy source from horizontal viscosity is
+                             !! decomposed into a divergence term and a "squared" term.
+                             !! Different from `KE_horvisc` in MOM_diagnostics, the KE terms is
+                             !! calculated using velcosity (u, v), rather than transport (uh, vh).
   logical :: no_slip         !< If true, no slip boundary conditions are used.
                              !! Otherwise free slip boundary conditions are assumed.
                              !! The implementation of the free slip boundary
@@ -205,6 +209,9 @@ type, public :: hor_visc_CS ; private
   integer :: id_FrictWork = -1, id_FrictWorkIntz = -1
   integer :: id_FrictWork_GME = -1
   integer :: id_normstress = -1, id_shearstress = -1
+  integer :: id_KE_tot = -1, id_KE_tot_div = -1, id_KE_tot_sqd = -1, &
+             id_KE_Lap = -1, id_KE_Lap_div = -1, id_KE_Lap_sqd = -1, &
+             id_KE_bih = -1, id_KE_bih_div1 = -1, id_KE_bih_sqd1 = -1, id_KE_bih_div2 = -1, id_KE_bih_sqd2 = -1
   !>@}
 
 end type hor_visc_CS
@@ -406,6 +413,38 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   real, dimension(SZI_(G),SZJB_(G)) :: &
     hf_diffv_2d, &    ! Depth sum of hf_diffu, hf_diffv [L T-2 ~> m s-2]
     intz_diffv_2d     ! Depth-integral of diffv [H L T-2 ~> m2 s-2]
+
+  ! Horizontal viscosity kinetic energy terms specifically for decomposition.
+  ! KE_TOT is calculated by multiplying diff[uv] by velocity [uv], which is different from
+  ! KE_horvisc in MOM_diagnostic ([uv]h). The reason is to make sure the KE terms decomposed
+  ! exactly into a divergence of a full flux term and a non-positive definite (negative squared)
+  ! term. The sign-definiteness is not guaranteed for the default biharmonic viscosity, but
+  ! other options are all designed to ensure an energy sink.
+  ! All terms are located at the tracer (h) points.
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: &
+    ke_tot, &         ! KE contribution due to total horizontal viscosity [L2 T-3 ~> m2 s-3]
+    ke_tot_div, &     ! Divergence of fluxes term from total KE [L2 T-3 ~> m2 s-3]
+    ke_tot_sqd, &     ! Negative-squared-like term from total KE [L2 T-3 ~> m2 s-3]
+    ke_lap, &         ! KE contribution due to Laplacian horizontal viscosity [L2 T-3 ~> m2 s-3]
+    ke_lap_div, &     ! Divergence of fluxes term from Laplacian KE [L2 T-3 ~> m2 s-3]
+    ke_lap_sqd, &     ! Negative-squared (non-positive definite) term from Laplacian KE. [L2 T-3 ~> m2 s-3]
+    ke_bih, &         ! KE contribution due to biharmonic horizontal viscosity [L2 T-3 ~> m2 s-3]
+    ke_bih_div1, &    ! Divergence of fluxes term from biharmonic KE (first decomposition) [L2 T-3 ~> m2 s-3]
+    ke_bih_sqd1, &    ! Residual term from the first layer decomposition of biharmonic KE [L2 T-3 ~> m2 s-3]
+    ke_bih_div2, &    ! Divergence of fluxes term from biharmonic KE (second decomposition) [L2 T-3 ~> m2 s-3]
+    ke_bih_sqd2       ! Negative-squared-like term from biharmonic KE [L2 T-3 ~> m2 s-3]
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    lpstr_xx
+  real, dimension(SZIB_(G),SZJB_(G)) :: &
+    lpstr_xy
+  real, dimension(SZIB_(G),SZJ_(G)) :: &
+    lpdiffu, bhdiffu
+  real, dimension(SZI_(G),SZJB_(G)) :: &
+    lpdiffv, bhdiffv
+  real, dimension(SZIB_(G),SZJB_(G)) :: &
+    bhstr_xy_fct
+  real, dimension(SZI_(G),SZJ_(G)) :: &
+    bhstr_xx_fct
 
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -1053,6 +1092,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         str_xx(i,j) = -Kh(i,j) * sh_xx(i,j)
       enddo ; enddo
+
+      if (CS%decomp_ke) then
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          ! Keep a copy of the Laplacain contribution for KE decomposition
+          lpstr_xx(i,j) = str_xx(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
+        enddo ; enddo
+      endif
     else
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         str_xx(i,j) = 0.0
@@ -1156,6 +1202,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         ! Keep a copy of the biharmonic contribution for backscatter parameterization
         bhstr_xx(i,j) = d_str * (h(i,j,k) * CS%reduction_xx(i,j))
       enddo ; enddo
+
+      ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xx
+      if (CS%decomp_ke) then
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          bhstr_xx_fct(i,j) = Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
+        enddo ; enddo
+      endif
     endif
 
     if (CS%biharmonic) then
@@ -1342,6 +1395,19 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       do J=js-1,Jeq ; do I=is-1,Ieq
         str_xy(I,J) = -Kh(i,j) * sh_xy(I,J)
       enddo ; enddo
+
+      if (CS%decomp_ke) then
+        ! Keep a copy of the Laplacian contribution KE decomposition
+        if (CS%no_slip) then
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            lpstr_xy(I,J) = str_xy(I,J) * (hq(I,J) * CS%reduction_xy(I,J))
+          enddo ; enddo
+        else
+          do J=js-1,Jeq ; do I=is-1,Ieq
+            lpstr_xy(I,J) = str_xy(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+          enddo ; enddo
+        endif
+      endif
     else
       do J=js-1,Jeq ; do I=is-1,Ieq
         str_xy(I,J) = 0.
@@ -1438,6 +1504,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         ! Keep a copy of the biharmonic contribution for backscatter parameterization
         bhstr_xy(I,J) = d_str * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
       enddo ; enddo
+
+      ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xy
+      if (CS%decomp_ke) then
+        do J=js-1,Jeq ; do I=is-1,Ieq
+          bhstr_xy_fct(I,J) = Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+        enddo ; enddo
+      endif
     endif
 
     if (CS%use_GME) then
@@ -1648,6 +1721,185 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
     endif ! find_FrictWork and associated(mom_src)
 
+    if (CS%decomp_ke) then
+      do j=js,je ; do i=is,ie
+        ke_tot(i,j,k) = ( ( u(I  ,j,k) * diffu(I  ,j,k) * h_u(I  ,j) * G%areaCu(I  ,j)    &
+                           +u(I-1,j,k) * diffu(I-1,j,k) * h_u(I-1,j) * G%areaCu(I-1,j))   &
+                         +( v(i,J  ,k) * diffv(i,J  ,k) * h_v(i,J  ) * G%areaCv(i,J  )    &
+                           +v(i,J-1,k) * diffv(i,J-1,k) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
+                        * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+        ke_tot_div(i,j,k) = &
+          ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i-1,j)*str_xx(i-1,j)) &
+                  -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i+1,j)*str_xx(i+1,j)) ) &
+           +0.25*( ( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j-1,k)*G%IdxCu(I  ,j-1)) * (CS%dx2q(I  ,J-1)*str_xy(I  ,J-1)) &
+                    +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * (CS%dx2q(I-1,J-1)*str_xy(I-1,J-1)))  &
+                  -( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j+1,k)*G%IdxCu(I  ,j+1)) * (CS%dx2q(I  ,J  )*str_xy(I  ,J  )) &
+                    +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j+1,k)*G%IdxCu(I-1,j+1)) * (CS%dx2q(I-1,J  )*str_xy(I-1,J  ))) ) &
+           +0.25*( ( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i-1,J  ,k)*G%IdyCv(i-1,J  )) * (CS%dy2q(I-1,J  )*str_xy(I-1,J  )) &
+                    +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i-1,J-1,k)*G%IdyCv(i-1,J-1)) * (CS%dy2q(I-1,J-1)*str_xy(I-1,J-1))) &
+                  -( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i+1,J  ,k)*G%IdyCv(i+1,J  )) * (CS%dy2q(I  ,J  )*str_xy(I  ,J  )) &
+                    +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i+1,J-1,k)*G%IdyCv(i+1,J-1)) * (CS%dy2q(I  ,J-1)*str_xy(I  ,J-1))) ) &
+           -0.5 *( v(i,J-1,k)*G%IdxCv(i,J-1) * (CS%dx2h(i,j)*str_xx(i,j)+CS%dx2h(i,j-1)*str_xx(i,j-1)) &
+                  -v(i,J  ,k)*G%IdxCv(i,J  ) * (CS%dx2h(i,j)*str_xx(i,j)+CS%dx2h(i,j+1)*str_xx(i,j+1)) ) ) &
+          * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+        ke_tot_sqd(i,j,k) = &
+          ( (u(I,j,k)*G%IdyCu(I,j) - u(I-1,j,k)*G%IdyCu(I-1,j)) * CS%dy2h(i,j)*str_xx(i,j) &
+           +0.25*( ( (u(I,j+1,k)*G%IdxCu(I,j+1)-u(I  ,j  ,k)*G%IdxCu(I  ,j  )) * CS%dx2q(I  ,J  )*str_xy(I  ,J  ) &
+                    +(u(I-1,j,k)*G%IdxCu(I-1,j)-u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * CS%dx2q(I-1,J-1)*str_xy(I-1,J-1) ) &
+                  +( (u(I-1,j+1,k)*G%IdxCu(I-1,j+1)-u(I-1,j,k)*G%IdxCu(I-1,j)) * CS%dx2q(I-1,J)*str_xy(I-1,J) &
+                    +(u(I  ,j  ,k)*G%IdxCu(I  ,j  )-u(I,j-1,k)*G%IdxCu(I,j-1)) * CS%dx2q(I,J-1)*str_xy(I,J-1) ) ) &
+           +0.25*( ( (v(i+1,J,k)*G%IdyCv(i+1,J)-v(i  ,J  ,k)*G%IdyCv(i  ,J  )) * CS%dy2q(I  ,J  )*str_xy(I  ,J  ) &
+                    +(v(i,J-1,k)*G%IdyCv(i,J-1)-v(i-1,J-1,k)*G%IdyCv(i-1,J-1)) * CS%dy2q(I-1,J-1)*str_xy(I-1,J-1) ) &
+                  +( (v(i  ,J  ,k)*G%IdyCv(i  ,J  )-v(i-1,J,k)*G%IdyCv(i-1,J)) * CS%dy2q(I-1,J)*str_xy(I-1,J) &
+                    +(v(i+1,J-1,k)*G%IdyCv(i+1,J-1)-v(i,J-1,k)*G%IdyCv(i,J-1)) * CS%dy2q(I,J-1)*str_xy(I,J-1) ) ) &
+           -(v(i,J,k)*G%IdxCv(i,J) - v(i,J-1,k)*G%IdxCv(i,J-1)) * CS%dx2h(i,j)*str_xx(i,j) ) &
+          * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+      enddo ; enddo
+      if (CS%Laplacian) then
+        do j=js,je ; do I=Isq,Ieq
+          lpdiffu(I,j) = ( ( G%IdyCu(I,j) * ( CS%dy2h(i  ,j) * lpstr_xx(i  ,j) &
+                                             -CS%dy2h(i+1,j) * lpstr_xx(i+1,j) ) &
+                            +G%IdxCu(I,j) * ( CS%dx2q(I,J-1) * lpstr_xy(I,J-1) &
+                                             -CS%dx2q(I,J  ) * lpstr_xy(I,J  ) ) ) &
+                         * G%IareaCu(I,j) ) / (h_u(I,j) + h_neglect)
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          lpdiffv(i,J) = ( ( G%IdyCv(i,J) * ( CS%dy2q(I-1,J) * lpstr_xy(I-1,J) &
+                                             -CS%dy2q(I  ,J) * lpstr_xy(I  ,J) ) &
+                            -G%IdxCv(i,J) * ( CS%dx2h(i,j  ) * lpstr_xx(i,j  ) &
+                                             -CS%dx2h(i,j+1) * lpstr_xx(i,j+1) ) ) &
+                         * G%IareaCv(i,J) ) / (h_v(i,J) + h_neglect)
+        enddo ; enddo
+        do j=js,je ; do i=is,ie
+          ke_lap(i,j,k) = ( ( u(I  ,j,k) * lpdiffu(I  ,j) * h_u(I  ,j) * G%areaCu(I  ,j)    &
+                            + u(I-1,j,k) * lpdiffu(I-1,j) * h_u(I-1,j) * G%areaCu(I-1,j))   &
+                          + ( v(i,J  ,k) * lpdiffv(i,J  ) * h_v(i,J  ) * G%areaCv(i,J  )    &
+                            + v(i,J-1,k) * lpdiffv(i,J-1) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
+                          * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_lap_div(i,j,k) = &
+            ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*lpstr_xx(i,j)+CS%dy2h(i-1,j)*lpstr_xx(i-1,j)) &
+                    -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*lpstr_xx(i,j)+CS%dy2h(i+1,j)*lpstr_xx(i+1,j)) ) &
+             +0.25*( ( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j-1,k)*G%IdxCu(I  ,j-1)) * (CS%dx2q(I  ,J-1)*lpstr_xy(I  ,J-1)) &
+                      +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * (CS%dx2q(I-1,J-1)*lpstr_xy(I-1,J-1)))  &
+                    -( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j+1,k)*G%IdxCu(I  ,j+1)) * (CS%dx2q(I  ,J  )*lpstr_xy(I  ,J  )) &
+                      +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j+1,k)*G%IdxCu(I-1,j+1)) * (CS%dx2q(I-1,J  )*lpstr_xy(I-1,J  ))) ) &
+             +0.25*( ( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i-1,J  ,k)*G%IdyCv(i-1,J  )) * (CS%dy2q(I-1,J  )*lpstr_xy(I-1,J  )) &
+                      +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i-1,J-1,k)*G%IdyCv(i-1,J-1)) * (CS%dy2q(I-1,J-1)*lpstr_xy(I-1,J-1))) &
+                    -( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i+1,J  ,k)*G%IdyCv(i+1,J  )) * (CS%dy2q(I  ,J  )*lpstr_xy(I  ,J  )) &
+                      +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i+1,J-1,k)*G%IdyCv(i+1,J-1)) * (CS%dy2q(I  ,J-1)*lpstr_xy(I  ,J-1))) ) &
+             -0.5 *( v(i,J-1,k)*G%IdxCv(i,J-1) * (CS%dx2h(i,j)*lpstr_xx(i,j)+CS%dx2h(i,j-1)*lpstr_xx(i,j-1)) &
+                    -v(i,J  ,k)*G%IdxCv(i,J  ) * (CS%dx2h(i,j)*lpstr_xx(i,j)+CS%dx2h(i,j+1)*lpstr_xx(i,j+1)) ) ) &
+            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_lap_sqd(i,j,k) = &
+            ( (u(I,j,k)*G%IdyCu(I,j) - u(I-1,j,k)*G%IdyCu(I-1,j)) * CS%dy2h(i,j)*lpstr_xx(i,j) &
+             +0.25*( ( (u(I,j+1,k)*G%IdxCu(I,j+1)-u(I  ,j  ,k)*G%IdxCu(I  ,j  )) * CS%dx2q(I  ,J  )*lpstr_xy(I  ,J  ) &
+                      +(u(I-1,j,k)*G%IdxCu(I-1,j)-u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * CS%dx2q(I-1,J-1)*lpstr_xy(I-1,J-1) ) &
+                    +( (u(I-1,j+1,k)*G%IdxCu(I-1,j+1)-u(I-1,j,k)*G%IdxCu(I-1,j)) * CS%dx2q(I-1,J)*lpstr_xy(I-1,J) &
+                      +(u(I  ,j  ,k)*G%IdxCu(I  ,j  )-u(I,j-1,k)*G%IdxCu(I,j-1)) * CS%dx2q(I,J-1)*lpstr_xy(I,J-1) ) ) &
+             +0.25*( ( (v(i+1,J,k)*G%IdyCv(i+1,J)-v(i  ,J  ,k)*G%IdyCv(i  ,J  )) * CS%dy2q(I  ,J  )*lpstr_xy(I  ,J  ) &
+                      +(v(i,J-1,k)*G%IdyCv(i,J-1)-v(i-1,J-1,k)*G%IdyCv(i-1,J-1)) * CS%dy2q(I-1,J-1)*lpstr_xy(I-1,J-1) ) &
+                    +( (v(i  ,J  ,k)*G%IdyCv(i  ,J  )-v(i-1,J,k)*G%IdyCv(i-1,J)) * CS%dy2q(I-1,J)*lpstr_xy(I-1,J) &
+                      +(v(i+1,J-1,k)*G%IdyCv(i+1,J-1)-v(i,J-1,k)*G%IdyCv(i,J-1)) * CS%dy2q(I,J-1)*lpstr_xy(I,J-1) ) ) &
+             -(v(i,J,k)*G%IdxCv(i,J) - v(i,J-1,k)*G%IdxCv(i,J-1)) * CS%dx2h(i,j)*lpstr_xx(i,j) ) &
+            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+        enddo ; enddo
+      endif
+      if (CS%biharmonic) then
+        do j=js,je ; do I=Isq,Ieq
+          bhdiffu(I,j) = ( ( G%IdyCu(I,j) * ( CS%dy2h(i  ,j) * bhstr_xx(i  ,j) &
+                                             -CS%dy2h(i+1,j) * bhstr_xx(i+1,j) ) &
+                            +G%IdxCu(I,j) * ( CS%dx2q(I,J-1) * bhstr_xy(I,J-1) &
+                                             -CS%dx2q(I,J  ) * bhstr_xy(I,J  ) ) ) &
+                         * G%IareaCu(I,j) ) / (h_u(I,j) + h_neglect)
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          bhdiffv(i,J) = ( ( G%IdyCv(i,J) * ( CS%dy2q(I-1,J) * bhstr_xy(I-1,J) &
+                                             -CS%dy2q(I  ,J) * bhstr_xy(I  ,J) ) &
+                            -G%IdxCv(i,J) * ( CS%dx2h(i,j  ) * bhstr_xx(i,j  ) &
+                                             -CS%dx2h(i,j+1) * bhstr_xx(i,j+1) ) ) &
+                         * G%IareaCv(i,J) ) / (h_v(i,J) + h_neglect)
+        enddo ; enddo
+
+        do j=js,je ; do i=is,ie
+          ke_bih(i,j,k) = ( ( u(I  ,j,k) * bhdiffu(I  ,j) * h_u(I  ,j) * G%areaCu(I  ,j)    &
+                            + u(I-1,j,k) * bhdiffu(I-1,j) * h_u(I-1,j) * G%areaCu(I-1,j))   &
+                          + ( v(i,J  ,k) * bhdiffv(i,J  ) * h_v(i,J  ) * G%areaCv(i,J  )    &
+                            + v(i,J-1,k) * bhdiffv(i,J-1) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
+                          * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_div1(i,j,k) = &
+            ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*bhstr_xx(i,j)+CS%dy2h(i-1,j)*bhstr_xx(i-1,j)) &
+                    -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*bhstr_xx(i,j)+CS%dy2h(i+1,j)*bhstr_xx(i+1,j)) ) &
+             +0.25*( ( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j-1,k)*G%IdxCu(I  ,j-1)) * (CS%dx2q(I  ,J-1)*bhstr_xy(I  ,J-1)) &
+                      +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * (CS%dx2q(I-1,J-1)*bhstr_xy(I-1,J-1)))  &
+                    -( (u(I  ,j,k)*G%IdxCu(I  ,j)+u(I  ,j+1,k)*G%IdxCu(I  ,j+1)) * (CS%dx2q(I  ,J  )*bhstr_xy(I  ,J  )) &
+                      +(u(I-1,j,k)*G%IdxCu(I-1,j)+u(I-1,j+1,k)*G%IdxCu(I-1,j+1)) * (CS%dx2q(I-1,J  )*bhstr_xy(I-1,J  ))) ) &
+             +0.25*( ( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i-1,J  ,k)*G%IdyCv(i-1,J  )) * (CS%dy2q(I-1,J  )*bhstr_xy(I-1,J  )) &
+                      +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i-1,J-1,k)*G%IdyCv(i-1,J-1)) * (CS%dy2q(I-1,J-1)*bhstr_xy(I-1,J-1))) &
+                    -( (v(i,J  ,k)*G%IdyCv(i,J  )+v(i+1,J  ,k)*G%IdyCv(i+1,J  )) * (CS%dy2q(I  ,J  )*bhstr_xy(I  ,J  )) &
+                      +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i+1,J-1,k)*G%IdyCv(i+1,J-1)) * (CS%dy2q(I  ,J-1)*bhstr_xy(I  ,J-1))) ) &
+             -0.5 *( v(i,J-1,k)*G%IdxCv(i,J-1) * (CS%dx2h(i,j)*bhstr_xx(i,j)+CS%dx2h(i,j-1)*bhstr_xx(i,j-1)) &
+                    -v(i,J  ,k)*G%IdxCv(i,J  ) * (CS%dx2h(i,j)*bhstr_xx(i,j)+CS%dx2h(i,j+1)*bhstr_xx(i,j+1)) ) ) &
+            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd1(i,j,k) = &
+            ( (u(I,j,k)*G%IdyCu(I,j) - u(I-1,j,k)*G%IdyCu(I-1,j)) * CS%dy2h(i,j)*bhstr_xx(i,j) &
+             +0.25*( ( (u(I,j+1,k)*G%IdxCu(I,j+1)-u(I  ,j  ,k)*G%IdxCu(I  ,j  )) * CS%dx2q(I  ,J  )*bhstr_xy(I  ,J  ) &
+                      +(u(I-1,j,k)*G%IdxCu(I-1,j)-u(I-1,j-1,k)*G%IdxCu(I-1,j-1)) * CS%dx2q(I-1,J-1)*bhstr_xy(I-1,J-1) ) &
+                    +( (u(I-1,j+1,k)*G%IdxCu(I-1,j+1)-u(I-1,j,k)*G%IdxCu(I-1,j)) * CS%dx2q(I-1,J)*bhstr_xy(I-1,J) &
+                      +(u(I  ,j  ,k)*G%IdxCu(I  ,j  )-u(I,j-1,k)*G%IdxCu(I,j-1)) * CS%dx2q(I,J-1)*bhstr_xy(I,J-1) ) ) &
+             +0.25*( ( (v(i+1,J,k)*G%IdyCv(i+1,J)-v(i  ,J  ,k)*G%IdyCv(i  ,J  )) * CS%dy2q(I  ,J  )*bhstr_xy(I  ,J  ) &
+                      +(v(i,J-1,k)*G%IdyCv(i,J-1)-v(i-1,J-1,k)*G%IdyCv(i-1,J-1)) * CS%dy2q(I-1,J-1)*bhstr_xy(I-1,J-1) ) &
+                    +( (v(i  ,J  ,k)*G%IdyCv(i  ,J  )-v(i-1,J,k)*G%IdyCv(i-1,J)) * CS%dy2q(I-1,J)*bhstr_xy(I-1,J) &
+                      +(v(i+1,J-1,k)*G%IdyCv(i+1,J-1)-v(i,J-1,k)*G%IdyCv(i,J-1)) * CS%dy2q(I,J-1)*bhstr_xy(I,J-1) ) ) &
+             -(v(i,J,k)*G%IdxCv(i,J) - v(i,J-1,k)*G%IdxCv(i,J-1)) * CS%dx2h(i,j)*bhstr_xx(i,j) ) &
+            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+
+          ke_bih_div2(i,j,k) = &
+            ( 0.5 *( Del2u(I  ,j)*G%IdyCu(I  ,j) &
+                     * (bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i+1,j)*CS%dy2h(i+1,j)*sh_xx(i+1,j)) &
+                    -Del2u(I-1,j)*G%IdyCu(I-1,j) &
+                     * (bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i-1,j)*CS%dy2h(i-1,j)*sh_xx(i-1,j)) ) &
+             +0.25*( ( (Del2u(I  ,j)*G%IdxCu(I  ,j) + Del2u(I  ,j+1)*G%IdxCu(I  ,j+1)) &
+                        * CS%dx2q(I  ,J  ) * bhstr_xy_fct(I  ,J  ) * sh_xy(I  ,J  ) &
+                      +(Del2u(I-1,j)*G%IdxCu(I-1,j) + Del2u(I-1,j+1)*G%IdxCu(I-1,j+1)) &
+                        * CS%dx2q(I-1,J  ) * bhstr_xy_fct(I-1,J  ) * sh_xy(I-1,J  ) ) &
+                    -( (Del2u(I  ,j)*G%IdxCu(I  ,j) + Del2u(I  ,j-1)*G%IdxCu(I  ,j-1)) &
+                        * CS%dx2q(I  ,J-1) * bhstr_xy_fct(I  ,J-1) * sh_xy(I  ,J-1) &
+                      +(Del2u(I-1,j)*G%IdxCu(I-1,j) + Del2u(I-1,j-1)*G%IdxCu(I-1,j-1)) &
+                        * CS%dx2q(I-1,J-1) * bhstr_xy_fct(I-1,J-1) * sh_xy(I-1,J-1) ) ) &
+             +0.25*( ( (Del2v(i,J  )*G%IdyCv(i,J  ) + Del2v(i+1,J  )*G%IdyCv(i+1,J  )) &
+                        * CS%dy2q(I  ,J  ) * bhstr_xy_fct(I  ,J  ) * sh_xy(I  ,J  ) &
+                      +(Del2v(i,J-1)*G%IdyCv(i,J-1) + Del2v(i+1,J-1)*G%IdyCv(i+1,J-1)) &
+                        * CS%dy2q(I  ,J-1) * bhstr_xy_fct(I  ,J-1) * sh_xy(I  ,J-1) ) &
+                    -( (Del2v(i,J  )*G%IdyCv(i,J  ) + Del2v(i-1,J  )*G%IdyCv(i-1,J  )) &
+                        * CS%dy2q(I-1,J  ) * bhstr_xy_fct(I-1,J  ) * sh_xy(I-1,J  ) &
+                      +(Del2v(i,J-1)*G%IdyCv(i,J-1) + Del2v(i-1,J-1)*G%IdyCv(i-1,J-1)) &
+                        * CS%dy2q(I-1,J-1) * bhstr_xy_fct(I-1,J-1) * sh_xy(I-1,J-1) ) ) &
+             -0.5 *( Del2v(i,J  )*G%IdxCv(i,J  ) &
+                     * (bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i,j+1)*CS%dx2h(i,j+1)*sh_xx(i,j+1)) &
+                    -Del2v(i,J-1)*G%IdxCv(i,J-1) &
+                     * (bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i,j-1)*CS%dx2h(i,j-1)*sh_xx(i,j-1)) ) ) &
+            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          ke_bih_sqd2(i,j,k) = &
+            ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) &
+                * (bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j) - bhstr_xx_fct(i+1,j)*CS%dy2h(i+1,j)*sh_xx(i+1,j)) &
+               +Del2u(I-1,j)*G%IdyCu(I-1,j) &
+                * (bhstr_xx_fct(i-1,j)*CS%dy2h(i-1,j)*sh_xx(i-1,j) - bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j)) ) &
+             -( Del2v(i,J  )*G%IdxCv(i,J  ) &
+                * (bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j) - bhstr_xx_fct(i,j+1)*CS%dx2h(i,j+1)*sh_xx(i,j+1)) &
+               +Del2v(i,J-1)*G%IdxCv(i,J-1) &
+                * (bhstr_xx_fct(i,j-1)*CS%dx2h(i,j-1)*sh_xx(i,j-1) - bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j)) ) &
+             +( Del2v(i,J  )*G%IdyCv(i,J  ) &
+                * (bhstr_xy_fct(I-1,J)*CS%dy2q(I-1,J)*sh_xy(I-1,J) - bhstr_xy_fct(I,J)*CS%dy2q(I,J)*sh_xy(I,J)) &
+               +Del2v(i,J-1)*G%IdyCv(i,J-1) &
+                * (bhstr_xy_fct(I-1,J-1)*CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - bhstr_xy_fct(I,J-1)*CS%dy2q(I,J-1)*sh_xy(I,J-1)) ) &
+             +( Del2u(I  ,j)*G%IdxCu(I  ,j) &
+                * (bhstr_xy_fct(I,J-1)*CS%dx2q(I,J-1)*sh_xy(I,J-1) - bhstr_xy_fct(I,J)*CS%dx2q(I,J)*sh_xy(I,J)) &
+               +Del2u(I-1,j)*G%IdxCu(I-1,j) &
+                * (bhstr_xy_fct(I-1,J-1)*CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - bhstr_xy_fct(I-1,J)*CS%dx2q(I-1,J)*sh_xy(I-1,J)) ) ) &
+            * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+        enddo ; enddo
+      endif
+    endif
   enddo ! end of k loop
 
   ! Offer fields for diagnostic averaging.
@@ -1713,6 +1965,19 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     if (CS%id_diffv_visc_rem > 0) call post_product_v(CS%id_diffv_visc_rem, diffv, ADp%visc_rem_v, G, nz, CS%diag)
   endif
 
+  if (CS%decomp_ke) then
+    if (CS%id_KE_tot>0) call post_data(CS%id_KE_tot, ke_tot, CS%diag)
+    if (CS%id_KE_tot_div>0) call post_data(CS%id_KE_tot_div, ke_tot_div, CS%diag)
+    if (CS%id_KE_tot_sqd>0) call post_data(CS%id_KE_tot_sqd, ke_tot_sqd, CS%diag)
+    if (CS%id_KE_Lap>0) call post_data(CS%id_KE_Lap, ke_lap, CS%diag)
+    if (CS%id_KE_Lap_div>0) call post_data(CS%id_KE_Lap_div, ke_lap_div, CS%diag)
+    if (CS%id_KE_Lap_sqd>0) call post_data(CS%id_KE_Lap_sqd, ke_lap_sqd, CS%diag)
+    if (CS%id_KE_bih>0) call post_data(CS%id_KE_Bih, ke_bih, CS%diag)
+    if (CS%id_KE_bih_div1>0) call post_data(CS%id_KE_bih_div1, ke_bih_div1, CS%diag)
+    if (CS%id_KE_bih_sqd1>0) call post_data(CS%id_KE_bih_sqd1, ke_bih_sqd1, CS%diag)
+    if (CS%id_KE_bih_div2>0) call post_data(CS%id_KE_bih_div2, ke_bih_div2, CS%diag)
+    if (CS%id_KE_bih_sqd2>0) call post_data(CS%id_KE_bih_sqd2, ke_bih_sqd2, CS%diag)
+  endif
 end subroutine horizontal_viscosity
 
 !> Allocates space for and calculates static variables used by horizontal_viscosity().
@@ -1801,6 +2066,11 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "answers from the end of 2018.  Otherwise, use updated and more robust "//&
                  "forms of the same expressions.", default=default_2018_answers)
   call get_param(param_file, mdl, "DEBUG", CS%debug, default=.false.)
+  call get_param(param_file, mdl, "DECOMPOSE_KE_HORVISC", CS%decomp_ke, &
+                 "If true, calculate the decomposition of kinetic energy source from horizontal "//&
+                 "viscosity.  The decomposition includes a divergence of flux term and a squared term "//&
+                 "for both Laplacian and biharmonic viscosity.  The squared term is non-positive "//&
+                 "definite for Laplacian viscosity, but not for default biharmonic viscosity.", default=.false.)
   call get_param(param_file, mdl, "LAPLACIAN", CS%Laplacian, &
                  "If true, use a Laplacian horizontal viscosity.", &
                  default=.false.)
@@ -2544,7 +2814,41 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
       cmor_field_name='dispkexyfo',                                                              &
       cmor_long_name='Depth integrated ocean kinetic energy dissipation due to lateral friction',&
       cmor_standard_name='ocean_kinetic_energy_dissipation_per_unit_area_due_to_xy_friction')
-
+  if (CS%decomp_ke) then
+      CS%id_KE_tot = register_diag_field('ocean_model', 'KE_horvisc_tot', diag%axesTL, Time, &
+        'Kinetic energy source from horizontal viscosity (u.diffu + v.diffv)', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_tot_div = register_diag_field('ocean_model', 'KE_horvisc_tot_div', diag%axesTL, Time, &
+        'Flux divergence term from decomposing (u.diffu + v.diffv)', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_tot_sqd = register_diag_field('ocean_model', 'KE_horvisc_tot_sqd', diag%axesTL, Time, &
+        'Squared term from decomposing (u.diffu + v.diffv)', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_Lap = register_diag_field('ocean_model', 'KE_horvisc_Lap', diag%axesTL, Time, &
+        'Kinetic energy source from Laplacian horizontal viscosity (u.diffu + v.diffv)', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_Lap_div = register_diag_field('ocean_model', 'KE_horvisc_Lap_div', diag%axesTL, Time, &
+        'Flux divergence term from decomposing KE due to Laplacian horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_Lap_sqd = register_diag_field('ocean_model', 'KE_horvisc_Lap_sqd', diag%axesTL, Time, &
+        'Squared term from decomposing KE due to Laplacian horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_bih = register_diag_field('ocean_model', 'KE_horvisc_bih', diag%axesTL, Time, &
+        'Kinetic energy source from biharmonic horizontal viscosity (u.diffu + v.diffv)', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_bih_div1 = register_diag_field('ocean_model', 'KE_horvisc_bih_div1', diag%axesTL, Time, &
+        'Flux divergence term from the first layer decomposition of KE due to biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_bih_sqd1 = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd1', diag%axesTL, Time, &
+        'Squared term from the first layer decomposition of KE due to biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_bih_div2 = register_diag_field('ocean_model', 'KE_horvisc_bih_div2', diag%axesTL, Time, &
+        'Flux divergence term from the second layer decomposition of KE due to biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+      CS%id_KE_bih_sqd2 = register_diag_field('ocean_model', 'KE_horvisc_bih_sqd2', diag%axesTL, Time, &
+        'Squared term from the second layer decomposition of KE due to biharmonic horizontal viscosity', &
+        'm2 s-3', conversion=(US%L_T_to_m_s**2)*US%s_to_T)
+  endif
 end subroutine hor_visc_init
 
 !> Calculates factors in the anisotropic orientation tensor to be align with the grid.
