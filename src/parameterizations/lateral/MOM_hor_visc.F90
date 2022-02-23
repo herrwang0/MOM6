@@ -434,9 +434,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   real, dimension(SZI_(G),SZJB_(G)) :: &
     lpdiffv, bhdiffv
   real, dimension(SZIB_(G),SZJB_(G)) :: &
-    bhstr_xy_fct
+    bhfct_xy
   real, dimension(SZI_(G),SZJ_(G)) :: &
-    bhstr_xx_fct
+    bhfct_xx
 
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -602,7 +602,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   !$OMP   Kh, Ah, AhSm, AhLth, local_strain, Sh_F_pow, &
   !$OMP   dDel2vdx, dDel2udy, DY_dxCv, DX_dyCu, Del2vort_q, Del2vort_h, KE, &
   !$OMP   h2uq, h2vq, hu, hv, hq, FatH, RoScl, GME_coeff, &
-  !$OMP   lpstr_xx, lpstr_xy, bhstr_xx_fct, bhstr_xy_fct, lpdiffu, lpdiffv, bhdiffu, bhdiffv &
+  !$OMP   lpstr_xx, lpstr_xy, bhfct_xx, bhfct_xy, lpdiffu, lpdiffv, bhdiffu, bhdiffv &
   !$OMP )
   do k=1,nz
 
@@ -782,32 +782,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         sh_xy(I,J) = G%mask2dBu(I,J) * ( dvdx(I,J) + dudy(I,J) )
         if (CS%id_shearstress > 0) ShSt(I,J,k) = sh_xy(I,J)
       enddo ; enddo
-    endif
-
-    !  Evaluate Del2u = x.Div(Grad u) and Del2v = y.Div( Grad u)
-    if (CS%biharmonic) then
-      do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
-        Del2u(I,j) = CS%Idxdy2u(I,j)*(CS%dy2h(i+1,j)*sh_xx(i+1,j) - CS%dy2h(i,j)*sh_xx(i,j)) + &
-                     CS%Idx2dyCu(I,j)*(CS%dx2q(I,J)*sh_xy(I,J) - CS%dx2q(I,J-1)*sh_xy(I,J-1))
-      enddo ; enddo
-      do J=Jsq-1,Jeq+1 ; do i=is-1,Ieq+1
-        Del2v(i,J) = CS%Idxdy2v(i,J)*(CS%dy2q(I,J)*sh_xy(I,J) - CS%dy2q(I-1,J)*sh_xy(I-1,J)) - &
-                     CS%Idx2dyCv(i,J)*(CS%dx2h(i,j+1)*sh_xx(i,j+1) - CS%dx2h(i,j)*sh_xx(i,j))
-      enddo ; enddo
-      if (apply_OBC) then ; if (OBC%zero_biharmonic) then
-        do n=1,OBC%number_of_segments
-          I = OBC%segment(n)%HI%IsdB ; J = OBC%segment(n)%HI%JsdB
-          if (OBC%segment(n)%is_N_or_S .and. (J >= Jsq-1) .and. (J <= Jeq+1)) then
-            do I=OBC%segment(n)%HI%isd,OBC%segment(n)%HI%ied
-              Del2v(i,J) = 0.
-            enddo
-          elseif (OBC%segment(n)%is_E_or_W .and. (I >= Isq-1) .and. (I <= Ieq+1)) then
-            do j=OBC%segment(n)%HI%jsd,OBC%segment(n)%HI%jed
-              Del2u(I,j) = 0.
-            enddo
-          endif
-        enddo
-      endif ; endif
     endif
 
     ! Vorticity
@@ -1169,67 +1143,17 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       if (CS%biharmonic_scheme == SIMPLE) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-          d_del2u = G%IdyCu(I,j) * Del2u(I,j) - G%IdyCu(I-1,j) * Del2u(I-1,j)
-          d_del2v = G%IdxCv(i,J) * Del2v(i,J) - G%IdxCv(i,J-1) * Del2v(i,J-1)
-          d_str = Ah(i,j) * (CS%DY_dxT(i,j) * d_del2u - CS%DX_dyT(i,j) * d_del2v)
-
-          str_xx(i,j) = str_xx(i,j) + d_str
-          ! Keep a copy of the biharmonic contribution for backscatter parameterization
-          bhstr_xx(i,j) = d_str * (h(i,j,k) * CS%reduction_xx(i,j))
+          bhfct_xx(i,j) = Ah(i,j)
         enddo ; enddo
-        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xx
-        if (CS%decomp_ke) then
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-            bhstr_xx_fct(i,j) = Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
-          enddo ; enddo
-        endif
-      else
+      elseif (CS%biharmonic_scheme == SQRT_AH) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-          d_del2u = G%IdyCu(I,j) * Del2u(I,j) - G%IdyCu(I-1,j) * Del2u(I-1,j)
-          d_del2v = G%IdxCv(i,J) * Del2v(i,J) - G%IdxCv(i,J-1) * Del2v(i,J-1)
-          d_str = Ah(i,j) * (CS%DY_dxT(i,j) * d_del2u - CS%DX_dyT(i,j) * d_del2v)
-
-          ! Separate out biharmonic contribution
-          bhstr_xx(i,j) = d_str * (h(i,j,k) * CS%reduction_xx(i,j))
+          bhfct_xx(i,j) = sqrt( Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j)) )
         enddo ; enddo
-        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xx
-        if (CS%decomp_ke) then
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-            bhstr_xx_fct(i,j) = Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
-          enddo ; enddo
-        endif
+      ! elseif (CS%biharmonic_scheme == SQRT_A) then
+      !   do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      !     bhfct_xx(i,j) = sqrt( Ah(i,j) )
+      !   enddo ; enddo
       endif
-    endif
-
-    if (CS%biharmonic) then
-      ! Gradient of Laplacian, for use in bi-harmonic term
-      do J=js-1,Jeq ; do I=is-1,Ieq
-        dDel2vdx(I,J) = CS%DY_dxBu(I,J)*(Del2v(i+1,J)*G%IdyCv(i+1,J) - Del2v(i,J)*G%IdyCv(i,J))
-        dDel2udy(I,J) = CS%DX_dyBu(I,J)*(Del2u(I,j+1)*G%IdxCu(I,j+1) - Del2u(I,j)*G%IdxCu(I,j))
-      enddo ; enddo
-      ! Adjust contributions to shearing strain on open boundaries.
-      if (apply_OBC) then ; if (OBC%zero_strain .or. OBC%freeslip_strain) then
-        do n=1,OBC%number_of_segments
-          J = OBC%segment(n)%HI%JsdB ; I = OBC%segment(n)%HI%IsdB
-          if (OBC%segment(n)%is_N_or_S .and. (J >= js-1) .and. (J <= Jeq)) then
-            do I=OBC%segment(n)%HI%IsdB,OBC%segment(n)%HI%IedB
-              if (OBC%zero_strain) then
-                dDel2vdx(I,J) = 0. ; dDel2udy(I,J) = 0.
-              elseif (OBC%freeslip_strain) then
-                dDel2udy(I,J) = 0.
-              endif
-            enddo
-          elseif (OBC%segment(n)%is_E_or_W .and. (I >= is-1) .and. (I <= Ieq)) then
-            do J=OBC%segment(n)%HI%JsdB,OBC%segment(n)%HI%JedB
-              if (OBC%zero_strain) then
-                dDel2vdx(I,J) = 0. ; dDel2udy(I,J) = 0.
-              elseif (OBC%freeslip_strain) then
-                dDel2vdx(I,J) = 0.
-              endif
-            enddo
-          endif
-        enddo
-      endif ; endif
     endif
 
     meke_res_fn = 1.
@@ -1484,34 +1408,143 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         enddo ; enddo
       endif
 
-      ! Again, need to initialize str_xy as if its biharmonic
       if (CS%biharmonic_scheme == SIMPLE) then
         do J=js-1,Jeq ; do I=is-1,Ieq
-          d_str = Ah(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
+          bhfct_xy(I,J) = Ah(I,J)
+        enddo ; enddo
+      elseif (CS%biharmonic_scheme == SQRT_AH) then
+        do J=js-1,Jeq ; do I=is-1,Ieq
+          bhfct_xy(I,J) = sqrt( Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J)) )
+        enddo ; enddo
+      ! elseif (CS%biharmonic_scheme == SQRT_A) then
+      !   do J=js-1,Jeq ; do I=is-1,Ieq
+      !     bhfct_xy(I,J) = sqrt( Ah(I,J) )
+      !   enddo ; enddo
+      endif
+    endif
 
+    if (CS%biharmonic) then
+    !  Evaluate Del2u = x.Div(Grad u) and Del2v = y.Div( Grad u)
+      if (CS%biharmonic_scheme == SIMPLE) then
+        do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
+          Del2u(I,j) = CS%Idxdy2u(I,j)*(CS%dy2h(i+1,j)*sh_xx(i+1,j) - CS%dy2h(i,j)*sh_xx(i,j)) + &
+                      CS%Idx2dyCu(I,j)*(CS%dx2q(I,J)*sh_xy(I,J) - CS%dx2q(I,J-1)*sh_xy(I,J-1))
+        enddo ; enddo
+        do J=Jsq-1,Jeq+1 ; do i=is-1,Ieq+1
+          Del2v(i,J) = CS%Idxdy2v(i,J)*(CS%dy2q(I,J)*sh_xy(I,J) - CS%dy2q(I-1,J)*sh_xy(I-1,J)) - &
+                      CS%Idx2dyCv(i,J)*(CS%dx2h(i,j+1)*sh_xx(i,j+1) - CS%dx2h(i,j)*sh_xx(i,j))
+        enddo ; enddo
+      elseif (CS%biharmonic_scheme == SQRT_AH) then
+        do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
+          Del2u(I,j) = &
+              CS%Idxdy2u(I,j) * (  bhfct_xx(i+1,j) * CS%dy2h(i+1,j)*sh_xx(i+1,j) &
+                                 - bhfct_xx(i  ,j) * CS%dy2h(i  ,j)*sh_xx(i  ,j) ) &
+            + CS%Idx2dyCu(I,j)* (  bhfct_xy(I,J  ) * CS%dx2q(I,J  )*sh_xy(I,J  ) &
+                                 - bhfct_xy(I,J-1) * CS%dx2q(I,J-1)*sh_xy(I,J-1) )
+        enddo ; enddo
+        do J=Jsq-1,Jeq+1 ; do i=is-1,Ieq+1
+          Del2v(i,J) = &
+              CS%Idxdy2v(i,J) * (  bhfct_xy(I  ,J) * CS%dy2q(I  ,J)*sh_xy(I  ,J) &
+                                 - bhfct_xy(I-1,J) * CS%dy2q(I-1,J)*sh_xy(I-1,J) ) &
+            - CS%Idx2dyCv(i,J)* (  bhfct_xx(i,j+1) * CS%dx2h(i,j+1)*sh_xx(i,j+1) &
+                                 - bhfct_xx(i,j  ) * CS%dx2h(i,j  )*sh_xx(i,j  ) )
+        enddo ; enddo
+      ! elseif (CS%biharmonic_scheme == SQRT_A) then
+      !   do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
+      !     Del2u(I,j) = h_u(I,j) &
+      !       *(  CS%Idxdy2u(I,j) * (  bhfct_xx(i+1,j) * CS%dy2h(i+1,j)*sh_xx(i+1,j) &
+      !                              - bhfct_xx(i  ,j) * CS%dy2h(i  ,j)*sh_xx(i  ,j) ) &
+      !         + CS%Idx2dyCu(I,j)* (  bhfct_xy(I,J  ) * CS%dx2q(I,J  )*sh_xy(I,J  ) &
+      !                              - bhfct_xy(I,J-1) * CS%dx2q(I,J-1)*sh_xy(I,J-1) ) )
+      !   enddo ; enddo
+      !   do J=Jsq-1,Jeq+1 ; do i=is-1,Ieq+1
+      !     Del2v(i,J) = h_v(i,J) &
+      !       *(  CS%Idxdy2v(i,J) * (  bhfct_xy(I  ,J) * CS%dy2q(I  ,J)*sh_xy(I  ,J) &
+      !                              - bhfct_xy(I-1,J) * CS%dy2q(I-1,J)*sh_xy(I-1,J) ) &
+      !         - CS%Idx2dyCv(i,J)* (  bhfct_xx(i,j+1) * CS%dx2h(i,j+1)*sh_xx(i,j+1) &
+      !                              - bhfct_xx(i,j  ) * CS%dx2h(i,j  )*sh_xx(i,j  ) ) )
+      !   enddo ; enddo
+      endif
+      if (apply_OBC) then ; if (OBC%zero_biharmonic) then
+        do n=1,OBC%number_of_segments
+          I = OBC%segment(n)%HI%IsdB ; J = OBC%segment(n)%HI%JsdB
+          if (OBC%segment(n)%is_N_or_S .and. (J >= Jsq-1) .and. (J <= Jeq+1)) then
+            do I=OBC%segment(n)%HI%isd,OBC%segment(n)%HI%ied
+              Del2v(i,J) = 0.
+            enddo
+          elseif (OBC%segment(n)%is_E_or_W .and. (I >= Isq-1) .and. (I <= Ieq+1)) then
+            do j=OBC%segment(n)%HI%jsd,OBC%segment(n)%HI%jed
+              Del2u(I,j) = 0.
+            enddo
+          endif
+        enddo
+      endif ; endif
+
+      ! Gradient of Laplacian, for use in bi-harmonic term
+      do J=js-1,Jeq ; do I=is-1,Ieq
+        dDel2vdx(I,J) = CS%DY_dxBu(I,J)*(Del2v(i+1,J)*G%IdyCv(i+1,J) - Del2v(i,J)*G%IdyCv(i,J))
+        dDel2udy(I,J) = CS%DX_dyBu(I,J)*(Del2u(I,j+1)*G%IdxCu(I,j+1) - Del2u(I,j)*G%IdxCu(I,j))
+      enddo ; enddo
+      ! Adjust contributions to shearing strain on open boundaries.
+      if (apply_OBC) then ; if (OBC%zero_strain .or. OBC%freeslip_strain) then
+        do n=1,OBC%number_of_segments
+          J = OBC%segment(n)%HI%JsdB ; I = OBC%segment(n)%HI%IsdB
+          if (OBC%segment(n)%is_N_or_S .and. (J >= js-1) .and. (J <= Jeq)) then
+            do I=OBC%segment(n)%HI%IsdB,OBC%segment(n)%HI%IedB
+              if (OBC%zero_strain) then
+                dDel2vdx(I,J) = 0. ; dDel2udy(I,J) = 0.
+              elseif (OBC%freeslip_strain) then
+                dDel2udy(I,J) = 0.
+              endif
+            enddo
+          elseif (OBC%segment(n)%is_E_or_W .and. (I >= is-1) .and. (I <= Ieq)) then
+            do J=OBC%segment(n)%HI%JsdB,OBC%segment(n)%HI%JedB
+              if (OBC%zero_strain) then
+                dDel2vdx(I,J) = 0. ; dDel2udy(I,J) = 0.
+              elseif (OBC%freeslip_strain) then
+                dDel2vdx(I,J) = 0.
+              endif
+            enddo
+          endif
+        enddo
+      endif ; endif
+
+      if (CS%biharmonic_scheme == SIMPLE) then
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          d_del2u = G%IdyCu(I,j) * Del2u(I,j) - G%IdyCu(I-1,j) * Del2u(I-1,j)
+          d_del2v = G%IdxCv(i,J) * Del2v(i,J) - G%IdxCv(i,J-1) * Del2v(i,J-1)
+          d_str = bhfct_xx(i,j) * (CS%DY_dxT(i,j) * d_del2u - CS%DX_dyT(i,j) * d_del2v)
+          str_xx(i,j) = str_xx(i,j) + d_str
+          ! Keep a copy of the biharmonic contribution for backscatter parameterization
+          bhstr_xx(i,j) = d_str * (h(i,j,k) * CS%reduction_xx(i,j))
+        enddo ; enddo
+
+        do J=js-1,Jeq ; do I=is-1,Ieq
+          d_str = bhfct_xy(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
           str_xy(I,J) = str_xy(I,J) + d_str
           ! Keep a copy of the biharmonic contribution for backscatter parameterization
           bhstr_xy(I,J) = d_str * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
         enddo ; enddo
-        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xy
+
+        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xx and sh_xy
         if (CS%decomp_ke) then
+          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            bhfct_xx(i,j) = bhfct_xx(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
+          enddo ; enddo
           do J=js-1,Jeq ; do I=is-1,Ieq
-            bhstr_xy_fct(I,J) = Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+            bhfct_xy(I,J) = bhfct_xy(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
           enddo ; enddo
         endif
       else
-        do J=js-1,Jeq ; do I=is-1,Ieq
-          d_str = Ah(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
-
-          ! Separate out biharmonic contribution
-          bhstr_xy(I,J) = d_str * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          d_del2u = G%IdyCu(I,j) * Del2u(I,j) - G%IdyCu(I-1,j) * Del2u(I-1,j)
+          d_del2v = G%IdxCv(i,J) * Del2v(i,J) - G%IdxCv(i,J-1) * Del2v(i,J-1)
+          bhstr_xx(i,j) = bhfct_xx(i,j) * (CS%DY_dxT(i,j) * d_del2u - CS%DX_dyT(i,j) * d_del2v)
         enddo ; enddo
-        ! Save a copy of the factors multiplied (Ah*h) by the biharmonic counterpart of sh_xy
-        if (CS%decomp_ke) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
-            bhstr_xy_fct(I,J) = Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
-          enddo ; enddo
-        endif
+
+        do J=js-1,Jeq ; do I=is-1,Ieq
+          bhstr_xy(I,J) = bhfct_xy(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
+        enddo ; enddo
       endif
     endif
 
@@ -1877,47 +1910,47 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
           ke_bih_div2(i,j,k) = &
             ( 0.5 *( Del2u(I  ,j)*G%IdyCu(I  ,j) &
-                     * (bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i+1,j)*CS%dy2h(i+1,j)*sh_xx(i+1,j)) &
+                     * (bhfct_xx(i,j)*CS%dy2h(i,j)*sh_xx(i,j) + bhfct_xx(i+1,j)*CS%dy2h(i+1,j)*sh_xx(i+1,j)) &
                     -Del2u(I-1,j)*G%IdyCu(I-1,j) &
-                     * (bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i-1,j)*CS%dy2h(i-1,j)*sh_xx(i-1,j)) ) &
+                     * (bhfct_xx(i,j)*CS%dy2h(i,j)*sh_xx(i,j) + bhfct_xx(i-1,j)*CS%dy2h(i-1,j)*sh_xx(i-1,j)) ) &
              +0.25*( ( (Del2u(I  ,j)*G%IdxCu(I  ,j) + Del2u(I  ,j+1)*G%IdxCu(I  ,j+1)) &
-                        * CS%dx2q(I  ,J  ) * bhstr_xy_fct(I  ,J  ) * sh_xy(I  ,J  ) &
+                        * CS%dx2q(I  ,J  ) * bhfct_xy(I  ,J  ) * sh_xy(I  ,J  ) &
                       +(Del2u(I-1,j)*G%IdxCu(I-1,j) + Del2u(I-1,j+1)*G%IdxCu(I-1,j+1)) &
-                        * CS%dx2q(I-1,J  ) * bhstr_xy_fct(I-1,J  ) * sh_xy(I-1,J  ) ) &
+                        * CS%dx2q(I-1,J  ) * bhfct_xy(I-1,J  ) * sh_xy(I-1,J  ) ) &
                     -( (Del2u(I  ,j)*G%IdxCu(I  ,j) + Del2u(I  ,j-1)*G%IdxCu(I  ,j-1)) &
-                        * CS%dx2q(I  ,J-1) * bhstr_xy_fct(I  ,J-1) * sh_xy(I  ,J-1) &
+                        * CS%dx2q(I  ,J-1) * bhfct_xy(I  ,J-1) * sh_xy(I  ,J-1) &
                       +(Del2u(I-1,j)*G%IdxCu(I-1,j) + Del2u(I-1,j-1)*G%IdxCu(I-1,j-1)) &
-                        * CS%dx2q(I-1,J-1) * bhstr_xy_fct(I-1,J-1) * sh_xy(I-1,J-1) ) ) &
+                        * CS%dx2q(I-1,J-1) * bhfct_xy(I-1,J-1) * sh_xy(I-1,J-1) ) ) &
              +0.25*( ( (Del2v(i,J  )*G%IdyCv(i,J  ) + Del2v(i+1,J  )*G%IdyCv(i+1,J  )) &
-                        * CS%dy2q(I  ,J  ) * bhstr_xy_fct(I  ,J  ) * sh_xy(I  ,J  ) &
+                        * CS%dy2q(I  ,J  ) * bhfct_xy(I  ,J  ) * sh_xy(I  ,J  ) &
                       +(Del2v(i,J-1)*G%IdyCv(i,J-1) + Del2v(i+1,J-1)*G%IdyCv(i+1,J-1)) &
-                        * CS%dy2q(I  ,J-1) * bhstr_xy_fct(I  ,J-1) * sh_xy(I  ,J-1) ) &
+                        * CS%dy2q(I  ,J-1) * bhfct_xy(I  ,J-1) * sh_xy(I  ,J-1) ) &
                     -( (Del2v(i,J  )*G%IdyCv(i,J  ) + Del2v(i-1,J  )*G%IdyCv(i-1,J  )) &
-                        * CS%dy2q(I-1,J  ) * bhstr_xy_fct(I-1,J  ) * sh_xy(I-1,J  ) &
+                        * CS%dy2q(I-1,J  ) * bhfct_xy(I-1,J  ) * sh_xy(I-1,J  ) &
                       +(Del2v(i,J-1)*G%IdyCv(i,J-1) + Del2v(i-1,J-1)*G%IdyCv(i-1,J-1)) &
-                        * CS%dy2q(I-1,J-1) * bhstr_xy_fct(I-1,J-1) * sh_xy(I-1,J-1) ) ) &
+                        * CS%dy2q(I-1,J-1) * bhfct_xy(I-1,J-1) * sh_xy(I-1,J-1) ) ) &
              -0.5 *( Del2v(i,J  )*G%IdxCv(i,J  ) &
-                     * (bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i,j+1)*CS%dx2h(i,j+1)*sh_xx(i,j+1)) &
+                     * (bhfct_xx(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhfct_xx(i,j+1)*CS%dx2h(i,j+1)*sh_xx(i,j+1)) &
                     -Del2v(i,J-1)*G%IdxCv(i,J-1) &
-                     * (bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhstr_xx_fct(i,j-1)*CS%dx2h(i,j-1)*sh_xx(i,j-1)) ) ) &
+                     * (bhfct_xx(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhfct_xx(i,j-1)*CS%dx2h(i,j-1)*sh_xx(i,j-1)) ) ) &
             * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
           ke_bih_sqd2(i,j,k) = &
             ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) &
-                * (bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j) - bhstr_xx_fct(i+1,j)*CS%dy2h(i+1,j)*sh_xx(i+1,j)) &
+                * (bhfct_xx(i,j)*CS%dy2h(i,j)*sh_xx(i,j) - bhfct_xx(i+1,j)*CS%dy2h(i+1,j)*sh_xx(i+1,j)) &
                +Del2u(I-1,j)*G%IdyCu(I-1,j) &
-                * (bhstr_xx_fct(i-1,j)*CS%dy2h(i-1,j)*sh_xx(i-1,j) - bhstr_xx_fct(i,j)*CS%dy2h(i,j)*sh_xx(i,j)) ) &
+                * (bhfct_xx(i-1,j)*CS%dy2h(i-1,j)*sh_xx(i-1,j) - bhfct_xx(i,j)*CS%dy2h(i,j)*sh_xx(i,j)) ) &
              -( Del2v(i,J  )*G%IdxCv(i,J  ) &
-                * (bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j) - bhstr_xx_fct(i,j+1)*CS%dx2h(i,j+1)*sh_xx(i,j+1)) &
+                * (bhfct_xx(i,j)*CS%dx2h(i,j)*sh_xx(i,j) - bhfct_xx(i,j+1)*CS%dx2h(i,j+1)*sh_xx(i,j+1)) &
                +Del2v(i,J-1)*G%IdxCv(i,J-1) &
-                * (bhstr_xx_fct(i,j-1)*CS%dx2h(i,j-1)*sh_xx(i,j-1) - bhstr_xx_fct(i,j)*CS%dx2h(i,j)*sh_xx(i,j)) ) &
+                * (bhfct_xx(i,j-1)*CS%dx2h(i,j-1)*sh_xx(i,j-1) - bhfct_xx(i,j)*CS%dx2h(i,j)*sh_xx(i,j)) ) &
              +( Del2v(i,J  )*G%IdyCv(i,J  ) &
-                * (bhstr_xy_fct(I-1,J)*CS%dy2q(I-1,J)*sh_xy(I-1,J) - bhstr_xy_fct(I,J)*CS%dy2q(I,J)*sh_xy(I,J)) &
+                * (bhfct_xy(I-1,J)*CS%dy2q(I-1,J)*sh_xy(I-1,J) - bhfct_xy(I,J)*CS%dy2q(I,J)*sh_xy(I,J)) &
                +Del2v(i,J-1)*G%IdyCv(i,J-1) &
-                * (bhstr_xy_fct(I-1,J-1)*CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - bhstr_xy_fct(I,J-1)*CS%dy2q(I,J-1)*sh_xy(I,J-1)) ) &
+                * (bhfct_xy(I-1,J-1)*CS%dy2q(I-1,J-1)*sh_xy(I-1,J-1) - bhfct_xy(I,J-1)*CS%dy2q(I,J-1)*sh_xy(I,J-1)) ) &
              +( Del2u(I  ,j)*G%IdxCu(I  ,j) &
-                * (bhstr_xy_fct(I,J-1)*CS%dx2q(I,J-1)*sh_xy(I,J-1) - bhstr_xy_fct(I,J)*CS%dx2q(I,J)*sh_xy(I,J)) &
+                * (bhfct_xy(I,J-1)*CS%dx2q(I,J-1)*sh_xy(I,J-1) - bhfct_xy(I,J)*CS%dx2q(I,J)*sh_xy(I,J)) &
                +Del2u(I-1,j)*G%IdxCu(I-1,j) &
-                * (bhstr_xy_fct(I-1,J-1)*CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - bhstr_xy_fct(I-1,J)*CS%dx2q(I-1,J)*sh_xy(I-1,J)) ) ) &
+                * (bhfct_xy(I-1,J-1)*CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - bhfct_xy(I-1,J)*CS%dx2q(I-1,J)*sh_xy(I-1,J)) ) ) &
             * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
         enddo ; enddo
       endif
@@ -2235,8 +2268,8 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%biharmonic_scheme = SIMPLE
       case (SQRT_AH_STRING)
         CS%biharmonic_scheme = SQRT_AH
-      case (SQRT_A_STRING)
-        CS%biharmonic_scheme = SQRT_A
+      ! case (SQRT_A_STRING)
+      !   CS%biharmonic_scheme = SQRT_A
       case default
         call MOM_error(FATAL, "hor_visc_init: Unrecognized setting "// &
               "#define BIHARMONIC_SCHEME "//trim(tmpstr)//" found in input file.")
