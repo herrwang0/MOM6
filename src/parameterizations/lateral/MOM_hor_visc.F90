@@ -389,6 +389,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   logical :: use_MEKE_Ku
   logical :: use_MEKE_Au
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
+  integer :: stca, is_KAh, ie_KAh, js_KAh, je_KAh, Is_KAq, Ie_KAq, Js_KAq, Je_KAq
   integer :: i, j, k, n
   real :: inv_PI3, inv_PI2, inv_PI6 ! Powers of the inverse of pi [nondim]
 
@@ -440,6 +441,15 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
+
+  stca = 0
+  ! Energy consistent schemme requires additional point for Ah (and Kh for computing bounds).
+  if (CS%biharmonic_scheme /= SIMPLE) stca = 1
+
+  is_KAh = Isq-stca; ie_KAh = Ieq+1+stca
+  js_KAh = Jsq-stca; je_KAh = Jeq+1+stca
+  Is_KAq = is-1-stca; Ie_KAq = Ieq+stca
+  Js_KAq = js-1-stca; Je_KAq = Jeq+stca
 
   h_neglect  = GV%H_subroundoff
   h_neglect3 = h_neglect**3
@@ -786,74 +796,93 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
     ! Vorticity
     if (CS%no_slip) then
-      do J=Jsq-2,Jeq+2 ; do I=Isq-2,Ieq+2
-        vort_xy(I,J) = (2.0-G%mask2dBu(I,J)) * ( dvdx(I,J) - dudy(I,J) )
+      do J=Jsq-2-stca,Jeq+2+stca ; do I=Isq-2-stca,Ieq+2+stca
+        ! do J=Jsq-2,Jeq+2 ; do I=Isq-2,Ieq+2
+          vort_xy(I,J) = (2.0-G%mask2dBu(I,J)) * ( dvdx(I,J) - dudy(I,J) )
       enddo ; enddo
     else
-      do J=Jsq-2,Jeq+2 ; do I=Isq-2,Ieq+2
+      do J=Jsq-2-stca,Jeq+2+stca ; do I=Isq-2-stca,Ieq+2+stca
+        ! do J=Jsq-2,Jeq+2 ; do I=Isq-2,Ieq+2
         vort_xy(I,J) = G%mask2dBu(I,J) * ( dvdx(I,J) - dudy(I,J) )
       enddo ; enddo
     endif
 
     ! Divergence
-    do j=Jsq-1,Jeq+2 ; do i=Isq-1,Ieq+2
+    do j=Jsq-1-stca,Jeq+2+stca ; do i=Isq-1-stca,Ieq+2+stca
+      ! do j=Jsq-1,Jeq+2 ; do i=Isq-1,Ieq+2
       div_xx(i,j) = dudx(i,j) + dvdy(i,j)
     enddo ; enddo
 
+    ! Leith parameters for Kh and Ah (h and q points)
     if ((CS%Leith_Kh) .or. (CS%Leith_Ah)) then
 
       ! Vorticity gradient
-      do J=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+2
+      do J=Jsq-1-stca,Jeq+1+stca ; do i=Isq-1-stca,Ieq+2+stca
+        ! do J=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+2
         DY_dxBu = G%dyBu(I,J) * G%IdxBu(I,J)
         vort_xy_dx(i,J) = DY_dxBu * (vort_xy(I,J) * G%IdyCu(I,j) - vort_xy(I-1,J) * G%IdyCu(I-1,j))
       enddo ; enddo
 
-      do j=Jsq-1,Jeq+2 ; do I=Isq-1,Ieq+1
+      do j=Jsq-1-stca,Jeq+2+stca ; do I=Isq-1-stca,Ieq+1+stca
+        ! do j=Jsq-1,Jeq+2 ; do I=Isq-1,Ieq+1
         DX_dyBu = G%dxBu(I,J) * G%IdyBu(I,J)
         vort_xy_dy(I,j) = DX_dyBu * (vort_xy(I,J) * G%IdxCv(i,J) - vort_xy(I,J-1) * G%IdxCv(i,J-1))
       enddo ; enddo
 
       ! Laplacian of vorticity
-      do J=Jsq-1,Jeq+1 ; do I=Isq-1,Ieq+1
+      do J=js_KAh-1,je_KAh ; do I=is_KAh-1,ie_KAh
+        ! do J=Jsq-1,Jeq+1 ; do I=Isq-1,Ieq+1
         DY_dxBu = G%dyBu(I,J) * G%IdxBu(I,J)
         DX_dyBu = G%dxBu(I,J) * G%IdyBu(I,J)
 
         Del2vort_q(I,J) = DY_dxBu * (vort_xy_dx(i+1,J) * G%IdyCv(i+1,J) - vort_xy_dx(i,J) * G%IdyCv(i,J)) + &
                           DX_dyBu * (vort_xy_dy(I,j+1) * G%IdyCu(I,j+1) - vort_xy_dy(I,j) * G%IdyCu(I,j))
       enddo ; enddo
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do J=Jsq,Jeq+1 ; do I=Isq,Ieq+1
+        Del2vort_h(i,j) = 0.25*(Del2vort_q(I,J) + Del2vort_q(I-1,J) + Del2vort_q(I,J-1) + Del2vort_q(I-1,J-1))
+      enddo ; enddo
 
       if (CS%modified_Leith) then
 
         ! Divergence gradient
-        do j=Jsq-1,Jeq+2 ; do I=Isq-1,Ieq+1
+        do j=Js_KAq,Je_KAq+1 ; do I=is_KAh-1,ie_KAh
+          ! do j=Jsq-1,Jeq+2 ; do I=Isq-1,Ieq+1
           div_xx_dx(I,j) = G%IdxCu(I,j)*(div_xx(i+1,j) - div_xx(i,j))
         enddo ; enddo
-        do J=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+2
+        do J=js_KAh-1,je_KAh ; do i=Is_KAq,Ie_KAq+1
+          ! do J=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+2
           div_xx_dy(i,J) = G%IdyCv(i,J)*(div_xx(i,j+1) - div_xx(i,j))
         enddo ; enddo
 
         ! Magnitude of divergence gradient
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           grad_div_mag_h(i,j) = sqrt((0.5*(div_xx_dx(I,j) + div_xx_dx(I-1,j)))**2 + &
                                      (0.5*(div_xx_dy(i,J) + div_xx_dy(i,J-1)))**2)
         enddo ; enddo
-        do j=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+1
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do j=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+1
           grad_div_mag_q(I,J) = sqrt((0.5*(div_xx_dx(I,j) + div_xx_dx(I,j+1)))**2 + &
                                      (0.5*(div_xx_dy(i,J) + div_xx_dy(i+1,J)))**2)
         enddo ; enddo
 
       else
 
-        do j=Jsq-1,Jeq+2 ; do I=is-2,Ieq+1
+        do j=Js_KAq,Je_KAq+1 ; do I=is_KAh-1,ie_KAh
+          ! do j=Jsq-1,Jeq+2 ; do I=is-2,Ieq+1
           div_xx_dx(I,j) = 0.0
         enddo ; enddo
-        do J=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+2
+        do J=js_KAh-1,je_KAh ; do i=Is_KAq,Ie_KAq+1
+          ! do J=Jsq-1,Jeq+1 ; do i=Isq-1,Ieq+2
           div_xx_dy(i,J) = 0.0
         enddo ; enddo
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           grad_div_mag_h(i,j) = 0.0
         enddo ; enddo
-        do J=Jsq-1,Jeq+1 ; do I=Isq-1,Ieq+1
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=Jsq-1,Jeq+1 ; do I=Isq-1,Ieq+1
           grad_div_mag_q(I,J) = 0.0
         enddo ; enddo
 
@@ -861,21 +890,25 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       ! Add in beta for the Leith viscosity
       if (CS%use_beta_in_Leith) then
-        do J=js-2,Jeq+1 ; do i=is-1,Ieq+1
+        do J=js_KAh-1,je_KAh ; do i=Is_KAq,Ie_KAq+1
+          ! do J=js-2,Jeq+1 ; do i=is-1,Ieq+1 ! should it be "do J = Jsq-1,Jeq+1"?
           vort_xy_dx(i,J) = vort_xy_dx(i,J) + 0.5 * ( G%dF_dx(i,j) + G%dF_dx(i,j+1))
         enddo ; enddo
-        do j=js-1,Jeq+1 ; do I=is-2,Ieq+1
+        do j=Js_KAq,Je_KAq+1 ; do I=is_KAh-1,ie_KAh
+          ! do j=js-1,Jeq+1 ; do I=is-2,Ieq+1 ! should it be "do I = Isq-1,Ieq+1"?
           vort_xy_dy(I,j) = vort_xy_dy(I,j) + 0.5 * ( G%dF_dy(i,j) + G%dF_dy(i+1,j))
         enddo ; enddo
       endif ! CS%use_beta_in_Leith
 
       if (CS%use_QG_Leith_visc) then
 
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           grad_vort_mag_h_2d(i,j) = SQRT((0.5*(vort_xy_dx(i,J) + vort_xy_dx(i,J-1)))**2 + &
                                          (0.5*(vort_xy_dy(I,j) + vort_xy_dy(I-1,j)))**2 )
         enddo ; enddo
-        do J=js-1,Jeq ; do I=is-1,Ieq
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
           grad_vort_mag_q_2d(I,J) = SQRT((0.5*(vort_xy_dx(i,J) + vort_xy_dx(i+1,J)))**2 + &
                                          (0.5*(vort_xy_dy(I,j) + vort_xy_dy(I,j+1)))**2 )
         enddo ; enddo
@@ -886,19 +919,23 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       endif
 
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         grad_vort_mag_h(i,j) = SQRT((0.5*(vort_xy_dx(i,J) + vort_xy_dx(i,J-1)))**2 + &
                                     (0.5*(vort_xy_dy(I,j) + vort_xy_dy(I-1,j)))**2 )
       enddo ; enddo
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+        ! do J=js-1,Jeq ; do I=is-1,Ieq
         grad_vort_mag_q(I,J) = SQRT((0.5*(vort_xy_dx(i,J) + vort_xy_dx(i+1,J)))**2 + &
                                     (0.5*(vort_xy_dy(I,j) + vort_xy_dy(I,j+1)))**2 )
       enddo ; enddo
 
     endif ! CS%Leith_Kh
 
+    ! Smagorinsky parameters for Kh and Ah (h points)
     if ((CS%Smagorinsky_Kh) .or. (CS%Smagorinsky_Ah)) then
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         sh_xx_sq = sh_xx(i,j)**2
         sh_xy_sq = 0.25 * ( (sh_xy(I-1,J-1)**2 + sh_xy(I,J)**2) &
                           + (sh_xy(I-1,J)**2 + sh_xy(I,J-1)**2) )
@@ -906,29 +943,35 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       enddo ; enddo
     endif
 
+    ! Viscosity bound parameters (h points)
     if (CS%better_bound_Ah .or. CS%better_bound_Kh) then
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        !  do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         h_min = min(h_u(I,j), h_u(I-1,j), h_v(i,J), h_v(i,J-1))
         hrat_min(i,j) = min(1.0, h_min / (h(i,j,k) + h_neglect))
       enddo ; enddo
 
       if (CS%better_bound_Kh) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          !  do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           visc_bound_rem(i,j) = 1.0
         enddo ; enddo
       endif
     endif
 
+    ! Laplacian Kh and str_xx (h points)
     if (CS%Laplacian) then
       if ((CS%Leith_Kh) .or. (CS%Leith_Ah)) then
         if (CS%use_QG_Leith_visc) then
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             grad_vort = grad_vort_mag_h(i,j) + grad_div_mag_h(i,j)
             grad_vort_qg = 3. * grad_vort_mag_h_2d(i,j)
             vert_vort_mag(i,j) = min(grad_vort, grad_vort_qg)
           enddo ; enddo
         else
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             vert_vort_mag(i,j) = grad_vort_mag_h(i,j) + grad_div_mag_h(i,j)
           enddo ; enddo
         endif
@@ -938,13 +981,15 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       ! largest value from several parameterizations.
 
       ! Static (pre-computed) background viscosity
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         Kh(i,j) = CS%Kh_bg_xx(i,j)
       enddo ; enddo
 
       ! NOTE: The following do-block can be decomposed and vectorized after the
       !   stack size has been reduced.
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         if (CS%add_LES_viscosity) then
           if (CS%Smagorinsky_Kh) &
             Kh(i,j) = Kh(i,j) + CS%Laplac2_const_xx(i,j) * Shear_mag(i,j)
@@ -961,38 +1006,44 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       ! All viscosity contributions above are subject to resolution scaling
 
       if (rescale_Kh) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           Kh(i,j) = VarMix%Res_fn_h(i,j) * Kh(i,j)
         enddo ; enddo
       endif
 
       if (legacy_bound) then
         ! Older method of bounding for stability
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           Kh(i,j) = min(Kh(i,j), CS%Kh_Max_xx(i,j))
         enddo ; enddo
       endif
 
       ! Place a floor on the viscosity, if desired.
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         Kh(i,j) = max(Kh(i,j), CS%Kh_bg_min)
       enddo ; enddo
 
       if (use_MEKE_Ku) then
         ! *Add* the MEKE contribution (which might be negative)
         if (CS%res_scale_MEKE) then
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             Kh(i,j) = Kh(i,j) + MEKE%Ku(i,j) * VarMix%Res_fn_h(i,j)
           enddo ; enddo
         else
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             Kh(i,j) = Kh(i,j) + MEKE%Ku(i,j)
           enddo ; enddo
         endif
       endif
 
       if (CS%anisotropic) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           ! *Add* the tension component of anisotropic viscosity
           Kh(i,j) = Kh(i,j) + CS%Kh_aniso * (1. - CS%n1n2_h(i,j)**2)
         enddo ; enddo
@@ -1000,7 +1051,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       ! Newer method of bounding for stability
       if (CS%better_bound_Kh) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           if (Kh(i,j) >= hrat_min(i,j) * CS%Kh_Max_xx(i,j)) then
             visc_bound_rem(i,j) = 0.0
             Kh(i,j) = hrat_min(i,j) * CS%Kh_Max_xx(i,j)
@@ -1011,13 +1063,15 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       endif
 
       if (CS%id_Kh_h>0 .or. CS%debug) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           Kh_h(i,j,k) = Kh(i,j)
         enddo ; enddo
       endif
 
       if (CS%id_grid_Re_Kh>0) then
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          ! No indices expansion needed for diagnostics, actually a smaller stencil should be enough.
           KE = 0.125*((u(I,j,k)+u(I-1,j,k))**2 + (v(i,J,k)+v(i,J-1,k))**2)
           grid_Kh = max(Kh(i,j), CS%min_grid_Kh)
           grid_Re_Kh(i,j,k) = (sqrt(KE) * sqrt(CS%grid_sp_h2(i,j))) / grid_Kh
@@ -1025,35 +1079,36 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       endif
 
       if (CS%id_div_xx_h>0) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ! No indices expansion needed for diagnostics
           div_xx_h(i,j,k) = div_xx(i,j)
         enddo ; enddo
       endif
 
       if (CS%id_sh_xx_h>0) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ! No indices expansion needed for diagnostics
           sh_xx_h(i,j,k) = sh_xx(i,j)
         enddo ; enddo
       endif
 
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ! No indices expansion needed for computing str
         str_xx(i,j) = -Kh(i,j) * sh_xx(i,j)
       enddo ; enddo
 
       if (CS%decomp_ke) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ! No indices expansion needed for computing str
           ! Keep a copy of the Laplacain contribution for KE decomposition
           lpstr_xx(i,j) = str_xx(i,j) * (h(i,j,k) * CS%reduction_xx(i,j))
         enddo ; enddo
       endif
     else
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ! No indices expansion needed for computing str
         str_xx(i,j) = 0.0
       enddo ; enddo
     endif
 
+    ! Add anisotropic to str_xx (h points)
     if (CS%anisotropic) then
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ! No indices expansion needed for computing str
         ! Shearing-strain averaged to h-points
         local_strain = 0.25 * ( (sh_xy(I,J) + sh_xy(I-1,J-1)) + (sh_xy(I-1,J) + sh_xy(I,J-1)) )
         ! *Add* the shear-strain contribution to the xx-component of stress
@@ -1061,24 +1116,28 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       enddo ; enddo
     endif
 
+    ! Biharmonic Ah at h points
     if (CS%biharmonic) then
       ! Determine the biharmonic viscosity at h points, using the
       ! largest value from several parameterizations.
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         Ah(i,j) = CS%Ah_bg_xx(i,j)
       enddo ; enddo
 
       if ((CS%Smagorinsky_Ah) .or. (CS%Leith_Ah)) then
         if (CS%Smagorinsky_Ah) then
           if (CS%bound_Coriolis) then
-            do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+            ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
               AhSm = Shear_mag(i,j) * (CS%Biharm_const_xx(i,j) &
                   + CS%Biharm_const2_xx(i,j) * Shear_mag(i,j) &
               )
               Ah(i,j) = max(Ah(i,j), AhSm)
             enddo ; enddo
           else
-            do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+            do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+            ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
               AhSm = CS%Biharm_const_xx(i,j) * Shear_mag(i,j)
               Ah(i,j) = max(Ah(i,j), AhSm)
             enddo ; enddo
@@ -1086,7 +1145,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
 
         if (CS%Leith_Ah) then
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             Del2vort_h = 0.25 * ((Del2vort_q(I,J) + Del2vort_q(I-1,J-1)) + &
                                  (Del2vort_q(I-1,J) + Del2vort_q(I,J-1)))
             AhLth = CS%Biharm6_const_xx(i,j) * abs(Del2vort_h) * inv_PI6
@@ -1095,7 +1155,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
 
         if (CS%bound_Ah .and. .not. CS%better_bound_Ah) then
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             Ah(i,j) = min(Ah(i,j), CS%Ah_Max_xx(i,j))
           enddo ; enddo
         endif
@@ -1103,13 +1164,15 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       if (use_MEKE_Au) then
         ! *Add* the MEKE contribution
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           Ah(i,j) = Ah(i,j) + MEKE%Au(i,j)
         enddo ; enddo
       endif
 
       if (CS%Re_Ah > 0.0) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           KE = 0.125*((u(I,j,k)+u(I-1,j,k))**2 + (v(i,J,k)+v(i,J-1,k))**2)
           Ah(i,j) = sqrt(KE) * CS%Re_Ah_const_xx(i,j)
         enddo ; enddo
@@ -1117,24 +1180,27 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       if (CS%better_bound_Ah) then
         if (CS%better_bound_Kh) then
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             Ah(i,j) = min(Ah(i,j), visc_bound_rem(i,j) * hrat_min(i,j) * CS%Ah_Max_xx(i,j))
           enddo ; enddo
         else
-          do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
             Ah(i,j) = min(Ah(i,j), hrat_min(i,j) * CS%Ah_Max_xx(i,j))
           enddo ; enddo
         endif
       endif
 
       if ((CS%id_Ah_h>0) .or. CS%debug) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           Ah_h(i,j,k) = Ah(i,j)
         enddo ; enddo
       endif
 
       if (CS%id_grid_Re_Ah>0) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ! No indices expansion needed for diagnostics
           KE = 0.125 * ((u(I,j,k) + u(I-1,j,k))**2 + (v(i,J,k) + v(i,J-1,k))**2)
           grid_Ah = max(Ah(i,j), CS%min_grid_Ah)
           grid_Re_Ah(i,j,k) = (sqrt(KE) * CS%grid_sp_h3(i,j)) / grid_Ah
@@ -1142,11 +1208,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       endif
 
       if (CS%biharmonic_scheme == SIMPLE) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           bhfct_xx(i,j) = Ah(i,j)
         enddo ; enddo
       elseif (CS%biharmonic_scheme == SQRT_AH) then
-        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+        ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           bhfct_xx(i,j) = sqrt( Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j)) )
         enddo ; enddo
       ! elseif (CS%biharmonic_scheme == SQRT_A) then
@@ -1158,8 +1226,10 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
     meke_res_fn = 1.
 
+    ! Smagorinsky parameters for Kh and Ah (q points)
     if ((CS%Smagorinsky_Kh) .or. (CS%Smagorinsky_Ah)) then
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+        ! do J=js-1,Jeq ; do I=is-1,Ieq
         sh_xy_sq = sh_xy(I,J)**2
         sh_xx_sq = 0.25 * ( (sh_xx(i,j)**2 + sh_xx(i+1,j+1)**2) &
                           + (sh_xx(i,j+1)**2 + sh_xx(i+1,j)**2) )
@@ -1167,28 +1237,33 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       enddo ; enddo
     endif
 
-    do J=js-1,Jeq ; do I=is-1,Ieq
+    ! hq
+    do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+      ! do J=js-1,Jeq ; do I=is-1,Ieq
       h2uq = 4.0 * (h_u(I,j) * h_u(I,j+1))
       h2vq = 4.0 * (h_v(i,J) * h_v(i+1,J))
       hq(I,J) = (2.0 * (h2uq * h2vq)) &
           / (h_neglect3 + (h2uq + h2vq) * ((h_u(I,j) + h_u(I,j+1)) + (h_v(i,J) + h_v(i+1,J))))
     enddo ; enddo
 
+    ! Viscosity bound parameters (q points)
     if (CS%better_bound_Ah .or. CS%better_bound_Kh) then
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+        ! do J=js-1,Jeq ; do I=is-1,Ieq
         h_min = min(h_u(I,j), h_u(I,j+1), h_v(i,J), h_v(i+1,J))
         hrat_min(I,J) = min(1.0, h_min / (hq(I,J) + h_neglect))
       enddo ; enddo
 
       if (CS%better_bound_Kh) then
-        do J=js-1,Jeq ; do I=is-1,Ieq
-          visc_bound_rem(I,J) = 1.0
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
+          visc_bound_rem(i,j) = 1.0
         enddo ; enddo
       endif
     endif
 
     if (CS%no_slip) then
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=js-1,Jeq ; do I=is-1,Ieq ! No indices expansion needed, no-slip incompatible with biharmonic
         if (CS%no_slip .and. (G%mask2dBu(I,J) < 0.5)) then
           if ((G%mask2dCu(I,j) + G%mask2dCu(I,j+1)) + &
               (G%mask2dCv(i,J) + G%mask2dCv(i+1,J)) > 0.0) then
@@ -1211,16 +1286,19 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       enddo ; enddo
     endif
 
+    ! Laplacian Kh and str_xy (q points)
     if (CS%Laplacian) then
       if ((CS%Leith_Kh) .or. (CS%Leith_Ah)) then
         if (CS%use_QG_Leith_visc) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
             grad_vort = grad_vort_mag_q(I,J) + grad_div_mag_q(I,J)
             grad_vort_qg = 3. * grad_vort_mag_q_2d(I,J)
             vert_vort_mag(I,J) = min(grad_vort, grad_vort_qg)
           enddo ; enddo
         else
-          do J=js-1,Jeq ; do I=is-1,Ieq
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
             vert_vort_mag(I,J) = grad_vort_mag_q(I,J) + grad_div_mag_q(I,J)
           enddo ; enddo
         endif
@@ -1230,29 +1308,34 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       ! largest value from several parameterizations.
 
       ! Static (pre-computed) background viscosity
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+      ! do J=js-1,Jeq ; do I=is-1,Ieq
         Kh(I,J) = CS%Kh_bg_xy(I,J)
       enddo ; enddo
 
       if (CS%Smagorinsky_Kh) then
         if (CS%add_LES_viscosity) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
-            Kh(I,J) = Kh(I,J) + CS%Laplac2_const_xy(I,J) * Shear_mag(I,J)
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh(I,J) = Kh(I,J) + CS%Laplac2_const_xx(i,j) * Shear_mag(i,j)
           enddo ; enddo
         else
-          do J=js-1,Jeq ; do I=is-1,Ieq
-            Kh(I,J) = max(Kh(I,J), CS%Laplac2_const_xy(I,J) * Shear_mag(I,J) )
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh(I,J) = max(Kh(I,J), CS%Laplac2_const_xy(I,J) * Shear_mag(i,j) )
           enddo ; enddo
         endif
       endif
 
       if (CS%Leith_Kh) then
         if (CS%add_LES_viscosity) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
-            Kh(I,J) = Kh(I,J) + CS%Laplac3_const_xy(I,J) * vert_vort_mag(I,J) * inv_PI3 ! Is this right? -AJA
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
+            Kh(I,J) = Kh(I,J) + CS%Laplac3_const_xx(i,j) * vert_vort_mag(I,J) * inv_PI3 ! Is this right? -AJA
           enddo ; enddo
         else
-          do J=js-1,Jeq ; do I=is-1,Ieq
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
             Kh(I,J) = max(Kh(I,J), CS%Laplac3_const_xy(I,J) * vert_vort_mag(I,J) * inv_PI3)
           enddo ; enddo
         endif
@@ -1262,7 +1345,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       ! NOTE: The following do-block can be decomposed and vectorized after the
       !   stack size has been reduced.
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+        ! do J=js-1,Jeq ; do I=is-1,Ieq
         if (rescale_Kh) &
           Kh(I,J) = VarMix%Res_fn_q(I,J) * Kh(I,J)
 
@@ -1305,14 +1389,14 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           sh_xy_q(I,J,k) = sh_xy(I,J)
       enddo ; enddo
 
-      do J=js-1,Jeq ; do I=is-1,Ieq
-        str_xy(I,J) = -Kh(I,J) * sh_xy(I,J)
+      do J=js-1,Jeq ; do I=is-1,Ieq ! No indices expansion needed for computing str
+        str_xy(I,J) = -Kh(i,j) * sh_xy(I,J)
       enddo ; enddo
 
       if (CS%decomp_ke) then
         ! Keep a copy of the Laplacian contribution KE decomposition
         if (CS%no_slip) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
+          do J=js-1,Jeq ; do I=is-1,Ieq ! No indices expansion needed for computing str
             lpstr_xy(I,J) = str_xy(I,J) * (hq(I,J) * CS%reduction_xy(I,J))
           enddo ; enddo
         else
@@ -1322,13 +1406,14 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
       endif
     else
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=js-1,Jeq ; do I=is-1,Ieq ! No indices expansion needed for computing str
         str_xy(I,J) = 0.
       enddo ; enddo
     endif
 
+    ! Add anisotropic to str_xy (q points)
     if (CS%anisotropic) then
-      do J=js-1,Jeq ; do I=is-1,Ieq
+      do J=js-1,Jeq ; do I=is-1,Ieq ! No indices expansion needed for computing str
         ! Horizontal-tension averaged to q-points
         local_strain = 0.25 * ( (sh_xx(i,j) + sh_xx(i+1,j+1)) + (sh_xx(i+1,j) + sh_xx(i,j+1)) )
         ! *Add* the tension contribution to the xy-component of stress
@@ -1336,24 +1421,28 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       enddo ; enddo
     endif
 
+    ! Biharmonic Ah at q points
     if (CS%biharmonic) then
       ! Determine the biharmonic viscosity at q points, using the
       ! largest value from several parameterizations.
-      do J=js-1,Jeq ; do I=is-1,Ieq
-        Ah(I,J) = CS%Ah_bg_xy(I,J)
+      do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+        ! do J=js-1,Jeq ; do I=is-1,Ieq
+        Ah(i,j) = CS%Ah_bg_xy(I,J)
       enddo ; enddo
 
       if (CS%Smagorinsky_Ah .or. CS%Leith_Ah) then
         if (CS%Smagorinsky_Ah) then
           if (CS%bound_Coriolis) then
-            do J=js-1,Jeq ; do I=is-1,Ieq
+            do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+              ! do J=js-1,Jeq ; do I=is-1,Ieq
               AhSm = Shear_mag(I,J) * (CS%Biharm_const_xy(I,J) &
                   + CS%Biharm_const2_xy(I,J) * Shear_mag(I,J) &
               )
               Ah(I,J) = max(Ah(I,J), AhSm)
             enddo ; enddo
           else
-            do J=js-1,Jeq ; do I=is-1,Ieq
+            do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+              ! do J=js-1,Jeq ; do I=is-1,Ieq
               AhSm = CS%Biharm_const_xy(I,J) * Shear_mag(I,J)
               Ah(I,J) = max(Ah(I,J), AhSm)
             enddo ; enddo
@@ -1361,14 +1450,16 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         endif
 
         if (CS%Leith_Ah) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
             AhLth = CS%Biharm6_const_xy(I,J) * abs(Del2vort_q(I,J)) * inv_PI6
             Ah(I,J) = max(Ah(I,J), AhLth)
           enddo ; enddo
         endif
 
         if (CS%bound_Ah .and. .not.CS%better_bound_Ah) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
             Ah(I,J) = min(Ah(I,J), CS%Ah_Max_xy(I,J))
           enddo ; enddo
         endif
@@ -1376,7 +1467,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       if (use_MEKE_Au) then
         ! *Add* the MEKE contribution
-        do J=js-1,Jeq ; do I=is-1,Ieq
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
           Ah(I,J) = Ah(I,J) + 0.25 * ( &
               (MEKE%Au(i,j) + MEKE%Au(i+1,j+1)) + (MEKE%Au(i+1,j) + MEKE%Au(i,j+1)) &
           )
@@ -1384,7 +1476,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       endif
 
       if (CS%Re_Ah > 0.0) then
-        do J=js-1,Jeq ; do I=is-1,Ieq
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
           KE = 0.125 * ((u(I,j,k) + u(I,j+1,k))**2 + (v(i,J,k) + v(i+1,J,k))**2)
           Ah(I,J) = sqrt(KE) * CS%Re_Ah_const_xy(I,J)
         enddo ; enddo
@@ -1392,28 +1485,33 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
       if (CS%better_bound_Ah) then
         if (CS%better_bound_Kh) then
-          do J=js-1,Jeq ; do I=is-1,Ieq
-            Ah(I,J) = min(Ah(I,J), visc_bound_rem(I,J) * hrat_min(I,J) * CS%Ah_Max_xy(I,J))
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
+            Ah(I,J) = min(Ah(i,j), visc_bound_rem(i,j) * hrat_min(I,J) * CS%Ah_Max_xy(I,J))
           enddo ; enddo
         else
-          do J=js-1,Jeq ; do I=is-1,Ieq
-            Ah(I,J) = min(Ah(I,J), hrat_min(I,J) * CS%Ah_Max_xy(I,J))
+          do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+            ! do J=js-1,Jeq ; do I=is-1,Ieq
+            Ah(I,J) = min(Ah(i,j), hrat_min(I,J) * CS%Ah_Max_xy(I,J))
           enddo ; enddo
         endif
       endif
 
       if (CS%id_Ah_q>0 .or. CS%debug) then
-        do J=js-1,Jeq ; do I=is-1,Ieq
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
           Ah_q(I,J,k) = Ah(I,J)
         enddo ; enddo
       endif
 
       if (CS%biharmonic_scheme == SIMPLE) then
-        do J=js-1,Jeq ; do I=is-1,Ieq
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
           bhfct_xy(I,J) = Ah(I,J)
         enddo ; enddo
       elseif (CS%biharmonic_scheme == SQRT_AH) then
-        do J=js-1,Jeq ; do I=is-1,Ieq
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
           bhfct_xy(I,J) = sqrt( Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J)) )
         enddo ; enddo
       ! elseif (CS%biharmonic_scheme == SQRT_A) then
@@ -1423,8 +1521,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       endif
     endif
 
+    ! Biharmonic str_xx (h points) and str_xy (q points)
     if (CS%biharmonic) then
-    !  Evaluate Del2u = x.Div(Grad u) and Del2v = y.Div( Grad u)
+      !  Evaluate Del2u = x.Div(Grad u) and Del2v = y.Div( Grad u)
       if (CS%biharmonic_scheme == SIMPLE) then
         do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
           Del2u(I,j) = CS%Idxdy2u(I,j)*(CS%dy2h(i+1,j)*sh_xx(i+1,j) - CS%dy2h(i,j)*sh_xx(i,j)) + &
@@ -1546,6 +1645,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           bhstr_xy(I,J) = bhfct_xy(I,J) * (dDel2vdx(I,J) + dDel2udy(I,J))
         enddo ; enddo
       endif
+    else
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        bhstr_xx(i,j) = 0.0
+      enddo ; enddo
+      do J=js-1,Jeq ; do I=is-1,Ieq
+        bhstr_xy(I,J) = 0.0
+      enddo ; enddo
     endif
 
     if (CS%use_GME) then
