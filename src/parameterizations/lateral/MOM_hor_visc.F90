@@ -228,10 +228,12 @@ end type hor_visc_CS
 integer, parameter :: SIMPLE  = 0
 integer, parameter :: SQRT_AH = 1
 integer, parameter :: SQRT_A  = 2
+integer, parameter :: HSQRT_A  = 3
 
 character(len=20), parameter :: SIMPLE_STRING = "DEFAULT"
 character(len=20), parameter :: SQRT_AH_STRING = "SQRT_AH"
 character(len=20), parameter :: SQRT_A_STRING = "SQRT_A"
+character(len=20), parameter :: HSQRT_A_STRING = "HSQRT_A"
 !>@}
 contains
 
@@ -1217,10 +1219,16 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
         ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
           bhfct_xx(i,j) = sqrt( Ah(i,j) * (h(i,j,k) * CS%reduction_xx(i,j)) )
         enddo ; enddo
-      ! elseif (CS%biharmonic_scheme == SQRT_A) then
-      !   do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !     bhfct_xx(i,j) = sqrt( Ah(i,j) )
-      !   enddo ; enddo
+      elseif (CS%biharmonic_scheme == SQRT_A) then
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          bhfct_xx(i,j) = sqrt( Ah(i,j) )
+        enddo ; enddo
+      elseif (CS%biharmonic_scheme == HSQRT_A) then
+        do j=js_KAh,je_KAh ; do i=is_KAh,ie_KAh
+          ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          bhfct_xx(i,j) = sqrt( Ah(i,j) ) * ( h(i,j,k) * CS%reduction_xx(i,j) )
+        enddo ; enddo
       endif
     endif
 
@@ -1514,10 +1522,16 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           ! do J=js-1,Jeq ; do I=is-1,Ieq
           bhfct_xy(I,J) = sqrt( Ah(I,J) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J)) )
         enddo ; enddo
-      ! elseif (CS%biharmonic_scheme == SQRT_A) then
-      !   do J=js-1,Jeq ; do I=is-1,Ieq
-      !     bhfct_xy(I,J) = sqrt( Ah(I,J) )
-      !   enddo ; enddo
+      elseif (CS%biharmonic_scheme == SQRT_A) then
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
+          bhfct_xy(I,J) = sqrt( Ah(I,J) )
+        enddo ; enddo
+      elseif (CS%biharmonic_scheme == HSQRT_A) then
+        do J=Js_KAq,Je_KAq ; do I=Is_KAq,Ie_KAq
+          ! do J=js-1,Jeq ; do I=is-1,Ieq
+          bhfct_xy(I,J) = sqrt( Ah(I,J) ) * (hq(I,J) * G%mask2dBu(I,J) * CS%reduction_xy(I,J))
+        enddo ; enddo
       endif
     endif
 
@@ -1548,21 +1562,36 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
             - CS%Idx2dyCv(i,J)* (  bhfct_xx(i,j+1) * CS%dx2h(i,j+1)*sh_xx(i,j+1) &
                                  - bhfct_xx(i,j  ) * CS%dx2h(i,j  )*sh_xx(i,j  ) )
         enddo ; enddo
-      ! elseif (CS%biharmonic_scheme == SQRT_A) then
-      !   do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
-      !     Del2u(I,j) = h_u(I,j) &
-      !       *(  CS%Idxdy2u(I,j) * (  bhfct_xx(i+1,j) * CS%dy2h(i+1,j)*sh_xx(i+1,j) &
-      !                              - bhfct_xx(i  ,j) * CS%dy2h(i  ,j)*sh_xx(i  ,j) ) &
-      !         + CS%Idx2dyCu(I,j)* (  bhfct_xy(I,J  ) * CS%dx2q(I,J  )*sh_xy(I,J  ) &
-      !                              - bhfct_xy(I,J-1) * CS%dx2q(I,J-1)*sh_xy(I,J-1) ) )
-      !   enddo ; enddo
-      !   do J=Jsq-1,Jeq+1 ; do i=is-1,Ieq+1
-      !     Del2v(i,J) = h_v(i,J) &
-      !       *(  CS%Idxdy2v(i,J) * (  bhfct_xy(I  ,J) * CS%dy2q(I  ,J)*sh_xy(I  ,J) &
-      !                              - bhfct_xy(I-1,J) * CS%dy2q(I-1,J)*sh_xy(I-1,J) ) &
-      !         - CS%Idx2dyCv(i,J)* (  bhfct_xx(i,j+1) * CS%dx2h(i,j+1)*sh_xx(i,j+1) &
-      !                              - bhfct_xx(i,j  ) * CS%dx2h(i,j  )*sh_xx(i,j  ) ) )
-      !   enddo ; enddo
+      elseif (CS%biharmonic_scheme == SQRT_A) then
+        do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
+          Del2u(I,j) = h_u(I,j) &
+            *(  CS%Idxdy2u(I,j) * (  bhfct_xx(i+1,j) * CS%dy2h(i+1,j)*sh_xx(i+1,j) &
+                                   - bhfct_xx(i  ,j) * CS%dy2h(i  ,j)*sh_xx(i  ,j) ) &
+              + CS%Idx2dyCu(I,j)* (  bhfct_xy(I,J  ) * CS%dx2q(I,J  )*sh_xy(I,J  ) &
+                                   - bhfct_xy(I,J-1) * CS%dx2q(I,J-1)*sh_xy(I,J-1) ) )
+        enddo ; enddo
+        do J=Jsq-1,Jeq+1 ; do i=is-1,Ieq+1
+          Del2v(i,J) = h_v(i,J) &
+            *(  CS%Idxdy2v(i,J) * (  bhfct_xy(I  ,J) * CS%dy2q(I  ,J)*sh_xy(I  ,J) &
+                                   - bhfct_xy(I-1,J) * CS%dy2q(I-1,J)*sh_xy(I-1,J) ) &
+              - CS%Idx2dyCv(i,J)* (  bhfct_xx(i,j+1) * CS%dx2h(i,j+1)*sh_xx(i,j+1) &
+                                   - bhfct_xx(i,j  ) * CS%dx2h(i,j  )*sh_xx(i,j  ) ) )
+        enddo ; enddo
+      elseif (CS%biharmonic_scheme == HSQRT_A) then
+        do j=js-1,Jeq+1 ; do I=Isq-1,Ieq+1
+          Del2u(I,j) = 1/(h_u(I,j)+h_neglect) &
+            *(  CS%Idxdy2u(I,j) * (  bhfct_xx(i+1,j) * CS%dy2h(i+1,j)*sh_xx(i+1,j) &
+                                   - bhfct_xx(i  ,j) * CS%dy2h(i  ,j)*sh_xx(i  ,j) ) &
+              + CS%Idx2dyCu(I,j)* (  bhfct_xy(I,J  ) * CS%dx2q(I,J  )*sh_xy(I,J  ) &
+                                   - bhfct_xy(I,J-1) * CS%dx2q(I,J-1)*sh_xy(I,J-1) ) )
+        enddo ; enddo
+        do J=Jsq-1,Jeq+1 ; do i=is-1,Ieq+1
+          Del2v(i,J) = 1/(h_v(i,J)+h_neglect) &
+            *(  CS%Idxdy2v(i,J) * (  bhfct_xy(I  ,J) * CS%dy2q(I  ,J)*sh_xy(I  ,J) &
+                                   - bhfct_xy(I-1,J) * CS%dy2q(I-1,J)*sh_xy(I-1,J) ) &
+              - CS%Idx2dyCv(i,J)* (  bhfct_xx(i,j+1) * CS%dx2h(i,j+1)*sh_xx(i,j+1) &
+                                   - bhfct_xx(i,j  ) * CS%dx2h(i,j  )*sh_xx(i,j  ) ) )
+        enddo ; enddo
       endif
       if (apply_OBC) then ; if (OBC%zero_biharmonic) then
         do n=1,OBC%number_of_segments
@@ -2367,6 +2396,8 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                   "\t SQRT_AH - sqrt(Ah.h) is inside the first and third derivatives. \n"//&
                   "\t SQRT_A  - sqrt(Ah) is inside the first and third derivatives and \n"//&
                   "\t           h is inside the second derivatives. ", &
+                  "\t HSQRT_A - h.sqrt(Ah) is inside the first and third derivatives and \n"//&
+                  "\t           1/h is inside the second derivatives. ", &
                   default=SIMPLE_STRING, do_not_log=.not.CS%biharmonic)
     tmpstr = uppercase(tmpstr)
     select case (tmpstr)
@@ -2374,8 +2405,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
         CS%biharmonic_scheme = SIMPLE
       case (SQRT_AH_STRING)
         CS%biharmonic_scheme = SQRT_AH
-      ! case (SQRT_A_STRING)
-      !   CS%biharmonic_scheme = SQRT_A
+      case (SQRT_A_STRING)
+        CS%biharmonic_scheme = SQRT_A
+      case (HSQRT_A_STRING)
+        CS%biharmonic_scheme = HSQRT_A
       case default
         call MOM_error(FATAL, "hor_visc_init: Unrecognized setting "// &
               "#define BIHARMONIC_SCHEME "//trim(tmpstr)//" found in input file.")
