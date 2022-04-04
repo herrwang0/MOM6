@@ -28,6 +28,7 @@ use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : BT_cont_type, alloc_bt_cont_type
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_variables, only : accel_diag_ptrs
+use MOM_grid_initialize, only : Adcroft_reciprocal
 
 implicit none ; private
 
@@ -4933,14 +4934,14 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     Mean_SL = G%Z_ref
     do j=js,je ; do I=is-1,ie
       if (G%mask2dCu(I,j)>0.) then
-        CS%IDatu(I,j) = G%mask2dCu(I,j) * 2.0 / ((G%bathyT(i+1,j) + G%bathyT(i,j)) + 2.0*Mean_SL)
+        CS%IDatu(I,j) = G%mask2dCu(I,j) * max(2.0*Adcroft_reciprocal((G%bathyT(i+1,j) + G%bathyT(i,j)) + 2.0*Mean_SL), 0.0)
       else ! Both neighboring H points are masked out so IDatu(I,j) is meaningless
         CS%IDatu(I,j) = 0.
       endif
     enddo ; enddo
     do J=js-1,je ; do i=is,ie
       if (G%mask2dCv(i,J)>0.) then
-        CS%IDatv(i,J) = G%mask2dCv(i,J) * 2.0 / ((G%bathyT(i,j+1) + G%bathyT(i,j)) + 2.0*Mean_SL)
+        CS%IDatv(i,J) = G%mask2dCv(i,J) * max(2.0*Adcroft_reciprocal((G%bathyT(i,j+1) + G%bathyT(i,j)) + 2.0*Mean_SL), 0.0)
       else ! Both neighboring H points are masked out so IDatv(i,J) is meaningless
         CS%IDatv(i,J) = 0.
       endif
