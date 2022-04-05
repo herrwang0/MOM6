@@ -57,6 +57,8 @@ type, public :: hor_visc_CS ; private
                              !! the viscosity bounds to the theoretical maximum
                              !! for stability without considering other terms [nondim].
                              !! The default is 0.8.
+  real    :: bound_coef_ahh
+  real    :: bound_coef_ahq
   logical :: Smagorinsky_Kh  !< If true, use Smagorinsky nonlinear eddy
                              !! viscosity. KH is the background value.
   logical :: Smagorinsky_Ah  !< If true, use a biharmonic form of Smagorinsky
@@ -1993,6 +1995,12 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "viscosity bounds to the theoretical maximum for "//&
                  "stability without considering other terms.", units="nondim", &
                  default=0.8, do_not_log=.not.(CS%better_bound_Ah .or. CS%better_bound_Kh))
+  call get_param(param_file, mdl, "HORVISC_BOUND_COEF_AHH", CS%bound_coef_ahh, &
+                 "Bound coef for Ah at h.", units="nondim", &
+                 default=0.8, do_not_log=.not.(CS%better_bound_Ah))
+  call get_param(param_file, mdl, "HORVISC_BOUND_COEF_AHQ", CS%bound_coef_ahq, &
+                 "Bound coef for Ah at h.", units="nondim", &
+                 default=0.8, do_not_log=.not.(CS%better_bound_Ah))
   call get_param(param_file, mdl, "NOSLIP", CS%no_slip, &
                  "If true, no slip boundary conditions are used; otherwise "//&
                  "free slip boundary conditions are assumed. The "//&
@@ -2370,7 +2378,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
           max(G%IdxCv(i,J)*G%IareaCv(i,J), G%IdxCv(i,J-1)*G%IareaCv(i,J-1)) ) )
       CS%Ah_Max_xx(I,J) = 0.0
       if (denom > 0.0) &
-        CS%Ah_Max_xx(I,J) = CS%bound_coef * 0.5 * Idt / denom
+        CS%Ah_Max_xx(I,J) = CS%bound_coef_ahh * 0.5 * Idt / denom
     enddo ; enddo
     do J=js-1,Jeq ; do I=is-1,Ieq
       denom = max( &
@@ -2384,7 +2392,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
           max(G%IdyCv(i,J)*G%IareaCv(i,J), G%IdyCv(i+1,J)*G%IareaCv(i+1,J)) ) )
       CS%Ah_Max_xy(I,J) = 0.0
       if (denom > 0.0) &
-        CS%Ah_Max_xy(I,J) = CS%bound_coef * 0.5 * Idt / denom
+        CS%Ah_Max_xy(I,J) = CS%bound_coef_ahq * 0.5 * Idt / denom
     enddo ; enddo
     if (CS%debug) then
       call hchksum(CS%Ah_Max_xx, "Ah_Max_xx", G%HI, haloshift=0, scale=US%L_to_m**4*US%s_to_T)
