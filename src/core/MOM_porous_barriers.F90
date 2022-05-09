@@ -8,7 +8,7 @@ use MOM_cpu_clock,         only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, 
 use MOM_error_handler,     only : MOM_error, FATAL
 use MOM_grid,              only : ocean_grid_type
 use MOM_unit_scaling,      only : unit_scale_type
-use MOM_variables,         only : thermo_var_ptrs, porous_barrier_type
+use MOM_variables,         only : thermo_var_ptrs, porous_barrier_type, cont_ppm_hatvel
 use MOM_verticalGrid,      only : verticalGrid_type
 use MOM_interface_heights, only : find_eta
 use MOM_time_manager,      only : time_type
@@ -38,6 +38,9 @@ type, public :: porous_barrier_CS; private
                                     !! averaged weights are not strictly limited by an upper-bound of 1.0 .
   logical :: cont_update            !! Flag controlling whether recalcuation occurs in cont solver
   logical :: use_cont_hvel          !! If true, use continuity solver hu and hv
+  integer :: cont_hvel_opt          !< An integer indicating how the interface heights at the velocity
+                                    !! points are calculated. Valid values are given by the parameters
+                                    !! defined below: MAX, MIN, ARITHMETIC and HARMONIC.
   !>@{ Diagnostic IDs
   integer :: id_por_layer_widthU = -1, id_por_layer_widthV = -1, &
              id_por_face_areaU = -1, id_por_face_areaV = -1
@@ -55,12 +58,18 @@ character(len=20), parameter :: ETA_INTERP_MAX_STRING = "MAX"
 character(len=20), parameter :: ETA_INTERP_MIN_STRING = "MIN"
 character(len=20), parameter :: ETA_INTERP_ARITH_STRING = "ARITHMETIC"
 character(len=20), parameter :: ETA_INTERP_HARM_STRING = "HARMONIC"
+integer, parameter :: ETA_CONT_MAR = 1
+integer, parameter :: ETA_CONT_AVG = 2
+integer, parameter :: ETA_CONT_EDG = 3
+character(len=20), parameter :: ETA_CONT_MAR_STRING = "MARGINAL"
+character(len=20), parameter :: ETA_CONT_AVG_STRING = "AVERAGE"
+character(len=20), parameter :: ETA_CONT_EDG_STRING = "EDGE"
 !>@}
 
 contains
 
 !> subroutine to assign porous barrier widths averaged over a layer
-subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt)
+subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt, hatvel)
   ! Note: eta_bt is not currently used
   type(ocean_grid_type),                      intent(in) :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                    intent(in) :: GV  !< The ocean's vertical grid structure.
@@ -73,7 +82,7 @@ subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt)
                                                                    !! [H ~> m or kg m-2].
   type(porous_barrier_type),                  intent(inout) :: pbv !< porous barrier fractional cell metrics
   type(porous_barrier_CS),                    intent(in) :: CS     !< Control structure for porous barrier
-
+  type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
   !local variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1) :: eta_u ! Layer interface heights at u points [Z ~> m]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1) :: eta_v ! Layer interface heights at v points [Z ~> m]
@@ -100,7 +109,11 @@ subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt)
     dmask = CS%mask_depth
   endif
 
-  call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US)
+  if (CS%use_cont_hvel) then
+    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US, hatvel=hatvel, hvel_scheme=CS%cont_hvel_opt)
+  else
+    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US)
+  endif
 
   dz_min = GV%Angstrom_Z
 
@@ -287,7 +300,7 @@ subroutine porous_widths_interface(h, tv, G, GV, US, pbv, CS, eta_bt)
   call cpu_clock_end(id_clock_porous_barrier)
 end subroutine porous_widths_interface
 
-subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt, hu, hv)
+subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt, hatvel, hvel_scheme)
   !variables needed to call find_eta
   type(ocean_grid_type),                        intent(in) :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                      intent(in) :: GV  !< The ocean's vertical grid structure.
@@ -298,13 +311,11 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   real, dimension(SZI_(G),SZJ_(G)), optional,   intent(in) :: eta_bt !< optional barotropic variable
                                                                    !! used to dilate the layer thicknesses
                                                                    !! [H ~> m or kg m-2].
-  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1), optional, intent(in) :: hu !< optional pre-calculated thickness
-                                                                   !! at U-cells [H ~> m or kg m-2].
-  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1), optional, intent(in) :: hv !< optional pre-calculated thickness
-                                                                   !! at V-cells [H ~> m or kg m-2].
+  type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
   real,                                         intent(in) :: dmask !< The depth shallower than which
                                                                     !! porous barrier is not applied [Z ~> m]
   integer,                                      intent(in) :: interp !< eta interpolation method
+  integer, optional,                            intent(in) :: hvel_scheme !< eta interpolation method
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1), intent(out) :: eta_u !< Layer interface heights at u points [Z ~> m]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1), intent(out) :: eta_v !< Layer interface heights at v points [Z ~> m]
 
@@ -314,11 +325,12 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   integer :: i, j, k, nk, is, ie, js, je, Isq, Ieq, Jsq, Jeq
   integer :: ks ! The actual starting k where interpolation is applied.
   logical :: use_cont_huv
-
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: hu !< Layer interface heights at u points [Z ~> m]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: hv !< Layer interface heights at v points [Z ~> m]
   is = G%isc; ie = G%iec; js = G%jsc; je = G%jec; nk = GV%ke
   Isq = G%IscB; Ieq = G%IecB; Jsq = G%JscB; Jeq = G%JecB
 
-  use_cont_huv = CS%use_cont_hvel .and. (present(hu) .and. present(hv))
+  use_cont_huv = present(hatvel)
 
   dz_neglect = GV%dZ_subroundoff
 
@@ -331,7 +343,7 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   call find_eta(h, tv, G, GV, US, eta, halo_size=1)
 
   ks = 1
-  if (CS%use_cont_huv) ks = nk+1
+  if (use_cont_huv) ks = nk+1
 
   select case (interp)
     case (ETA_INTERP_MAX)   ! The shallower interface height
@@ -376,7 +388,39 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   end select
 
   if (use_cont_huv) then
-    do K=1,nk
+    select case (hvel_scheme)
+      case (ETA_CONT_MAR)   ! The shallower interface height
+        do K=1,nk
+          do j=js,je ; do I=Isq,Ieq
+            hu(I,j,K) = hatvel%hmarg_u(I,j,K)
+          enddo ; enddo
+          do J=Jsq,Jeq ; do i=is,ie
+            hv(i,J,K) = hatvel%hmarg_v(i,J,K)
+          enddo ; enddo
+        enddo
+      case (ETA_CONT_AVG)   ! The deeper interface height
+        do K=1,nk
+          do j=js,je ; do I=Isq,Ieq
+            hu(I,j,K) = hatvel%havg_u(I,j,K)
+          enddo ; enddo
+          do J=Jsq,Jeq ; do i=is,ie
+            hv(i,J,K) = hatvel%havg_v(i,J,K)
+          enddo ; enddo
+        enddo
+      case (ETA_CONT_EDG) ! Arithmetic mean
+        do K=1,nk
+          do j=js,je ; do I=Isq,Ieq
+            hu(I,j,K) = hatvel%hedge_u(I,j,K)
+          enddo ; enddo
+          do J=Jsq,Jeq ; do i=is,ie
+            hv(i,J,K) = hatvel%hedge_v(i,J,K)
+          enddo ; enddo
+        enddo
+      case default
+        call MOM_error(FATAL, "porous_widths::calc_eta_at_uv: "//&
+                      "invalid value for eta interpolation method.")
+    end select
+    do K=nk,1,-1
       do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
         eta_u(I,j,K) = eta_u(I,j,K+1) + hu(I,j,k)
       endif ; enddo ; enddo
@@ -474,6 +518,7 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
   ! local variables
   character(len=40) :: mdl = "MOM_porous_barriers"  ! This module's name.
   character(len=20) :: interp_method ! String storing eta interpolation method
+  character(len=20) :: con_hvel_scheme ! String storing eta interpolation method
   integer :: default_answer_date ! Global answer date
   !> This include declares and sets the variable "version".
 # include "version_variable.h"
@@ -516,6 +561,9 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
   call get_param(param_file, mdl, "PORBAR_USE_CONT_HVEL", CS%use_cont_hvel, &
                  "If true, porous barriers use velocity cell thickness provided by cont solver.", &
                  default=.False.)
+  call get_param(param_file, mdl, "PORBAR_USE_CONT_HVEL_SCHEMES", con_hvel_scheme, &
+                 "schemes", &
+                 default=ETA_CONT_MAR_STRING)
   select case (interp_method)
     case (ETA_INTERP_MAX_STRING) ; CS%eta_interp = ETA_INTERP_MAX
     case (ETA_INTERP_MIN_STRING) ; CS%eta_interp = ETA_INTERP_MIN
@@ -524,6 +572,15 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
     case default
       call MOM_error(FATAL, "porous_barriers_init: Unrecognized setting "// &
             "#define PORBAR_ETA_INTERP "//trim(interp_method)//" found in input file.")
+  end select
+
+  select case (con_hvel_scheme)
+    case (ETA_CONT_MAR_STRING) ; CS%cont_hvel_opt = ETA_CONT_MAR
+    case (ETA_CONT_AVG_STRING) ; CS%cont_hvel_opt = ETA_CONT_AVG
+    case (ETA_CONT_EDG_STRING) ; CS%cont_hvel_opt = ETA_CONT_EDG
+    case default
+      call MOM_error(FATAL, "porous_barriers_init: Unrecognized setting "// &
+            "#define PORBAR_USE_CONT_HVEL_SCHEMES "//trim(interp_method)//" found in input file.")
   end select
 
   CS%id_por_layer_widthU = register_diag_field('ocean_model', 'por_layer_widthU', diag%axesCui, Time, &
