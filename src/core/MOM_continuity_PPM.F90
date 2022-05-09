@@ -12,7 +12,9 @@ use MOM_open_boundary, only : ocean_OBC_type, OBC_segment_type, OBC_NONE
 use MOM_open_boundary, only : OBC_DIRECTION_E, OBC_DIRECTION_W, OBC_DIRECTION_N, OBC_DIRECTION_S
 use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : BT_cont_type, porous_barrier_type
-use MOM_verticalGrid, only : verticalGrid_type
+use MOM_verticalGrid, only : verticalGrid_type, get_thickness_units
+use MOM_variables,             only : cont_ppm_hatvel
+use MOM_diag_mediator, only : post_data, register_diag_field
 
 implicit none ; private
 
@@ -67,6 +69,7 @@ type, public :: continuity_PPM_CS ; private
   logical :: visc_rem_hvel_fix = .False. !< If true, thickness at velocity points
                              !! h_[uv] (used by barotropic solver) is not multiplied
                              !! by visc_rem_[uv].
+  integer :: id_havg_u = -1, id_havg_v = -1, id_hmarg_u = -1, id_hmarg_v = -1
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -87,7 +90,7 @@ contains
 !> Time steps the layer thicknesses, using a monotonically limit, directionally split PPM scheme,
 !! based on Lin (1994).
 subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhbt, vhbt, &
-                          visc_rem_u, visc_rem_v, u_cor, v_cor, BT_cont, du_cor, dv_cor)
+                          visc_rem_u, visc_rem_v, u_cor, v_cor, BT_cont, du_cor, dv_cor, hatvel)
   type(ocean_grid_type),   intent(in)    :: G   !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV  !< Vertical grid structure.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
@@ -142,6 +145,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
   real, dimension(SZI_(G),SZJB_(G)), &
                  optional, intent(out)   :: dv_cor !< The meridional velocity increments from v that give vhbt
                                                  !! as the depth-integrated transports [L T-1 ~> m s-1].
+  type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
 
   ! Local variables
   real :: h_W(SZI_(G),SZJ_(G),SZK_(GV)) ! West edge thicknesses in the zonal PPM reconstruction [H ~> m or kg m-2]
@@ -168,14 +172,14 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
     call zonal_edge_thickness(hin, h_W, h_E, G, GV, US, CS, OBC, LB)
     call zonal_mass_flux(u, hin, h_W, h_E, uh, dt, G, GV, US, CS, OBC, pbv%por_face_areaU, &
-                         LB, uhbt, visc_rem_u, u_cor, BT_cont, du_cor)
+                         LB, uhbt, visc_rem_u, u_cor, BT_cont, du_cor, hatvel)
     call continuity_zonal_convergence(h, uh, dt, G, GV, LB, hin)
 
     !  Now advect meridionally, using the updated thicknesses to determine the fluxes.
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.false.)
     call meridional_edge_thickness(h, h_S, h_N, G, GV, US, CS, OBC, LB)
     call meridional_mass_flux(v, h, h_S, h_N, vh, dt, G, GV, US, CS, OBC, pbv%por_face_areaV, &
-                              LB, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor)
+                              LB, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor, hatvel)
     call continuity_merdional_convergence(h, vh, dt, G, GV, LB, hmin=h_min)
 
   else  ! .not. x_first
@@ -183,17 +187,23 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
     call meridional_edge_thickness(hin, h_S, h_N, G, GV, US, CS, OBC, LB)
     call meridional_mass_flux(v, hin, h_S, h_N, vh, dt, G, GV, US, CS, OBC, pbv%por_face_areaV, &
-                              LB, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor)
+                              LB, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor, hatvel)
     call continuity_merdional_convergence(h, vh, dt, G, GV, LB, hin)
 
     !  Now advect zonally, using the updated thicknesses to determine the fluxes.
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.false.)
     call zonal_edge_thickness(h, h_W, h_E, G, GV, US, CS, OBC, LB)
     call zonal_mass_flux(u, h, h_W, h_E, uh, dt, G, GV, US, CS, OBC, pbv%por_face_areaU, &
-                         LB, uhbt, visc_rem_u, u_cor, BT_cont, du_cor)
+                         LB, uhbt, visc_rem_u, u_cor, BT_cont, du_cor, hatvel)
     call continuity_zonal_convergence(h, uh, dt, G, GV, LB, hmin=h_min)
   endif
 
+  if (present(hatvel)) then
+    if (CS%id_havg_u > 0) call post_data(CS%id_havg_u, hatvel%havg_u, CS%diag)
+    if (CS%id_havg_v > 0) call post_data(CS%id_havg_v, hatvel%havg_v, CS%diag)
+    if (CS%id_hmarg_u > 0) call post_data(CS%id_hmarg_u, hatvel%hmarg_u, CS%diag)
+    if (CS%id_hmarg_v > 0) call post_data(CS%id_hmarg_v, hatvel%hmarg_v, CS%diag)
+  endif
 end subroutine continuity_PPM
 
 !> Finds the thickness fluxes from the continuity solver without actually updating the
@@ -520,7 +530,7 @@ end subroutine meridional_edge_thickness
 
 !> Calculates the mass or volume fluxes through the zonal faces, and other related quantities.
 subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_face_areaU, &
-                           LB_in, uhbt, visc_rem_u, u_cor, BT_cont, du_cor)
+                           LB_in, uhbt, visc_rem_u, u_cor, BT_cont, du_cor, hatvel)
   type(ocean_grid_type),   intent(in)    :: G    !< Ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV   !< Ocean's vertical grid structure.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
@@ -560,6 +570,7 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
   real, dimension(SZIB_(G),SZJ_(G)), &
                  optional, intent(out)   :: du_cor !< The zonal velocity increments from u that give uhbt
                                                  !! as the depth-integrated transports [L T-1 ~> m s-1].
+  type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
 
   ! Local variables
   real, dimension(SZIB_(G),SZK_(GV)) :: duhdu ! Partial derivative of uh with u [H L ~> m2 or kg m-1].
@@ -626,9 +637,17 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
       if (use_visc_rem) then ; do I=ish-1,ieh
         visc_rem(I,k) = visc_rem_u(I,j,k)
       enddo ; endif
+      if (present(hatvel)) then
       call zonal_flux_layer(u(:,j,k), h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), &
                             uh(:,j,k), duhdu(:,k), visc_rem(:,k), &
-                            dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k), OBC)
+                            dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, &
+                            por_face_areaU(:,j,k), hatvel%havg_u(:,j,k), hatvel%hmarg_u(:,j,k), OBC)
+    else
+      call zonal_flux_layer(u(:,j,k), h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), &
+                            uh(:,j,k), duhdu(:,k), visc_rem(:,k), &
+                            dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k), OBC=OBC)
+
+    endif
       if (local_specified_BC) then
         do I=ish-1,ieh ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           l_seg = OBC%segnum_u(I,j)
@@ -889,7 +908,7 @@ subroutine zonal_BT_mass_flux(u, h_in, h_W, h_E, uhbt, dt, G, GV, US, CS, OBC, p
     do k=1,nz
       ! This sets uh and duhdu.
       call zonal_flux_layer(u(:,j,k), h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh, duhdu, ones, &
-                            dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k), OBC)
+                            dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k), OBC=OBC)
       if (OBC_in_row) then ; do I=ish-1,ieh ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
         if (OBC%segment(OBC%segnum_u(I,j))%specified) uh(I) = OBC%segment(OBC%segnum_u(I,j))%normal_trans(I,j,k)
       endif ; enddo ; endif
@@ -907,7 +926,7 @@ end subroutine zonal_BT_mass_flux
 
 !> Evaluates the zonal mass or volume fluxes in a layer.
 subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
-                            ish, ieh, do_I, vol_CFL, por_face_areaU, OBC)
+                            ish, ieh, do_I, vol_CFL, por_face_areaU, havg_u, hmarg_u, OBC)
   type(ocean_grid_type),        intent(in)    :: G        !< Ocean's grid structure.
   real, dimension(SZIB_(G)),    intent(in)    :: u        !< Zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZIB_(G)),    intent(in)    :: visc_rem !< Both the fraction of the
@@ -931,11 +950,14 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
   logical,                      intent(in)    :: vol_CFL  !< If true, rescale the
   real, dimension(SZIB_(G)),    intent(in)    :: por_face_areaU !< fractional open area of U-faces [nondim]
           !! ratio of face areas to the cell areas when estimating the CFL number.
+  real, dimension(SZIB_(G)), optional, intent(out) :: havg_u
+  real, dimension(SZIB_(G)), optional, intent(out) :: hmarg_u
   type(ocean_OBC_type), optional, pointer     :: OBC !< Open boundaries control structure.
   ! Local variables
   real :: CFL  ! The CFL number based on the local velocity and grid spacing [nondim]
   real :: curv_3 ! A measure of the thickness curvature over a grid length [H ~> m or kg m-2]
   real :: h_marg ! The marginal thickness of a flux [H ~> m or kg m-2].
+  real :: h_avg
   integer :: i
   integer :: l_seg
   logical :: local_open_BC
@@ -953,6 +975,7 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       curv_3 = (h_W(i) + h_E(i)) - 2.0*h(i)
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
           (h_E(i) + CFL * (0.5*(h_W(i) - h_E(i)) + curv_3*(CFL - 1.5)))
+      h_avg = (h_E(i) + CFL * (0.5*(h_W(i) - h_E(i)) + curv_3*(CFL - 1.5)))
       h_marg = h_E(i) + CFL * ((h_W(i) - h_E(i)) + 3.0*curv_3*(CFL - 1.0))
     elseif (u(I) < 0.0) then
       if (vol_CFL) then ; CFL = (-u(I) * dt) * (G%dy_Cu(I,j) * G%IareaT(i+1,j))
@@ -960,12 +983,16 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       curv_3 = (h_W(i+1) + h_E(i+1)) - 2.0*h(i+1)
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
           (h_W(i+1) + CFL * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(CFL - 1.5)))
+      h_avg = (h_W(i+1) + CFL * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(CFL - 1.5)))
       h_marg = h_W(i+1) + CFL * ((h_E(i+1)-h_W(i+1)) + 3.0*curv_3*(CFL - 1.0))
     else
       uh(I) = 0.0
+      h_avg = 0.5 * (h_W(i+1) + h_E(i))
       h_marg = 0.5 * (h_W(i+1) + h_E(i))
     endif
     duhdu(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * h_marg * visc_rem(I)
+    if (present(havg_u)) havg_u(I) = h_avg
+    if (present(hmarg_u)) hmarg_u(I) = h_marg
   endif ; enddo
 
   if (local_open_BC) then
@@ -1229,7 +1256,7 @@ subroutine zonal_flux_adjust(u, h_in, h_W, h_E, uhbt, uh_tot_0, duhdu_tot_0, &
       do I=ish-1,ieh ; u_new(I) = u(I,j,k) + du(I) * visc_rem(I,k) ; enddo
       call zonal_flux_layer(u_new, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), &
                             uh_aux(:,k), duhdu(:,k), visc_rem(:,k), &
-                            dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k), OBC)
+                            dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k), OBC=OBC)
     enddo ; endif
 
     if (itt < max_itts) then
@@ -1424,7 +1451,7 @@ end subroutine set_zonal_BT_cont
 
 !> Calculates the mass or volume fluxes through the meridional faces, and other related quantities.
 subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, por_face_areaV, &
-                                LB_in, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor)
+                                LB_in, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor, hatvel)
   type(ocean_grid_type),                      intent(in)  :: G    !< Ocean's grid structure.
   type(verticalGrid_type),                    intent(in)  :: GV   !< Ocean's vertical grid structure.
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(in)  :: v    !< Meridional velocity [L T-1 ~> m s-1]
@@ -1462,6 +1489,8 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
                                     optional, intent(out)   :: dv_cor !< The meridional velocity increments from v
                                                                   !! that give vhbt as the depth-integrated
                                                                   !! transports [L T-1 ~> m s-1].
+
+  type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
 
   ! Local variables
   real, dimension(SZI_(G),SZK_(GV)) :: &
@@ -1529,9 +1558,16 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
       if (use_visc_rem) then ; do i=ish,ieh
         visc_rem(i,k) = visc_rem_v(i,J,k)
       enddo ; endif
+      if (present(hatvel)) then
       call merid_flux_layer(v(:,J,k), h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), &
                             vh(:,J,k), dvhdv(:,k), visc_rem(:,k), &
-                            dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k), OBC)
+                            dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, &
+                            por_face_areaV(:,:,k), hatvel%havg_v(:,J,k), hatvel%hmarg_v(:,J,k), OBC)
+      else
+      call merid_flux_layer(v(:,J,k), h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), &
+                            vh(:,J,k), dvhdv(:,k), visc_rem(:,k), &
+                            dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k), OBC=OBC)
+      endif
       if (local_specified_BC) then
         do i=ish,ieh ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           l_seg = OBC%segnum_v(i,J)
@@ -1789,7 +1825,7 @@ subroutine meridional_BT_mass_flux(v, h_in, h_S, h_N, vhbt, dt, G, GV, US, CS, O
     do k=1,nz
       ! This sets vh and dvhdv.
       call merid_flux_layer(v(:,J,k), h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh, dvhdv, ones, &
-                            dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k), OBC)
+                            dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k), OBC=OBC)
       if (OBC_in_row) then ; do i=ish,ieh ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
         if (OBC%segment(OBC%segnum_v(i,J))%specified) vh(i) = OBC%segment(OBC%segnum_v(i,J))%normal_trans(i,J,k)
       endif ; enddo ; endif
@@ -1808,7 +1844,7 @@ end subroutine meridional_BT_mass_flux
 
 !> Evaluates the meridional mass or volume fluxes in a layer.
 subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
-                            ish, ieh, do_I, vol_CFL, por_face_areaV, OBC)
+                            ish, ieh, do_I, vol_CFL, por_face_areaV, havg_v, hmarg_v, OBC)
   type(ocean_grid_type),        intent(in)    :: G        !< Ocean's grid structure.
   real, dimension(SZI_(G)),     intent(in)    :: v        !< Meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G)),     intent(in)    :: visc_rem !< Both the fraction of the
@@ -1836,12 +1872,15 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
          !! ratio of face areas to the cell areas when estimating the CFL number.
   real, dimension(SZI_(G),SZJB_(G)), &
                              intent(in) :: por_face_areaV !< fractional open area of V-faces [nondim]
+  real, dimension(SZI_(G)), optional, intent(out) :: havg_v
+  real, dimension(SZI_(G)), optional, intent(out) :: hmarg_v
   type(ocean_OBC_type), optional, pointer :: OBC !< Open boundaries control structure.
   ! Local variables
   real :: CFL ! The CFL number based on the local velocity and grid spacing [nondim]
   real :: curv_3 ! A measure of the thickness curvature over a grid length,
                  ! with the same units as h, i.e. [H ~> m or kg m-2].
   real :: h_marg ! The marginal thickness of a flux [H ~> m or kg m-2].
+  real :: h_avg
   integer :: i
   integer :: l_seg
   logical :: local_open_BC
@@ -1858,6 +1897,7 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       curv_3 = (h_S(i,j) + h_N(i,j)) - 2.0*h(i,j)
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_N(i,j) + CFL * &
           (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(CFL - 1.5)) )
+      h_avg = ( h_N(i,j) + CFL * (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(CFL - 1.5)) )
       h_marg = h_N(i,j) + CFL * ((h_S(i,j) - h_N(i,j)) + &
                                   3.0*curv_3*(CFL - 1.0))
     elseif (v(i) < 0.0) then
@@ -1866,13 +1906,17 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       curv_3 = (h_S(i,j+1) + h_N(i,j+1)) - 2.0*h(i,j+1)
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_S(i,j+1) + CFL * &
           (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(CFL - 1.5)) )
+      h_avg = ( h_S(i,j+1) + CFL * (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(CFL - 1.5)) )
       h_marg = h_S(i,j+1) + CFL * ((h_N(i,j+1)-h_S(i,j+1)) + &
                                     3.0*curv_3*(CFL - 1.0))
     else
       vh(i) = 0.0
+      h_avg = 0.5 * (h_S(i,j+1) + h_N(i,j))
       h_marg = 0.5 * (h_S(i,j+1) + h_N(i,j))
     endif
     dvhdv(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * h_marg * visc_rem(i)
+    if (present(havg_v)) havg_v(i) = h_avg
+    if (present(hmarg_v)) hmarg_v(i) = h_marg
   endif ; enddo
 
   if (local_open_BC) then
@@ -2138,7 +2182,7 @@ subroutine meridional_flux_adjust(v, h_in, h_S, h_N, vhbt, vh_tot_0, dvhdv_tot_0
       do i=ish,ieh ; v_new(i) = v(i,J,k) + dv(i) * visc_rem(i,k) ; enddo
       call merid_flux_layer(v_new, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), &
                             vh_aux(:,k), dvhdv(:,k), visc_rem(:,k), &
-                            dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k), OBC)
+                            dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k), OBC=OBC)
     enddo ; endif
 
     if (itt < max_itts) then
@@ -2713,6 +2757,7 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS)
   !> This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_continuity_PPM" ! This module's name.
+  character(len=48) :: thickness_units
   logical :: visc_rem_bug ! Stores the value of runtime paramter VISC_REM_BUG.
 
   CS%initialized = .true.
@@ -2780,6 +2825,16 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS)
                  "is not multiplied by visc_rem_[uv]. Default of this flag is set by "//&
                  "VISC_REM_BUG.", default=.False.) !, default=.not.visc_rem_bug)
   CS%diag => diag
+
+  thickness_units = get_thickness_units(GV)
+  CS%id_havg_u = register_diag_field('ocean_model', 'havg_u', diag%axesCuL, Time, &
+      'Average Thickness from PPM cont at u-points', thickness_units, conversion=GV%H_to_MKS)
+  CS%id_havg_v = register_diag_field('ocean_model', 'havg_v', diag%axesCvL, Time, &
+      'Average Thickness from PPM cont at v-points', thickness_units, conversion=GV%H_to_MKS)
+  CS%id_hmarg_u = register_diag_field('ocean_model', 'hmarg_u', diag%axesCuL, Time, &
+      'Marginal Thickness from PPM cont at u-points', thickness_units, conversion=GV%H_to_MKS)
+  CS%id_hmarg_v = register_diag_field('ocean_model', 'hmarg_v', diag%axesCvL, Time, &
+      'Marginal Thickness from PPM cont at v-points', thickness_units, conversion=GV%H_to_MKS)
 
   id_clock_reconstruct = cpu_clock_id('(Ocean continuity reconstruction)', grain=CLOCK_ROUTINE)
   id_clock_update = cpu_clock_id('(Ocean continuity update)', grain=CLOCK_ROUTINE)

@@ -172,6 +172,9 @@ use MOM_offline_main,          only : offline_advection_layer, offline_transport
 use MOM_ice_shelf,             only : ice_shelf_CS, ice_shelf_query, initialize_ice_shelf
 use MOM_particles_mod,         only : particles, particles_init, particles_run, particles_save_restart, particles_end
 use MOM_particles_mod,         only : particles_to_k_space, particles_to_z_space
+
+use MOM_variables,             only : cont_ppm_hatvel
+
 implicit none ; private
 
 #include <MOM_memory.h>
@@ -453,10 +456,12 @@ type, public :: MOM_control_struct ; private
   logical :: use_porbar !< If true, use porous barrier to constrain the widths and face areas
                         !! at the edges of the grid cells.
   type(porous_barrier_type) :: pbv !< porous barrier fractional cell metrics
+  type(cont_ppm_hatvel) :: hatvel
   type(particles), pointer :: particles => NULL() !<Lagrangian particles
   type(stochastic_CS), pointer :: stoch_CS => NULL() !< a pointer to the stochastics control structure
   type(MOM_restart_CS), pointer :: restart_CS => NULL()
     !< Pointer to MOM's restart control structure
+  type(group_pass_type) :: pass_hatvel  !< Structure for group halo pass
 end type MOM_control_struct
 
 public initialize_MOM, finish_MOM_initialization, MOM_end
@@ -1201,8 +1206,16 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   ! Update porous barrier fractional cell metrics
   if (CS%use_porbar .and. (.not.porbar_cont(CS%por_bar_CS))) then
+    call create_group_pass(CS%pass_hatvel, CS%hatvel%havg_u, CS%hatvel%havg_v, G%Domain,  To_All+SCALAR_PAIR, CGRID_NE, halo=4)
+    call create_group_pass(CS%pass_hatvel, CS%hatvel%hmarg_u, CS%hatvel%hmarg_v, G%Domain, To_All+SCALAR_PAIR, CGRID_NE, halo=4)
+
     call enable_averages(dt, Time_local, CS%diag)
-    call porous_widths_layer(h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS)
+    if (CS%hatvel%set) then
+      call porous_widths_layer(h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS, &
+                               hu=CS%hatvel%hmarg_u, hv=CS%hatvel%hmarg_v)
+    else
+      call porous_widths_layer(h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS)
+    endif
     call disable_averaging(CS%diag)
     call pass_vector(CS%pbv%por_face_areaU, CS%pbv%por_face_areaV, &
                      G%Domain, direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
@@ -1254,7 +1267,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
       call step_MOM_dyn_split_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
                   CS%eta_av_bc, G, GV, US, CS%dyn_split_RK2_CSp, calc_dtbt, CS%VarMix, &
-                  CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, waves=waves)
+                  CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, hatvel=CS%hatvel,waves=waves)
     endif
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_split (step_MOM)")
 
@@ -1278,6 +1291,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_unsplit (step_MOM)")
 
   endif ! -------------------------------------------------- end SPLIT
+  call do_group_pass(CS%pass_hatvel, G%Domain, clock=id_clock_pass)
 
   ! Update the model's current to reflect wind-wave growth
   if (Waves%Stokes_DDT .and. (.not.Waves%Passive_Stokes_DDT)) then
@@ -2805,6 +2819,11 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   allocate(CS%pbv%por_layer_widthU(IsdB:IedB,jsd:jed,nz+1), source=1.0)
   allocate(CS%pbv%por_layer_widthV(isd:ied,JsdB:JedB,nz+1), source=1.0)
 
+  allocate(CS%hatvel%havg_u(IsdB:IedB,jsd:jed,nz), source=1.0)
+  allocate(CS%hatvel%havg_v(isd:ied,JsdB:JedB,nz), source=1.0)
+  allocate(CS%hatvel%hmarg_u(IsdB:IedB,jsd:jed,nz), source=1.0)
+  allocate(CS%hatvel%hmarg_v(isd:ied,JsdB:JedB,nz), source=1.0)
+
   ! Use the Wright equation of state by default, unless otherwise specified
   ! Note: this line and the following block ought to be in a separate
   ! initialization routine for tv.
@@ -4198,6 +4217,9 @@ subroutine MOM_end(CS)
   !deallocate porous topography variables
   deallocate(CS%pbv%por_face_areaU) ; deallocate(CS%pbv%por_face_areaV)
   deallocate(CS%pbv%por_layer_widthU) ; deallocate(CS%pbv%por_layer_widthV)
+
+  DEALLOC_(CS%hatvel%havg_u) ; DEALLOC_(CS%hatvel%havg_v)
+  DEALLOC_(CS%hatvel%hmarg_u) ; DEALLOC_(CS%hatvel%hmarg_v)
 
   ! NOTE: Allocated in PressureForce_FV_Bouss
   if (associated(CS%tv%varT)) deallocate(CS%tv%varT)

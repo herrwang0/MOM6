@@ -332,6 +332,14 @@ type, public :: porous_barrier_type
   real, allocatable :: por_layer_widthV(:,:,:) !< fractional open width of V-faces [nondim]
 end type porous_barrier_type
 
+type, public :: cont_ppm_hatvel
+  logical :: set = .False.
+  real, allocatable :: havg_u(:,:,:)
+  real, allocatable :: havg_v(:,:,:)
+  real, allocatable :: hmarg_u(:,:,:)
+  real, allocatable :: hmarg_v(:,:,:)
+end type cont_ppm_hatvel
+
 contains
 
 !> Allocates the fields for the surface (return) properties of
