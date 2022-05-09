@@ -60,7 +60,7 @@ character(len=20), parameter :: ETA_INTERP_HARM_STRING = "HARMONIC"
 contains
 
 !> subroutine to assign porous barrier widths averaged over a layer
-subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt)
+subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt, hu, hv)
   ! Note: eta_bt is not currently used
   type(ocean_grid_type),                      intent(in) :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                    intent(in) :: GV  !< The ocean's vertical grid structure.
@@ -73,7 +73,10 @@ subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt)
                                                                    !! [H ~> m or kg m-2].
   type(porous_barrier_type),                  intent(inout) :: pbv !< porous barrier fractional cell metrics
   type(porous_barrier_CS),                    intent(in) :: CS     !< Control structure for porous barrier
-
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1), optional, intent(in) :: hu !< optional pre-calculated thickness
+                                                                   !! at U-cells [H ~> m or kg m-2].
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1), optional, intent(in) :: hv !< optional pre-calculated thickness
+                                                                   !! at V-cells [H ~> m or kg m-2].
   !local variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1) :: eta_u ! Layer interface heights at u points [Z ~> m]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1) :: eta_v ! Layer interface heights at v points [Z ~> m]
@@ -100,7 +103,11 @@ subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt)
     dmask = CS%mask_depth
   endif
 
-  call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US)
+  if (CS%use_cont_hvel) then
+    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US, hu=hu, hv=hv)
+  else
+    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US)
+  endif
 
   dz_min = GV%Angstrom_Z
 
@@ -318,7 +325,7 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   is = G%isc; ie = G%iec; js = G%jsc; je = G%jec; nk = GV%ke
   Isq = G%IscB; Ieq = G%IecB; Jsq = G%JscB; Jeq = G%JecB
 
-  use_cont_huv = CS%use_cont_hvel .and. (present(hu) .and. present(hv))
+  use_cont_huv = (present(hu) .and. present(hv))
 
   dz_neglect = GV%dZ_subroundoff
 
@@ -331,7 +338,7 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   call find_eta(h, tv, G, GV, US, eta, halo_size=1)
 
   ks = 1
-  if (CS%use_cont_huv) ks = nk+1
+  if (use_cont_huv) ks = nk+1
 
   select case (interp)
     case (ETA_INTERP_MAX)   ! The shallower interface height
