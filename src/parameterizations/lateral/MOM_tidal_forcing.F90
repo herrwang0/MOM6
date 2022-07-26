@@ -79,6 +79,7 @@ type, public :: tidal_forcing_CS ; private
 end type tidal_forcing_CS
 
 integer :: id_clock_tides !< CPU clock for tides
+integer :: id_clock_SAL   !< CPU clock for inline self-attration and loading
 
 contains
 
@@ -530,8 +531,10 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
     enddo
   endif
 
-  if (CS%tidal_sal_sht) &
+  if (CS%tidal_sal_sht) then
     call spherical_harmonics_init(G, param_file, CS%sht)
+    id_clock_SAL = cpu_clock_id('(Ocean SAL)', grain=CLOCK_MODULE)
+  endif
 
   id_clock_tides = cpu_clock_id('(Ocean tides)', grain=CLOCK_MODULE)
 
@@ -2186,6 +2189,8 @@ subroutine calc_tidal_SAL(eta, eta_sal, G, sht)
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
 
+  call cpu_clock_begin(id_clock_SAL)
+
   allocate(Snm(2*sht%lmax)); Snm = 0.0
   allocate(SnmRe(sht%lmax)); SnmRe = 0.0
   allocate(SnmIm(sht%lmax)); SnmIm = 0.0
@@ -2207,7 +2212,6 @@ subroutine calc_tidal_SAL(eta, eta_sal, G, sht)
   !!!!!!!!!!!!!!!!!!!!!
   ! Forward Transform
   !!!!!!!!!!!!!!!!!!!!!
-  ! call cpu_clock_begin(id_clock_sal_sht)
 
   do m = 0, sht%nOrder
     !------------
@@ -2394,7 +2398,7 @@ subroutine calc_tidal_SAL(eta, eta_sal, G, sht)
     enddo ! n loop
   enddo ! m loop
 
-  ! call mpas_timer_stop('Parallel SAL: Inverse Transform')
+  call cpu_clock_end(id_clock_SAL)
 end subroutine calc_tidal_SAL
 
 !> This subroutine deallocates memory associated with the tidal forcing module.
