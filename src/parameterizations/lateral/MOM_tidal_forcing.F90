@@ -12,7 +12,7 @@ use MOM_grid,          only : ocean_grid_type
 use MOM_io,            only : field_exists, file_exists, MOM_read_data
 use MOM_time_manager,  only : set_date, time_type, time_type_to_real, operator(-)
 use MOM_unit_scaling,  only : unit_scale_type
-use MOM_spherical_harmonics, only : spherical_harmonics_init, spherical_harmonics_end
+use MOM_spherical_harmonics, only : spherical_harmonics_init, spherical_harmonics_end, calc_lmax
 use MOM_spherical_harmonics, only : spherical_harmonics_forward, spherical_harmonics_inverse, SHOrderDegreeToIndex
 use MOM_spherical_harmonics, only : sht_CS
 
@@ -75,6 +75,7 @@ type, public :: tidal_forcing_CS ; private
     sinphase_prev(:,:,:), & !< amphidromes in the previous tidal solutions.
     amp_prev(:,:,:)         !< The amplitude of the previous tidal solution [Z ~> m].
   type(sht_CS) :: sht
+  integer :: sal_sht_Nd
 end type tidal_forcing_CS
 
 integer :: id_clock_tides !< CPU clock for tides
@@ -531,6 +532,10 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
   endif
 
   if (CS%tidal_sal_sht) then
+    call get_param(param_file, mdl, "TIDAL_SAL_SHT_DEGREE", CS%sal_sht_Nd, &
+                   "The maximum degree of the spherical harmonics transformation used for "// &
+                   "calculating the self-attraction and loading term for tides.", &
+                   default=0, do_not_log=.not. CS%tidal_sal_sht)
     call spherical_harmonics_init(G, param_file, CS%sht)
     id_clock_SAL = cpu_clock_id('(Ocean SAL)', grain=CLOCK_MODULE)
   endif
@@ -2158,7 +2163,7 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS)
 
   if (CS%TIDAL_SAL_SHT) then
     eta_sal = 0.0
-    call calc_SAL_sht(eta, eta_sal, G, CS%sht)
+    call calc_SAL_sht(eta, eta_sal, G, CS)
     call pass_var(eta_sal, G%domain)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       eta_tidal(i,j) = eta_tidal(i,j) + eta_sal(i,j)
@@ -2168,38 +2173,41 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS)
 
 end subroutine calc_tidal_forcing
 
-subroutine calc_SAL_sht(eta, eta_sal, G, sht)
+subroutine calc_SAL_sht(eta, eta_sal, G, CS)
   type(ocean_grid_type),   intent(in) :: G    !< The ocean's grid structure.
   real, dimension(SZI_(G),SZJ_(G)), intent(in)  :: eta       !< The sea surface height anomaly from
                                                              !! a time-mean geoid [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G)), intent(out) :: eta_sal   !< The sea surface height anomaly from
                                                              !! a time-mean geoid [Z ~> m].
-  type(sht_CS), intent(inout) :: sht
+  ! type(sht_CS), intent(in) :: sht
+  type(tidal_forcing_CS), intent(in) :: CS   !< Tidal forcing control struct
   real, allocatable :: SnmRe(:), SnmIm(:)
   real, allocatable :: LoveScaling(:)
 
   integer :: n, m, l
+  integer :: lmax
+  lmax = calc_lmax(CS%sal_sht_Nd)
 
   call cpu_clock_begin(id_clock_SAL)
 
-  allocate(SnmRe(sht%lmax)); SnmRe = 0.0
-  allocate(SnmIm(sht%lmax)); SnmIm = 0.0
+  allocate(SnmRe(lmax)); SnmRe = 0.0
+  allocate(SnmIm(lmax)); SnmIm = 0.0
 
   ! Get SAL scaling factors
-  ALLOC_(LoveScaling(sht%lmax))
-  call getloadLoveNums(sht%nOrder, LoveScaling)
+  ALLOC_(LoveScaling(lmax))
+  call getloadLoveNums(CS%sal_sht_Nd, LoveScaling)
 
-  call spherical_harmonics_forward(G, sht, eta, SnmRe, SnmIm)
+  call spherical_harmonics_forward(G, CS%sht, eta, SnmRe, SnmIm, CS%sal_sht_Nd)
 
-  do m = 0,sht%nOrder
-    do n = m,sht%nOrder
-      l = SHOrderDegreeToIndex(n,m,sht%norder)
+  do m = 0,CS%sal_sht_Nd
+    do n = m,CS%sal_sht_Nd
+      l = SHOrderDegreeToIndex(n,m,CS%sal_sht_Nd)
       SnmRe(l) = SnmRe(l)*LoveScaling(l)
       SnmIm(l) = SnmIm(l)*LoveScaling(l)
     enddo
   enddo
 
-  call spherical_harmonics_inverse(G, sht, SnmRe, SnmIm, eta_sal)
+  call spherical_harmonics_inverse(G, CS%sht, SnmRe, SnmIm, eta_sal, CS%sal_sht_Nd)
 
   call cpu_clock_end(id_clock_SAL)
 end subroutine calc_SAL_sht
