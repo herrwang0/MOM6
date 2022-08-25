@@ -105,6 +105,7 @@ type, public :: vertvisc_CS ; private
                             !! of 2018, while higher values use expressions that do not use an
                             !! arbitrary and hard-coded maximum viscous coupling coefficient
                             !! between layers.
+  logical :: Bottom_wave_drag
   logical :: debug          !< If true, write verbose checksums for debugging purposes.
   integer :: nkml           !< The number of layers in the mixed layer.
   integer, pointer :: ntrunc !< The number of times the velocity has been
@@ -192,6 +193,7 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
   real :: c1(SZIB_(G),SZK_(GV))  ! A variable used by the tridiagonal solver [nondim].
   real :: d1(SZIB_(G))           ! d1=1-c1 is used by the tridiagonal solver [nondim].
   real :: Ray(SZIB_(G),SZK_(GV)) ! Ray is the Rayleigh-drag velocity [Z T-1 ~> m s-1].
+  real :: Ray_lin(SZIB_(G),SZK_(GV)) ! <
   real :: b_denom_1              ! The first term in the denominator of b1 [H ~> m or kg m-2].
 
   real :: Hmix             ! The mixed layer thickness over which stress
@@ -247,6 +249,9 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
 
   do k=1,nz ; do i=Isq,Ieq ; Ray(i,k) = 0.0 ; enddo ; enddo
 
+  if (CS%Bottom_wave_drag) then
+    do k=1,nz ; do i=Isq,Ieq ; Ray_lin(i,k) = 0.0 ; enddo ; enddo
+  endif
   !   Update the zonal velocity component using a modification of a standard
   ! tridagonal solver.
 
@@ -293,6 +298,10 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
       Ray(I,k) = visc%Ray_u(I,j,k)
     enddo ; enddo ; endif
 
+    if (CS%Bottom_wave_drag) then ; do k=1,nz ; do I=Isq,Ieq
+      Ray_lin(I,k) = visc%Ray_lin_u(I,j,k)
+    enddo ; enddo ; endif
+
     ! perform forward elimination on the tridiagonal system
     !
     ! denote the diagonal of the system as b_k, the subdiagonal as a_k
@@ -320,7 +329,7 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
     ! and the right-hand-side is destructively updated to be d'_k
     !
     do I=Isq,Ieq ; if (do_i(I)) then
-      b_denom_1 = CS%h_u(I,j,1) + dt_Z_to_H * (Ray(I,1) + CS%a_u(I,j,1))
+      b_denom_1 = CS%h_u(I,j,1) + dt_Z_to_H * (Ray(I,1) + Ray_lin(I,1) + CS%a_u(I,j,1))
       b1(I) = 1.0 / (b_denom_1 + dt_Z_to_H*CS%a_u(I,j,2))
       d1(I) = b_denom_1 * b1(I)
       u(I,j,1) = b1(I) * (CS%h_u(I,j,1) * u(I,j,1) + surface_stress(I))
@@ -329,7 +338,7 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
     endif ; enddo
     do k=2,nz ; do I=Isq,Ieq ; if (do_i(I)) then
       c1(I,k) = dt_Z_to_H * CS%a_u(I,j,K) * b1(I)
-      b_denom_1 = CS%h_u(I,j,k) + dt_Z_to_H * (Ray(I,k) + CS%a_u(I,j,K)*d1(I))
+      b_denom_1 = CS%h_u(I,j,k) + dt_Z_to_H * (Ray(I,k) + Ray_lin(I,k) + CS%a_u(I,j,K)*d1(I))
       b1(I) = 1.0 / (b_denom_1 + dt_Z_to_H * CS%a_u(I,j,K+1))
       d1(I) = b_denom_1 * b1(I)
       u(I,j,k) = (CS%h_u(I,j,k) * u(I,j,k) + &
@@ -423,8 +432,12 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
       Ray(i,k) = visc%Ray_v(i,J,k)
     enddo ; enddo ; endif
 
+    if (CS%Bottom_wave_drag) then ; do k=1,nz ; do i=is,ie
+      Ray_lin(i,k) = visc%Ray_lin_v(i,J,k)
+    enddo ; enddo ; endif
+
     do i=is,ie ; if (do_i(i)) then
-      b_denom_1 = CS%h_v(i,J,1) + dt_Z_to_H * (Ray(i,1) + CS%a_v(i,J,1))
+      b_denom_1 = CS%h_v(i,J,1) + dt_Z_to_H * (Ray(i,1) + Ray_lin(i,1) + CS%a_v(i,J,1))
       b1(i) = 1.0 / (b_denom_1 + dt_Z_to_H*CS%a_v(i,J,2))
       d1(i) = b_denom_1 * b1(i)
       v(i,J,1) = b1(i) * (CS%h_v(i,J,1) * v(i,J,1) + surface_stress(i))
@@ -433,7 +446,7 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
     endif ; enddo
     do k=2,nz ; do i=is,ie ; if (do_i(i)) then
       c1(i,k) = dt_Z_to_H * CS%a_v(i,J,K) * b1(i)
-      b_denom_1 = CS%h_v(i,J,k) + dt_Z_to_H * (Ray(i,k) + CS%a_v(i,J,K)*d1(i))
+      b_denom_1 = CS%h_v(i,J,k) + dt_Z_to_H * (Ray(i,k) + Ray_lin(i,k) + CS%a_v(i,J,K)*d1(i))
       b1(i) = 1.0 / (b_denom_1 + dt_Z_to_H * CS%a_v(i,J,K+1))
       d1(i) = b_denom_1 * b1(i)
       v(i,J,k) = (CS%h_v(i,J,k) * v(i,J,k) + dt_Z_to_H * CS%a_v(i,J,K) * v(i,J,k-1)) * b1(i)
@@ -1714,6 +1727,14 @@ subroutine vertvisc_init(MIS, Time, G, GV, US, param_file, diag, ADp, dirs, &
                  "thicknesses used in the viscosities are upwinded.", &
                  default=0.0, units="nondim")
   call get_param(param_file, mdl, "DEBUG", CS%debug, default=.false.)
+
+  call get_param(param_file, mld, "BOTTOM_WAVE_DRAG", CS%Bottom_wave_drag, &
+                 "If true, apply a linear drag to the bottom velocities, with rate "//&
+                 "similar to BT_LINEAR_WAVE_DRAG. The thickness of the boundary "//&
+                 "layer is a fixed value set by BOTTOM_WAVE_DRAG_DEPTH and piston velocities "//&
+                 "are calculated from BOTTOM_WAVE_DRAG_FILE. This additional bottom drag is "//&
+                 "translated to additional viscosity. This was introduced to facilitate "//&
+                 "tide modeling.", default=.false.)
 
   if (GV%nkml < 1) &
     call get_param(param_file, mdl, "HMIX_FIXED", CS%Hmix, &
