@@ -70,6 +70,7 @@ type, public :: tidal_forcing_CS ; private
     cosphase_prev(:,:,:), & !< The cosine and sine of the phase of the
     sinphase_prev(:,:,:), & !< amphidromes in the previous tidal solutions.
     amp_prev(:,:,:)         !< The amplitude of the previous tidal solution [Z ~> m].
+  logical :: nobt
 end type tidal_forcing_CS
 
 integer :: id_clock_tides !< CPU clock for tides
@@ -483,6 +484,9 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
                    " are true.", units="radians", default=phase0_def(c))
   enddo
 
+  call get_param(param_file, mdl, "TIDE_NO_BT_SSAL", CS%nobt, &
+  "If true, turn off scalar SAL for BT solver", default=.false. )
+
   if (CS%tidal_sal_from_file) then
     allocate(CS%cosphasesal(isd:ied,jsd:jed,nc))
     allocate(CS%sinphasesal(isd:ied,jsd:jed,nc))
@@ -571,6 +575,8 @@ subroutine tidal_forcing_sensitivity(G, CS, deta_tidal_deta)
   else
     deta_tidal_deta = 0.0
   endif
+
+  if (CS%nobt) deta_tidal_deta = 0.0
 end subroutine tidal_forcing_sensitivity
 
 !>   This subroutine calculates the geopotential anomalies that drive the tides,
@@ -579,7 +585,7 @@ end subroutine tidal_forcing_sensitivity
 !! height.  For now, eta and eta_tidal are both geopotential heights in depth
 !! units, but probably the input for eta should really be replaced with the
 !! column mass anomalies.
-subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS)
+subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS, eta_tidal_sal)
   type(ocean_grid_type),            intent(in)  :: G         !< The ocean's grid structure.
   type(time_type),                  intent(in)  :: Time      !< The time for the caluculation.
   real, dimension(SZI_(G),SZJ_(G)), intent(in)  :: eta       !< The sea surface height anomaly from
@@ -589,6 +595,7 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS)
   type(unit_scale_type),            intent(in)  :: US        !< A dimensional unit scaling type
   type(tidal_forcing_CS),           intent(in)  :: CS        !< The control structure returned by a
                                                              !! previous call to tidal_forcing_init.
+  real, dimension(SZI_(G),SZJ_(G)), optional, intent(out) :: eta_tidal_sal
 
   ! Local variables
   real :: now       ! The relative time compared with the tidal reference [T ~> s]
@@ -620,6 +627,12 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS)
     eta_tidal(i,j) = eta_prop*eta(i,j)
   enddo ; enddo
 
+  if (present(eta_tidal_sal)) then
+    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      eta_tidal_sal(i,j) = eta_prop*eta(i,j)
+    enddo ; enddo
+  endif
+
   do c=1,CS%nc
     m = CS%struct(c)
     amp_cosomegat = CS%amp(c)*CS%love_no(c) * cos(CS%freq(c)*now + CS%phase0(c))
@@ -637,6 +650,13 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS)
       eta_tidal(i,j) = eta_tidal(i,j) + CS%ampsal(i,j,c) * &
            (cosomegat*CS%cosphasesal(i,j,c) + sinomegat*CS%sinphasesal(i,j,c))
     enddo ; enddo
+
+    if (present(eta_tidal_sal)) then
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        eta_tidal_sal(i,j) = eta_tidal_sal(i,j) + CS%ampsal(i,j,c) * &
+             (cosomegat*CS%cosphasesal(i,j,c) + sinomegat*CS%sinphasesal(i,j,c))
+      enddo ; enddo
+    endif
   enddo ; endif
 
   if (CS%USE_PREV_TIDES) then ; do c=1,CS%nc

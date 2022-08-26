@@ -65,6 +65,9 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_rho_stanley_pgf = -1 !< Diagnostic identifier
   integer :: id_p_stanley = -1 !< Diagnostic identifier
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
+  integer :: tides_eq_update_freq, tides_sal_update_freq
+  integer :: nstep_cnt
+  integer :: id_e_tidal_eq = -1, id_e_tidal_sal = -1
 end type PressureForce_FV_CS
 
 contains
@@ -420,7 +423,7 @@ end subroutine PressureForce_FV_nonBouss
 !! To work, the following fields must be set outside of the usual (is:ie,js:je)
 !! range before this subroutine is called:
 !!   h(isB:ie+1,jsB:je+1), T(isB:ie+1,jsB:je+1), and S(isB:ie+1,jsB:je+1).
-subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta)
+subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta, tide_eq, tide_sal, pause_cnt)
   type(ocean_grid_type),                      intent(in)  :: G   !< Ocean grid structure
   type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -428,7 +431,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   type(thermo_var_ptrs),                      intent(in)  :: tv  !< Thermodynamic variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(out) :: PFu !< Zonal acceleration [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(out) :: PFv !< Meridional acceleration [L T-2 ~> m s-2]
-  type(PressureForce_FV_CS),                  intent(in)  :: CS  !< Finite volume PGF control structure
+  type(PressureForce_FV_CS),                  intent(inout)  :: CS  !< Finite volume PGF control structure
   type(ALE_CS),                               pointer     :: ALE_CSp !< ALE control structure
   real, dimension(:,:),                       pointer     :: p_atm !< The pressure at the ice-ocean
                                                          !! or atmosphere-ocean interface [R L2 T-2 ~> Pa].
@@ -438,6 +441,9 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G)),          optional, intent(out) :: eta !< The sea-surface height used to
                                                          !! calculate PFu and PFv [H ~> m], with any
                                                          !! tidal contributions.
+  real, dimension(SZI_(G),SZJ_(G)),          optional, intent(inout) :: tide_eq, tide_sal
+  logical,          optional, intent(in) :: pause_cnt
+
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: e ! Interface height in depth units [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G))  :: &
@@ -483,6 +489,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     p_stanley ! Pressure [Pa] estimated with Rho_0
   real :: rho_stanley_scalar ! Scalar quantity to hold density [kg m-3] in Stanley diagnostics.
   real :: p_stanley_scalar ! Scalar quantity to hold pressure [Pa] in Stanley diagnostics.
+  real, dimension(SZI_(G),SZJ_(G)) :: tide_eq_local, tide_sal_local
   real :: rho_in_situ(SZI_(G)) ! The in situ density [R ~> kg m-3].
   real :: p_ref(SZI_(G))     !   The pressure used to calculate the coordinate
                              ! density, [R L2 T-2 ~> Pa] (usually 2e7 Pa = 2000 dbar).
@@ -501,6 +508,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer :: i, j, k
+  logical :: pause_cnt_local
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -509,6 +517,13 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   if (.not.CS%initialized) call MOM_error(FATAL, &
        "MOM_PressureForce_FV_Bouss: Module must be initialized before it is used.")
+
+  if (CS%tides_eq_update_freq > 0 .and. (.not.present(tide_eq))) call MOM_error(FATAL, &
+       "MOM_PressureForce_FV_Bouss: tide_eq not present")
+  if (CS%tides_sal_update_freq > 0 .and. (.not.present(tide_sal))) call MOM_error(FATAL, &
+       "MOM_PressureForce_FV_Bouss: tide_sal not present")
+  pause_cnt_local = .false.
+  if (present(pause_cnt)) pause_cnt_local = pause_cnt
 
   use_p_atm = associated(p_atm)
   use_EOS = associated(tv%eqn_of_state)
@@ -536,7 +551,27 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
       enddo ; enddo
     enddo
-    call calc_tidal_forcing(CS%Time, SSH, e_tidal, G, US, CS%tides_CSp)
+
+    if (CS%tides_eq_update_freq > 0 .or. CS%tides_sal_update_freq > 0) then
+      if (.not. pause_cnt_local) CS%nstep_cnt = CS%nstep_cnt + 1
+      e_tidal = 0.0
+      call calc_tidal_forcing(CS%Time, SSH, tide_eq_local, G, US, CS%tides_CSp, tide_sal_local)
+      tide_eq_local = tide_eq_local - tide_sal_local
+      if (mod(CS%nstep_cnt, CS%tides_eq_update_freq) == 0) then
+        e_tidal = e_tidal + tide_eq_local
+        tide_eq = tide_eq_local
+      else
+        e_tidal = e_tidal + tide_eq
+      endif
+      if (mod(CS%nstep_cnt, CS%tides_sal_update_freq) == 0) then
+        e_tidal = e_tidal + tide_sal_local
+        tide_sal = tide_sal_local
+      else
+        e_tidal = e_tidal + tide_sal
+      endif
+    else
+      call calc_tidal_forcing(CS%Time, SSH, e_tidal, G, US, CS%tides_CSp)
+    endif
   endif
 
 !    Here layer interface heights, e, are calculated.
@@ -778,6 +813,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   if (CS%id_rho_pgf>0) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
   if (CS%id_rho_stanley_pgf>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
   if (CS%id_p_stanley>0) call post_data(CS%id_p_stanley, p_stanley, CS%diag)
+  if (CS%id_e_tidal_eq>0) call post_data(CS%id_e_tidal_eq, tide_eq, CS%diag)
+  if (CS%id_e_tidal_sal>0) call post_data(CS%id_e_tidal_sal, tide_sal, CS%diag)
 
 end subroutine PressureForce_FV_Bouss
 
@@ -811,6 +848,14 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
                  units="kg m-3", default=1035.0, scale=US%kg_m3_to_R)
   call get_param(param_file, mdl, "TIDES", CS%tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
+  CS%tides_eq_update_freq = -1; CS%tides_sal_update_freq = -1; CS%nstep_cnt = -1
+  if (CS%tides) then
+    call get_param(param_file, mdl, "TIDES_EQ_UPDATE_FREQ", CS%tides_eq_update_freq, &
+                  "Equilibrium tides update frequency.", default=1)
+    call get_param(param_file, mdl, "TIDES_SAL_UPDATE_FREQ", CS%tides_sal_update_freq, &
+                  "Tidal SAL update frequency.", default=1)
+    CS%nstep_cnt = 0
+  endif
   call get_param(param_file, "MOM", "USE_REGRIDDING", use_ALE, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
                  "If False, use the layered isopycnal algorithm.", default=.false. )
@@ -852,6 +897,12 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
   if (CS%tides) then
     CS%id_e_tidal = register_diag_field('ocean_model', 'e_tidal', diag%axesT1, &
         Time, 'Tidal Forcing Astronomical and SAL Height Anomaly', 'meter', conversion=US%Z_to_m)
+    if (CS%tides_eq_update_freq > 0) &
+      CS%id_e_tidal_eq = register_diag_field('ocean_model', 'e_tidal_eq', diag%axesT1, &
+      Time, 'Tidal Forcing Astronomical Anomaly', 'meter', conversion=US%Z_to_m)
+    if (CS%tides_sal_update_freq > 0) &
+      CS%id_e_tidal_sal = register_diag_field('ocean_model', 'e_tidal_sal', diag%axesT1, &
+      Time, 'Tidal SAL Height Anomaly', 'meter', conversion=US%Z_to_m)
   endif
 
   CS%GFS_scale = 1.0
