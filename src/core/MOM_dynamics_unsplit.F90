@@ -110,6 +110,7 @@ type, public :: MOM_dyn_unsplit_CS ; private
     PFv, &    !< PFv = -dM/dy [L T-2 ~> m s-2].
     diffv     !< Meridional acceleration due to convergence of the along-isopycnal stress tensor [L T-2 ~> m s-2].
 
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_)             :: tide_eq, tide_sal
   real, pointer, dimension(:,:) :: taux_bot => NULL() !< frictional x-bottom stress from the ocean
                                                       !! to the seafloor [R L Z T-2 ~> Pa]
   real, pointer, dimension(:,:) :: tauy_bot => NULL() !< frictional y-bottom stress from the ocean
@@ -310,7 +311,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
     p_surf(i,j) = 0.75*p_surf_begin(i,j) + 0.25*p_surf_end(i,j)
   enddo ; enddo ; endif
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
-                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
+                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf, tide_eq=CS%tide_eq, tide_sal=CS%tide_sal, pause_cnt=.true.)
   call cpu_clock_end(id_clock_pres)
 
   if (associated(CS%OBC)) then ; if (CS%OBC%update_OBC) then
@@ -376,7 +377,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
     p_surf(i,j) = 0.25*p_surf_begin(i,j) + 0.75*p_surf_end(i,j)
   enddo ; enddo ; endif
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
-                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
+                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf, tide_eq=CS%tide_eq, tide_sal=CS%tide_sal, pause_cnt=.true.)
   call cpu_clock_end(id_clock_pres)
 
   if (associated(CS%OBC)) then ; if (CS%OBC%update_OBC) then
@@ -468,7 +469,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 ! PFu = d/dx M(h_av,T,S)
   call cpu_clock_begin(id_clock_pres)
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
-                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
+                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf, tide_eq=CS%tide_eq, tide_sal=CS%tide_sal, pause_cnt=.false.)
   call cpu_clock_end(id_clock_pres)
 
   if (associated(CS%OBC)) then ; if (CS%OBC%update_OBC) then
@@ -652,6 +653,9 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
 
+  ALLOC_(CS%tide_eq(isd:ied,jsd:jed))         ; CS%tide_eq(:,:)      = 0.0
+  ALLOC_(CS%tide_sal(isd:ied,jsd:jed))        ; CS%tide_sal(:,:)     = 0.0
+
   MIS%diffu => CS%diffu ; MIS%diffv => CS%diffv
   MIS%PFu => CS%PFu ; MIS%PFv => CS%PFv
   MIS%CAu => CS%CAu ; MIS%CAv => CS%CAv
@@ -717,6 +721,7 @@ subroutine end_dyn_unsplit(CS)
   DEALLOC_(CS%diffu) ; DEALLOC_(CS%diffv)
   DEALLOC_(CS%CAu)   ; DEALLOC_(CS%CAv)
   DEALLOC_(CS%PFu)   ; DEALLOC_(CS%PFv)
+  DEALLOC_(CS%tide_eq); DEALLOC_(CS%tide_sal)
 
   deallocate(CS)
 end subroutine end_dyn_unsplit
