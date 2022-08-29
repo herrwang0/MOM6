@@ -19,7 +19,7 @@ use MOM_density_integrals, only : int_density_dz_generic_plm, int_density_dz_gen
 use MOM_density_integrals, only : int_spec_vol_dp_generic_plm
 use MOM_density_integrals, only : int_density_dz_generic_pcm, int_spec_vol_dp_generic_pcm
 use MOM_ALE, only : TS_PLM_edge_values, TS_PPM_edge_values, ALE_CS
-use MOM_time_manager,      only : operator(+), real_to_time
+use MOM_time_manager,      only : operator(+), operator(-), real_to_time
 
 implicit none ; private
 
@@ -67,6 +67,8 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_tvar_sgs = -1 !< Diagnostic identifier
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
   integer :: tides_eq_update_freq, tides_sal_update_freq
+  logical :: tides_eq_mid, tides_sal_mid
+  real :: tides_eq_time_delay, tides_sal_time_delay
   integer :: nstep_cnt
   integer :: id_e_tidal_eq = -1, id_e_tidal_sal = -1
 end type PressureForce_FV_CS
@@ -596,7 +598,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     if (CS%tides_eq_update_freq > 0 .or. CS%tides_sal_update_freq > 0) then
       e_tidal = 0.0
       if (mod(CS%nstep_cnt, CS%tides_eq_update_freq) == 0) then
-        tide_time = CS%Time + real_to_time((CS%tides_eq_update_freq/2.0-0.5)*CS%dt)
+        if (CS%tides_eq_mid) then
+          tide_time = CS%Time + real_to_time((CS%tides_eq_update_freq/2.0-0.5)*CS%dt) - real_to_time(CS%tides_eq_time_delay)
+        else
+          tide_time = CS%Time - real_to_time(0.5*CS%dt)
+        endif
         call calc_tidal_forcing(tide_time, SSH, tide_eq_local, G, US, CS%tides_CSp, tide_sal_local)
         tide_eq_local = tide_eq_local - tide_sal_local
         e_tidal = e_tidal + tide_eq_local
@@ -605,7 +611,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         e_tidal = e_tidal + tide_eq
       endif
       if (mod(CS%nstep_cnt, CS%tides_sal_update_freq) == 0) then
-        tide_time = CS%Time + real_to_time((CS%tides_sal_update_freq/2.0-0.5)*CS%dt)
+        if (CS%tides_sal_mid) then
+          tide_time = CS%Time + real_to_time((CS%tides_sal_update_freq/2.0-0.5)*CS%dt) - real_to_time(CS%tides_sal_time_delay)
+        else
+          tide_time = CS%Time - real_to_time(0.5*CS%dt)
+        endif
         call calc_tidal_forcing(tide_time, SSH, tide_eq_local, G, US, CS%tides_CSp, tide_sal_local)
         tide_eq_local = tide_eq_local - tide_sal_local
         e_tidal = e_tidal + tide_sal_local
@@ -887,6 +897,19 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, tides_CS
     "The (baroclinic) dynamics time step.  The time-step that "//&
     "is actually used will be an integer fraction of the "//&
     "forcing time-step.", units="s", fail_if_missing=.true.)
+
+    call get_param(param_file, mdl, "TIDES_EQ_MID_POINT", CS%tides_eq_mid, &
+                  "Use the mid-point of the timestep to calculate EQ tide if possible.", default=.True.)
+    call get_param(param_file, mdl, "TIDES_SAL_MID_POINT", CS%tides_sal_mid, &
+                  "Use the mid-point of the timestep to calculate SAL tide if possible.", default=.True.)
+    if (CS%tides_sal_mid) then
+      call get_param(param_file, mdl, "TIDES_SAL_TIME_DELAY", CS%tides_sal_time_delay, &
+                    "SAL delay time.", default=0.0)
+    endif
+    if (CS%tides_eq_mid) then
+      call get_param(param_file, mdl, "TIDES_EQ_TIME_DELAY", CS%tides_eq_time_delay, &
+                    "EQ delay time.", default=0.0)
+    endif
   endif
   call get_param(param_file, "MOM", "USE_REGRIDDING", use_ALE, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
