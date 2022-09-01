@@ -599,7 +599,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       e_tidal = 0.0
       if (mod(CS%nstep_cnt, CS%tides_eq_update_freq) == 0) then
         if (CS%tides_eq_mid) then
-          tide_time = CS%Time + real_to_time((CS%tides_eq_update_freq/2.0-0.5)*CS%dt) - real_to_time(CS%tides_eq_time_delay)
+          if (CS%tides_eq_time_delay<0) then
+            tide_time = CS%Time + real_to_time((CS%tides_eq_update_freq/2.0-0.5)*CS%dt) + real_to_time(abs(CS%tides_eq_time_delay))
+          else
+            tide_time = CS%Time + real_to_time((CS%tides_eq_update_freq/2.0-0.5)*CS%dt) - real_to_time(abs(CS%tides_eq_time_delay))
+          endif
         else
           tide_time = CS%Time - real_to_time(0.5*CS%dt)
         endif
@@ -612,7 +616,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       endif
       if (mod(CS%nstep_cnt, CS%tides_sal_update_freq) == 0) then
         if (CS%tides_sal_mid) then
-          tide_time = CS%Time + real_to_time((CS%tides_sal_update_freq/2.0-0.5)*CS%dt) - real_to_time(CS%tides_sal_time_delay)
+          if (CS%tides_sal_time_delay<0) then
+            tide_time = CS%Time + real_to_time((CS%tides_sal_update_freq/2.0-0.5)*CS%dt) + real_to_time(abs(CS%tides_sal_time_delay))
+          else
+            tide_time = CS%Time + real_to_time((CS%tides_sal_update_freq/2.0-0.5)*CS%dt) - real_to_time(abs(CS%tides_sal_time_delay))
+          endif
         else
           tide_time = CS%Time - real_to_time(0.5*CS%dt)
         endif
