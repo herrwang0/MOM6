@@ -120,6 +120,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
                                                                   !! thicknesses [H ~> m or kg m-2]
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_)             :: eta_PF !< instantaneous SSH used in calculating PFu and
                                                                   !! PFv [H ~> m or kg m-2]
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_)             :: tide_eq, tide_sal
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_)        :: uhbt   !< average x-volume or mass flux determined by the
                                                                   !! barotropic solver [H L2 T-1 ~> m3 s-1 or kg s-1].
                                                                   !! uhbt is roughly equal to the vertical sum of uh.
@@ -438,7 +439,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
   call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF, tide_eq=CS%tide_eq, tide_sal=CS%tide_sal, pause_cnt=.false.)
   if (dyn_p_surf) then
     pres_to_eta = 1.0 / (GV%g_Earth * GV%H_to_RZ)
     !$OMP parallel do default(shared)
@@ -680,7 +681,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
     ! pbce = dM/deta
     call cpu_clock_begin(id_clock_pres)
     call PressureForce(hp, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                       CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+                       CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF, tide_eq=CS%tide_eq, tide_sal=CS%tide_sal, pause_cnt=.true.)
     call cpu_clock_end(id_clock_pres)
     if (showCallTree) call callTree_wayPoint("done with PressureForce[hp=(1-b).h+b.h] (step_MOM_dyn_split_RK2)")
   endif
@@ -1177,6 +1178,9 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   ALLOC_(CS%u_accel_bt(IsdB:IedB,jsd:jed,nz)) ; CS%u_accel_bt(:,:,:) = 0.0
   ALLOC_(CS%v_accel_bt(isd:ied,JsdB:JedB,nz)) ; CS%v_accel_bt(:,:,:) = 0.0
 
+  ALLOC_(CS%tide_eq(isd:ied,jsd:jed))         ; CS%tide_eq(:,:)      = 0.0
+  ALLOC_(CS%tide_sal(isd:ied,jsd:jed))        ; CS%tide_sal(:,:)     = 0.0
+
   MIS%diffu      => CS%diffu
   MIS%diffv      => CS%diffv
   MIS%PFu        => CS%PFu
@@ -1531,6 +1535,8 @@ subroutine end_dyn_split_RK2(CS)
 
   DEALLOC_(CS%eta) ; DEALLOC_(CS%eta_PF) ; DEALLOC_(CS%pbce)
   DEALLOC_(CS%h_av) ; DEALLOC_(CS%u_av) ; DEALLOC_(CS%v_av)
+
+  DEALLOC_(CS%tide_eq); DEALLOC_(CS%tide_sal)
 
   call dealloc_BT_cont_type(CS%BT_cont)
 
