@@ -104,6 +104,12 @@ type, public :: set_visc_CS ; private
   logical :: debug          !< If true, write verbose checksums for debugging purposes.
   logical :: BBL_use_tidal_bg !< If true, use a tidal background amplitude for the bottom velocity
                             !! when computing the bottom stress.
+  logical :: Bottom_wave_drag !<
+  real    :: H_lindrag        !<
+  ! Allocatable data arrays
+  real, allocatable, dimension(:,:) :: lin_drag_u !< at u points [Z T-1 ~> m s-1]
+  real, allocatable, dimension(:,:) :: lin_drag_v !< at v points [Z T-1 ~> m s-1]
+
   character(len=200) :: inputdir !< The directory for input files.
   type(ocean_OBC_type), pointer :: OBC => NULL() !< Open boundaries control structure
   type(diag_ctrl), pointer :: diag => NULL() !< A structure that is used to
@@ -117,6 +123,7 @@ type, public :: set_visc_CS ; private
   integer :: id_bbl_thick_u = -1, id_kv_bbl_u = -1, id_bbl_u = -1
   integer :: id_bbl_thick_v = -1, id_kv_bbl_v = -1, id_bbl_v = -1
   integer :: id_Ray_u = -1, id_Ray_v = -1
+  integer :: id_Ray_lin_u = -1, id_Ray_lin_v = -1
   integer :: id_nkml_visc_u = -1, id_nkml_visc_v = -1
   !>@}
 end type set_visc_CS
@@ -306,7 +313,7 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
   if (.not.CS%initialized) call MOM_error(FATAL,"MOM_set_viscosity(BBL): "//&
          "Module must be initialized before it is used.")
 
-  if (.not.CS%bottomdraglaw) return
+  if (.not.CS%bottomdraglaw .and. .not.CS%Bottom_wave_drag) return
 
   if (CS%debug) then
     call uvchksum("Start set_viscous_BBL [uv]", u, v, G%HI, haloshift=1, scale=US%L_T_to_m_s)
@@ -1056,6 +1063,52 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
     endif ; enddo ! end of i loop
   enddo ; enddo ! end of m & j loops
 
+  if (CS%Bottom_wave_drag) then
+  !$OMP parallel do default(private) shared(u,v,h,tv,visc,G,GV,US,CS,Rml,nz,nkmb, &
+  !$OMP                                     nkml,Isq,Ieq,Jsq,Jeq,h_neglect,Rho0x400_G,C2pi_3, &
+  !$OMP                                     U_bg_sq,cdrag_sqrt_Z,cdrag_sqrt,K2,use_BBL_EOS,   &
+  !$OMP                                     OBC,maxitt,D_u,D_v,mask_u,mask_v) &
+  !$OMP                              firstprivate(Vol_quit)
+    do j=Jsq,Jeq ; do m=1,2
+      if (m==1) then
+        ! m=1 refers to u-points
+        if (j<G%Jsc) cycle
+        is = Isq ; ie = Ieq
+        do i=is,ie
+          do_i(i) = .false.
+          if (G%mask2dCu(I,j) > 0) do_i(i) = .true.
+        enddo
+      else
+        ! m=2 refers to v-points
+        is = G%isc ; ie = G%iec
+        do i=is,ie
+          do_i(i) = .false.
+          if (G%mask2dCv(i,J) > 0) do_i(i) = .true.
+        enddo
+      endif
+      if (m==1) then ! u-points
+        do I=is,ie ; if (do_i(I)) then
+          htot_vel = 0.0
+          do k=nz,1,-1
+            if (htot_vel>=CS%H_lindrag) exit
+            htot_vel = htot_vel + 0.5 * (h(i,j,k) + h(i+1,j,k))
+            visc%Ray_lin_u(I,j,k) = CS%lin_drag_u(I,j)
+          enddo
+        endif; enddo
+      else
+        do i=is,ie ; if (do_i(i)) then
+          htot_vel = 0.0
+          do k=nz,1,-1
+            if (htot_vel>=CS%H_lindrag) exit
+            htot_vel = htot_vel + 0.5 * (h(i,j,k) + h(i,j+1,k))
+            visc%Ray_lin_v(i,J,k) = CS%lin_drag_v(i,J)
+          enddo
+        endif; enddo
+      endif
+    enddo; enddo
+  endif
+
+
 ! Offer diagnostics for averaging
   if (CS%id_bbl_thick_u > 0) &
     call post_data(CS%id_bbl_thick_u, visc%bbl_thick_u, CS%diag)
@@ -1073,6 +1126,10 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
     call post_data(CS%id_Ray_u, visc%Ray_u, CS%diag)
   if (CS%id_Ray_v > 0) &
     call post_data(CS%id_Ray_v, visc%Ray_v, CS%diag)
+  if (CS%id_Ray_lin_u > 0) &
+    call post_data(CS%id_Ray_lin_u, visc%Ray_lin_u, CS%diag)
+  if (CS%id_Ray_lin_v > 0) &
+    call post_data(CS%id_Ray_lin_v, visc%Ray_lin_v, CS%diag)
 
   if (CS%debug) then
     if (allocated(visc%Ray_u) .and. allocated(visc%Ray_v)) &
@@ -2022,6 +2079,13 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
   logical :: use_EOS         ! If true, density calculated from T & S using an equation of state.
   character(len=200) :: filename, tideamp_file ! Input file names or paths
   character(len=80)  :: tideamp_var ! Input file variable names
+  character(len=200) :: wave_drag_file ! The file from which to read the wave
+                                       ! drag piston velocity.
+  character(len=80)  :: wave_drag_var  ! The wave drag piston velocity variable
+                                       ! name in wave_drag_file.
+  real :: wave_drag_scale              ! A scaling factor for the linear wave drag
+                                       ! piston velocities.
+  real, allocatable, dimension(:,:) :: lin_drag_h
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_set_visc"  ! This module's name.
@@ -2256,6 +2320,30 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
   ! These unit conversions are out outside the get_param calls because they are also defaults.
   CS%Hbbl = CS%Hbbl * GV%m_to_H                   ! Rescale
   CS%BBL_thick_min = CS%BBL_thick_min * GV%m_to_H ! Rescale
+  call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG", CS%Bottom_wave_drag, &
+                 "If true, apply a linear drag to the bottom velocities, with rate "//&
+                 "similar to BT_LINEAR_WAVE_DRAG. The thickness of the boundary "//&
+                 "layer is a fixed value set by BOTTOM_WAVE_DRAG_DEPTH and piston velocities "//&
+                 "are calculated from BOTTOM_WAVE_DRAG_FILE. This additional bottom drag is "//&
+                 "translated to additional viscosity. This was introduced to facilitate "//&
+                 "tide modeling.", default=.false.)
+  if (CS%Bottom_wave_drag) then
+    call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG_DEPTH", CS%H_lindrag, &
+                   "Descriptions", default=500.0, units="m", &
+                   do_not_log=.not.CS%Bottom_wave_drag)
+    call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG_FILE", wave_drag_file, &
+                   "The name of the file with the bottom linear wave drag "//&
+                   "piston velocities.", default="", do_not_log=.not.CS%Bottom_wave_drag)
+    call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG_VAR", wave_drag_var, &
+                   "The name of the variable in BOTTOM_WAVE_DRAG_FILE with the "//&
+                   "bottom linear wave drag piston velocities at h points.", &
+                   default="rH", do_not_log=.not.CS%Bottom_wave_drag)
+    call get_param(param_file, mdl, "BOTTOM_WAVE_DRAG_SCALE", wave_drag_scale, &
+                   "A scaling factor for the bottom linear wave drag "//&
+                   "piston velocities.", default=1.0, units="nondim", &
+                   do_not_log=.not.CS%Bottom_wave_drag)
+    CS%H_lindrag = CS%H_lindrag * GV%m_to_H                   ! Rescale
+  endif
 
   if (CS%RiNo_mix .and. kappa_shear_at_vertex(param_file)) then
     ! This is necessary for reproducibility across restarts in non-symmetric mode.
@@ -2313,6 +2401,36 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
        diag%axesCu1, Time, 'Number of layers in viscous mixed layer at u points', 'nondim')
     CS%id_nkml_visc_v = register_diag_field('ocean_model', 'nkml_visc_v', &
        diag%axesCv1, Time, 'Number of layers in viscous mixed layer at v points', 'nondim')
+  endif
+
+  if (CS%Bottom_wave_drag) then
+    allocate(visc%Ray_lin_u(IsdB:IedB,jsd:jed,nz)) ; visc%Ray_lin_u(:,:,:) = 0.0
+    allocate(visc%Ray_lin_v(isd:ied,JsdB:JedB,nz)) ; visc%Ray_lin_v(:,:,:) = 0.0
+
+    allocate(CS%lin_drag_u(IsdB:IedB,jsd:jed)) ; CS%lin_drag_u(:,:) = 0.0
+    allocate(CS%lin_drag_v(isd:ied,JsdB:JedB)) ; CS%lin_drag_v(:,:) = 0.0
+
+    allocate(lin_drag_h(isd:ied,jsd:jed)) ; lin_drag_h(:,:) = 0.0
+
+    CS%id_Ray_lin_u = register_diag_field('ocean_model', 'Rayleigh_lin_u', diag%axesCuL, &
+       Time, 'Rayleigh drag velocity at u points', 'm s-1', conversion=US%Z_to_m*US%s_to_T)
+    CS%id_Ray_lin_v = register_diag_field('ocean_model', 'Rayleigh_lin_v', diag%axesCvL, &
+       Time, 'Rayleigh drag velocity at v points', 'm s-1', conversion=US%Z_to_m*US%s_to_T)
+
+    filename = trim(CS%inputdir) // trim(wave_drag_file)
+    call log_param(param_file, mdl, "INPUTDIR/BOTTOM_WAVE_DRAG_FILE", filename)
+    call MOM_read_data(filename, wave_drag_var, lin_drag_h, G%domain, timelevel=1, scale=US%m_to_Z*US%T_to_s)
+    call pass_var(lin_drag_h,G%domain)
+
+    do j=js,je ; do I=is-1,ie
+      CS%lin_drag_u(I,j) = (US%L_to_Z * wave_drag_scale) * &
+         0.5 * (lin_drag_h(i,j) + lin_drag_h(i+1,j))
+    enddo ; enddo
+    do J=js-1,je ; do i=is,ie
+      CS%lin_drag_v(i,J) = (US%L_to_Z * wave_drag_scale) * &
+         0.5 * (lin_drag_h(i,j) + lin_drag_h(i,j+1))
+    enddo ; enddo
+    deallocate(lin_drag_h)
   endif
 
   call register_restart_field_as_obsolete('Kd_turb','Kd_shear', restart_CS)
@@ -2386,6 +2504,11 @@ subroutine set_visc_end(visc, CS)
   if (allocated(visc%tbl_thick_shelf_v)) deallocate(visc%tbl_thick_shelf_v)
   if (allocated(visc%kv_tbl_shelf_u)) deallocate(visc%kv_tbl_shelf_u)
   if (allocated(visc%kv_tbl_shelf_v)) deallocate(visc%kv_tbl_shelf_v)
+
+  if (CS%Bottom_wave_drag) then
+    deallocate(visc%Ray_lin_u) ; deallocate(visc%Ray_lin_v)
+  endif
+
 end subroutine set_visc_end
 
 !> \namespace mom_set_visc
