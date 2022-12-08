@@ -263,9 +263,8 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
 
   do k=1,nz ; do i=Isq,Ieq ; Ray(i,k) = 0.0 ; enddo ; enddo
 
-  if (CS%Bottom_wave_drag) then
-    do k=1,nz ; do i=Isq,Ieq ; Ray_lin(i,k) = 0.0 ; enddo ; enddo
-  endif
+  do k=1,nz ; do i=Isq,Ieq ; Ray_lin(i,k) = 0.0 ; enddo ; enddo
+
   !   Update the zonal velocity component using a modification of a standard
   ! tridagonal solver.
 

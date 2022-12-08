@@ -2422,11 +2422,11 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
     call MOM_read_data(filename, wave_drag_var, lin_drag_h, G%domain, timelevel=1, scale=US%m_to_Z*US%T_to_s)
     call pass_var(lin_drag_h,G%domain)
 
-    do j=js,je ; do I=is-1,ie
+    do j=jsd,jed ; do I=IsdB,IedB
       CS%lin_drag_u(I,j) = (US%L_to_Z * wave_drag_scale) * &
          0.5 * (lin_drag_h(i,j) + lin_drag_h(i+1,j))
     enddo ; enddo
-    do J=js-1,je ; do i=is,ie
+    do J=JsdB,JedB ; do i=isd,ied
       CS%lin_drag_v(i,J) = (US%L_to_Z * wave_drag_scale) * &
          0.5 * (lin_drag_h(i,j) + lin_drag_h(i,j+1))
     enddo ; enddo
