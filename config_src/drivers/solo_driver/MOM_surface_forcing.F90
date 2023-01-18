@@ -275,6 +275,8 @@ subroutine set_forcing(sfc_state, forces, fluxes, day_start, day_interval, G, US
       call wind_forcing_by_data_override(sfc_state, forces, day_center, G, US, CS)
     elseif (trim(CS%wind_config) == "2gyre") then
       call wind_forcing_2gyre(sfc_state, forces, day_center, G, US, CS)
+    elseif (trim(CS%wind_config) == "2gyre_gl") then
+      call wind_forcing_2gyre_gl(sfc_state, forces, day_center, G, US, CS)
     elseif (trim(CS%wind_config) == "1gyre") then
       call wind_forcing_1gyre(sfc_state, forces, day_center, G, US, CS)
     elseif (trim(CS%wind_config) == "gyres") then
@@ -413,6 +415,43 @@ subroutine wind_forcing_const(sfc_state, forces, tau_x0, tau_y0, day, G, US, CS)
   call callTree_leave("wind_forcing_const")
 end subroutine wind_forcing_const
 
+!> Sets the surface wind stresses to set up two idealized gyres.
+subroutine wind_forcing_2gyre_gl(sfc_state, forces, day, G, US, CS)
+  type(surface),            intent(inout) :: sfc_state !< A structure containing fields that
+                                                       !! describe the surface state of the ocean.
+  type(mech_forcing),       intent(inout) :: forces !< A structure with the driving mechanical forces
+  type(time_type),          intent(in)    :: day  !< The time of the fluxes
+  type(ocean_grid_type),    intent(in)    :: G    !< The ocean's grid structure
+  type(unit_scale_type),    intent(in)    :: US   !< A dimensional unit scaling type
+  type(surface_forcing_CS), pointer       :: CS   !< pointer to control structure returned by
+                                                  !! a previous surface_forcing_init call
+  ! Local variables
+  real :: Pa_to_RLZ_T2  ! A unit conversion factor from Pa to the internal units
+                        ! for wind stresses [R Z L T-2 Pa-1 ~> 1]
+  real :: PI            ! A common irrational number, 3.1415926535... [nondim]
+  integer :: i, j, is, ie, js, je, Isq, Ieq, Jsq, Jeq
+
+  call callTree_enter("wind_forcing_2gyre_gl, MOM_surface_forcing.F90")
+  is   = G%isc  ; ie   = G%iec  ; js   = G%jsc  ; je   = G%jec
+  Isq  = G%IscB ; Ieq  = G%IecB ; Jsq  = G%JscB ; Jeq  = G%JecB
+
+  Pa_to_RLZ_T2 = US%kg_m3_to_R*US%m_s_to_L_T**2*US%L_to_Z
+  PI = 4.0*atan(1.0)
+
+  ! Set the steady surface wind stresses, in units of [R L Z T-1 ~> Pa].
+  do j=js,je ; do I=is-1,Ieq
+    forces%taux(I,j) = 0.1 * Pa_to_RLZ_T2 * &
+                      (1.0 - cos(2.0*PI*(G%geoLatCu(I,j)-(-90)) / 90))
+  enddo ; enddo
+
+  do J=js-1,Jeq ; do i=is,ie
+    forces%tauy(i,J) = 0.0
+  enddo ; enddo
+
+  if (associated(forces%ustar)) call stresses_to_ustar(forces, G, US, CS)
+
+  call callTree_leave("wind_forcing_2gyre_gl")
+end subroutine wind_forcing_2gyre_gl
 
 !> Sets the surface wind stresses to set up two idealized gyres.
 subroutine wind_forcing_2gyre(sfc_state, forces, day, G, US, CS)
