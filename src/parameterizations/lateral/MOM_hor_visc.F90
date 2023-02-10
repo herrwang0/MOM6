@@ -92,9 +92,10 @@ type, public :: hor_visc_CS ; private
   logical :: res_scale_MEKE  !< If true, the viscosity contribution from MEKE is scaled by
                              !! the resolution function.
   logical :: use_GME         !< If true, use GME backscatter scheme.
-  logical :: answers_2018    !< If true, use the order of arithmetic and expressions that recover the
-                             !! answers from the end of 2018.  Otherwise, use updated and more robust
-                             !! forms of the same expressions.
+  integer :: answer_date     !< The vintage of the order of arithmetic and expressions in the
+                             !! horizontal viscosity calculations.  Values below 20190101 recover
+                             !! the answers from the end of 2018, while higher values use updated
+                             !! and more robust forms of the same expressions.
   real    :: GME_h0          !< The strength of GME tapers quadratically to zero when the bathymetric
                              !! depth is shallower than GME_H0 [Z ~> m]
   real    :: GME_efficiency  !< The nondimensional prefactor multiplying the GME coefficient [nondim]
@@ -181,9 +182,9 @@ type, public :: hor_visc_CS ; private
   type(diag_ctrl), pointer :: diag => NULL() !< structure to regulate diagnostics
 
   ! real, allocatable :: hf_diffu(:,:,:)  ! Zonal hor. visc. accel. x fract. thickness [L T-2 ~> m s-2].
-  ! real, allocatable :: hf_diffv(:,:,:)  ! Merdional hor. visc. accel. x fract. thickness [L T-2 ~> m s-2].
+  ! real, allocatable :: hf_diffv(:,:,:)  ! Meridional hor. visc. accel. x fract. thickness [L T-2 ~> m s-2].
   ! 3D diagnostics hf_diffu(diffv) are commented because there is no clarity on proper remapping grid option.
-  ! The code is retained for degugging purposes in the future.
+  ! The code is retained for debugging purposes in the future.
 
   integer :: num_smooth_gme !< number of smoothing passes for the GME fluxes.
   !>@{
@@ -251,13 +252,13 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
 
   ! Local variables
   real, dimension(SZIB_(G),SZJ_(G)) :: &
-    Del2u, &      ! The u-compontent of the Laplacian of velocity [L-1 T-1 ~> m-1 s-1]
+    Del2u, &      ! The u-component of the Laplacian of velocity [L-1 T-1 ~> m-1 s-1]
     h_u, &        ! Thickness interpolated to u points [H ~> m or kg m-2].
     vort_xy_dy, & ! y-derivative of vertical vorticity (d/dy(dv/dx - du/dy)) [L-1 T-1 ~> m-1 s-1]
     div_xx_dx, &  ! x-derivative of horizontal divergence (d/dx(du/dx + dv/dy)) [L-1 T-1 ~> m-1 s-1]
     ubtav         ! zonal barotropic vel. ave. over baroclinic time-step [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJB_(G)) :: &
-    Del2v, &      ! The v-compontent of the Laplacian of velocity [L-1 T-1 ~> m-1 s-1]
+    Del2v, &      ! The v-component of the Laplacian of velocity [L-1 T-1 ~> m-1 s-1]
     h_v, &        ! Thickness interpolated to v points [H ~> m or kg m-2].
     vort_xy_dx, & ! x-derivative of vertical vorticity (d/dx(dv/dx - du/dy)) [L-1 T-1 ~> m-1 s-1]
     div_xx_dy, &  ! y-derivative of horizontal divergence (d/dy(du/dx + dv/dy)) [L-1 T-1 ~> m-1 s-1]
@@ -291,8 +292,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     str_xy_GME, & ! smoothed cross term in the stress tensor from GME [H L2 T-2 ~> m3 s-2 or kg s-2]
     bhstr_xy, &   ! A copy of str_xy that only contains the biharmonic contribution [H L2 T-2 ~> m3 s-2 or kg s-2]
     vort_xy, &    ! Vertical vorticity (dv/dx - du/dy) including metric terms [T-1 ~> s-1]
-    Leith_Kh_q, & ! Leith Laplacian viscosity at q-points [L2 T-1 ~> m2 s-1]
-    Leith_Ah_q, & ! Leith bi-harmonic viscosity at q-points [L4 T-1 ~> m4 s-1]
     grad_vort_mag_q, & ! Magnitude of vorticity gradient at q-points [L-1 T-1 ~> m-1 s-1]
     grad_vort_mag_q_2d, & ! Magnitude of 2d vorticity gradient at q-points [L-1 T-1 ~> m-1 s-1]
     Del2vort_q, & ! Laplacian of vorticity at q-points [L-2 T-1 ~> m-2 s-1]
@@ -328,9 +327,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     GME_coeff_h      ! GME coeff. at h-points [L2 T-1 ~> m2 s-1]
   real :: AhSm       ! Smagorinsky biharmonic viscosity [L4 T-1 ~> m4 s-1]
   real :: AhLth      ! 2D Leith biharmonic viscosity [L4 T-1 ~> m4 s-1]
-  real :: mod_Leith  ! nondimensional coefficient for divergence part of modified Leith
-                     ! viscosity. Here set equal to nondimensional Laplacian Leith constant.
-                     ! This is set equal to zero if modified Leith is not used.
   real :: Shear_mag_bc  ! Shear_mag value in backscatter [T-1 ~> s-1]
   real :: sh_xx_sq   ! Square of tension (sh_xx) [T-2 ~> s-2]
   real :: sh_xy_sq   ! Square of shearing strain (sh_xy) [T-2 ~> s-2]
@@ -343,23 +339,16 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   real :: h_neglect  ! thickness so small it can be lost in roundoff and so neglected [H ~> m or kg m-2]
   real :: h_neglect3 ! h_neglect^3 [H3 ~> m3 or kg3 m-6]
   real :: h_min      ! Minimum h at the 4 neighboring velocity points [H ~> m]
-  real :: Kh_scale  ! A factor between 0 and 1 by which the horizontal
-                    ! Laplacian viscosity is rescaled [nondim]
   real :: RoScl     ! The scaling function for MEKE source term [nondim]
   real :: FatH      ! abs(f) at h-point for MEKE source term [T-1 ~> s-1]
   real :: local_strain ! Local variable for interpolating computed strain rates [T-1 ~> s-1].
   real :: meke_res_fn ! A copy of the resolution scaling factor if being applied to MEKE. Otherwise =1.
   real :: GME_coeff ! The GME (negative) viscosity coefficient [L2 T-1 ~> m2 s-1]
-  real :: GME_coeff_limiter ! Maximum permitted value of the GME coefficient [L2 T-1 ~> m2 s-1]
-  real :: FWfrac    ! Fraction of maximum theoretical energy transfer to use when scaling GME coefficient [nondim]
   real :: DY_dxBu   ! Ratio of meridional over zonal grid spacing at vertices [nondim]
-  real :: DX_dyBu   ! Ratio of zonal over meridiononal grid spacing at vertices [nondim]
-  real :: DY_dxCv   ! Ratio of meridional over zonal grid spacing at faces [nondim]
-  real :: DX_dyCu   ! Ratio of zonal over meridional grid spacing at faces [nondim]
+  real :: DX_dyBu   ! Ratio of zonal over meridional grid spacing at vertices [nondim]
   real :: Sh_F_pow  ! The ratio of shear over the absolute value of f raised to some power and rescaled [nondim]
   real :: backscat_subround ! The ratio of f over Shear_mag that is so small that the backscatter
                     ! calculation gives the same value as if f were 0 [nondim].
-  real :: H0_GME    ! Depth used to scale down GME coefficient in shallow areas [Z ~> m]
   real :: KE        ! Local kinetic energy [L2 T-2 ~> m2 s-2]
   real :: d_del2u   ! dy-weighted Laplacian(u) diff in x [L-2 T-1 ~> m-2 s-1]
   real :: d_del2v   ! dx-weighted Laplacian(v) diff in y [L-2 T-1 ~> m-2 s-1]
@@ -391,14 +380,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     vert_vort_mag, &  ! magnitude of the vertical vorticity gradient (h or q) [L-1 T-1 ~> m-1 s-1]
     hrat_min, &     ! h_min divided by the thickness at the stress point (h or q) [nondim]
     visc_bound_rem  ! fraction of overall viscous bounds that remain to be applied (h or q) [nondim]
-
-  real, dimension(SZIB_(G),SZJ_(G)) :: &
-    hf_diffu_2d, &    ! Depth sum of hf_diffu, hf_diffv [L T-2 ~> m s-2]
-    intz_diffu_2d     ! Depth-integral of diffu [H L T-2 ~> m2 s-2]
-
-  real, dimension(SZI_(G),SZJB_(G)) :: &
-    hf_diffv_2d, &    ! Depth sum of hf_diffu, hf_diffv [L T-2 ~> m s-2]
-    intz_diffv_2d     ! Depth-integral of diffv [H L T-2 ~> m2 s-2]
 
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -542,8 +523,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   !$OMP   is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, &
   !$OMP   apply_OBC, rescale_Kh, legacy_bound, find_FrictWork, &
   !$OMP   use_MEKE_Ku, use_MEKE_Au, &
-  !$OMP   backscat_subround, GME_coeff_limiter, GME_effic_h, GME_effic_q, &
-  !$OMP   h_neglect, h_neglect3, FWfrac, inv_PI3, inv_PI6, H0_GME, &
+  !$OMP   backscat_subround, GME_effic_h, GME_effic_q, &
+  !$OMP   h_neglect, h_neglect3, inv_PI3, inv_PI6, &
   !$OMP   diffu, diffv, Kh_h, Kh_q, Ah_h, Ah_q, FrictWork, FrictWork_GME, &
   !$OMP   div_xx_h, sh_xx_h, vort_xy_q, sh_xy_q, GME_coeff_h, GME_coeff_q, &
   !$OMP   KH_u_GME, KH_v_GME, grid_Re_Kh, grid_Re_Ah, NoSt, ShSt &
@@ -560,7 +541,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   !$OMP   meke_res_fn, Shear_mag, Shear_mag_bc, vert_vort_mag, h_min, hrat_min, visc_bound_rem, &
   !$OMP   grid_Ah, grid_Kh, d_Del2u, d_Del2v, d_str, &
   !$OMP   Kh, Ah, AhSm, AhLth, local_strain, Sh_F_pow, &
-  !$OMP   dDel2vdx, dDel2udy, DY_dxCv, DX_dyCu, Del2vort_q, Del2vort_h, KE, &
+  !$OMP   dDel2vdx, dDel2udy, Del2vort_q, Del2vort_h, KE, &
   !$OMP   h2uq, h2vq, hu, hv, hq, FatH, RoScl, GME_coeff &
   !$OMP )
   do k=1,nz
@@ -1569,7 +1550,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
           Shear_mag_bc = sqrt(sh_xx(i,j) * sh_xx(i,j) + &
             0.25*((sh_xy(I-1,J-1)*sh_xy(I-1,J-1) + sh_xy(I,J)*sh_xy(I,J)) + &
                   (sh_xy(I-1,J)*sh_xy(I-1,J) + sh_xy(I,J-1)*sh_xy(I,J-1))))
-          if (CS%answers_2018) then
+          if (CS%answer_date > 20190101) then
             FatH = (US%s_to_T*FatH)**MEKE%backscatter_Ro_pow ! f^n
             ! Note the hard-coded dimensional constant in the following line that can not
             ! be rescaled for dimensional consistency.
@@ -1701,7 +1682,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   type(param_file_type),   intent(in)    :: param_file !< A structure to parse for run-time
                                                  !! parameters.
   type(diag_ctrl), target, intent(inout) :: diag !< Structure to regulate diagnostic output.
-  type(hor_visc_CS),       intent(inout) :: CS   !< Horizontal viscosity control struct
+  type(hor_visc_CS),       intent(inout) :: CS   !< Horizontal viscosity control structure
   type(accel_diag_ptrs), intent(in), optional :: ADp !< Acceleration diagnostics
 
   real, dimension(SZIB_(G),SZJ_(G)) :: u0u, u0v
@@ -1724,8 +1705,8 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                            ! grid spacing, to limit biharmonic viscosity
   real :: Kh               ! Lapacian horizontal viscosity [L2 T-1 ~> m2 s-1]
   real :: Ah               ! biharmonic horizontal viscosity [L4 T-1 ~> m4 s-1]
-  real :: Kh_vel_scale     ! this speed [L T-1 ~> m s-1] times grid spacing gives Lap visc
-  real :: Ah_vel_scale     ! this speed [L T-1 ~> m s-1] times grid spacing cubed gives bih visc
+  real :: Kh_vel_scale     ! this speed [L T-1 ~> m s-1] times grid spacing gives Laplacian viscosity
+  real :: Ah_vel_scale     ! this speed [L T-1 ~> m s-1] times grid spacing cubed gives biharmonic viscosity
   real :: Ah_time_scale    ! damping time-scale for biharmonic visc [T ~> s]
   real :: Smag_Lap_const   ! nondimensional Laplacian Smagorinsky constant
   real :: Smag_bi_const    ! nondimensional biharmonic Smagorinsky constant
@@ -1744,8 +1725,13 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   logical :: split         ! If true, use the split time stepping scheme.
                            ! If false and USE_GME = True, issue a FATAL error.
   logical :: use_MEKE      ! If true, the MEKE parameterization is in use.
-  logical :: default_2018_answers
-  character(len=64) :: inputdir, filename
+  logical :: answers_2018  ! If true, use the order of arithmetic and expressions that recover the
+                           ! answers from the end of 2018.  Otherwise, use updated and more robust
+                           ! forms of the same expressions.
+  integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags
+  logical :: default_2018_answers ! The default setting for the various 2018_ANSWERS flags
+  character(len=200) :: inputdir, filename ! Input file names and paths
+  character(len=80) ::  Kh_var ! Input variable names
   real    :: deg2rad       ! Converts degrees to radians
   real    :: slat_fn       ! sin(lat)**Kh_pwr_of_sine
   real    :: aniso_grid_dir(2) ! Vector (n1,n2) for anisotropic direction
@@ -1768,13 +1754,26 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   call log_version(param_file, mdl, version, "")
 
   ! All parameters are read in all cases to enable parameter spelling checks.
+  call get_param(param_file, mdl, "DEFAULT_ANSWER_DATE", default_answer_date, &
+                 "This sets the default value for the various _ANSWER_DATE parameters.", &
+                 default=99991231)
   call get_param(param_file, mdl, "DEFAULT_2018_ANSWERS", default_2018_answers, &
                  "This sets the default value for the various _2018_ANSWERS parameters.", &
-                 default=.false.)
-  call get_param(param_file, mdl, "HOR_VISC_2018_ANSWERS", CS%answers_2018, &
+                 default=(default_answer_date<20190101))
+  call get_param(param_file, mdl, "HOR_VISC_2018_ANSWERS", answers_2018, &
                  "If true, use the order of arithmetic and expressions that recover the "//&
                  "answers from the end of 2018.  Otherwise, use updated and more robust "//&
                  "forms of the same expressions.", default=default_2018_answers)
+  ! Revise inconsistent default answer dates for horizontal viscosity.
+  if (answers_2018 .and. (default_answer_date >= 20190101)) default_answer_date = 20181231
+  if (.not.answers_2018 .and. (default_answer_date < 20190101)) default_answer_date = 20190101
+  call get_param(param_file, mdl, "HOR_VISC_ANSWER_DATE", CS%answer_date, &
+                 "The vintage of the order of arithmetic and expressions in the horizontal "//&
+                 "viscosity calculations.  Values below 20190101 recover the answers from the "//&
+                 "end of 2018, while higher values use updated and more robust forms of the "//&
+                 "same expressions.  If both HOR_VISC_2018_ANSWERS and HOR_VISC_ANSWER_DATE are "//&
+                 "specified, the latter takes precedence.", default=default_answer_date)
+
   call get_param(param_file, mdl, "DEBUG", CS%debug, default=.false.)
   call get_param(param_file, mdl, "LAPLACIAN", CS%Laplacian, &
                  "If true, use a Laplacian horizontal viscosity.", &
@@ -1853,24 +1852,24 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  units="m2 s-1", default=0.0, scale=US%m_to_L**2*US%T_to_s, &
                  do_not_log=.not.CS%anisotropic)
   call get_param(param_file, mdl, "ANISOTROPIC_MODE", aniso_mode, &
-                 "Selects the mode for setting the direction of anistropy.\n"//&
+                 "Selects the mode for setting the direction of anisotropy.\n"//&
                  "\t 0 - Points along the grid i-direction.\n"//&
                  "\t 1 - Points towards East.\n"//&
                  "\t 2 - Points along the flow direction, U/|U|.", &
                  default=0, do_not_log=.not.CS%anisotropic)
   if (aniso_mode == 0) then
     call get_param(param_file, mdl, "ANISO_GRID_DIR", aniso_grid_dir, &
-                 "The vector pointing in the direction of anistropy for horizontal viscosity. "//&
+                 "The vector pointing in the direction of anisotropy for horizontal viscosity. "//&
                  "n1,n2 are the i,j components relative to the grid.", &
                  units="nondim", fail_if_missing=CS%anisotropic, do_not_log=.not.CS%anisotropic)
   elseif (aniso_mode == 1) then
     call get_param(param_file, mdl, "ANISO_GRID_DIR", aniso_grid_dir, &
-                 "The vector pointing in the direction of anistropy for horizontal viscosity. "//&
+                 "The vector pointing in the direction of anisotropy for horizontal viscosity. "//&
                  "n1,n2 are the i,j components relative to the spherical coordinates.", &
                  units="nondim", fail_if_missing=CS%anisotropic, do_not_log=.not.CS%anisotropic)
   else
     call get_param(param_file, mdl, "ANISO_GRID_DIR", aniso_grid_dir, &
-                 "The vector pointing in the direction of anistropy for horizontal viscosity.", &
+                 "The vector pointing in the direction of anisotropy for horizontal viscosity.", &
                  units="nondim", fail_if_missing=.false., do_not_log=.true.)
   endif
 
@@ -1996,7 +1995,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   if (CS%use_GME) then
     call get_param(param_file, mdl, "GME_NUM_SMOOTHINGS", CS%num_smooth_gme, &
                    "Number of smoothing passes for the GME fluxes.", &
-                   units="nondim", default=1)
+                   default=1)
     call get_param(param_file, mdl, "GME_H0", CS%GME_h0, &
                    "The strength of GME tapers quadratically to zero when the bathymetric "//&
                    "depth is shallower than GME_H0.", &
@@ -2076,11 +2075,15 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   call get_param(param_file, mdl, "KH_BG_2D_FILENAME", filename, &
                  'The filename containing a 2d map of "Kh".', &
                  default='KH_background_2d.nc', do_not_log=.not.CS%use_Kh_bg_2d)
+  call get_param(param_file, mdl, "KH_BG_2D_VARNAME", Kh_var, &
+                 'The name in the input file of the horizontal viscosity variable.', &
+                 default='Kh', do_not_log=.not.CS%use_Kh_bg_2d)
+
   if (CS%use_Kh_bg_2d) then
     call get_param(param_file, mdl, "INPUTDIR", inputdir, default=".")
     inputdir = slasher(inputdir)
     ALLOC_(CS%Kh_bg_2d(isd:ied,jsd:jed))     ; CS%Kh_bg_2d(:,:) = 0.0
-    call MOM_read_data(trim(inputdir)//trim(filename), 'Kh', CS%Kh_bg_2d, &
+    call MOM_read_data(trim(inputdir)//trim(filename), Kh_var, CS%Kh_bg_2d, &
                        G%domain, timelevel=1, scale=US%m_to_L**2*US%T_to_s)
     call pass_var(CS%Kh_bg_2d, G%domain)
   endif
@@ -2553,7 +2556,7 @@ subroutine smooth_GME(CS, G, GME_flux_h, GME_flux_q)
   real, dimension(SZI_(G),SZJ_(G)) :: GME_flux_h_original
   real, dimension(SZIB_(G),SZJB_(G)) :: GME_flux_q_original
   real :: wc, ww, we, wn, ws ! averaging weights for smoothing
-  integer :: i, j, k, s, halosz
+  integer :: i, j, s, halosz
   integer :: xh, xq  ! The number of valid extra halo points for h and q points.
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq
 

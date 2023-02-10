@@ -13,7 +13,7 @@ use MOM_grid, only : ocean_grid_type
 use MOM_hor_index, only : hor_index_type
 use MOM_io, only : file_exists, MOM_read_data, slasher, vardesc, var_desc, query_vardesc
 use MOM_open_boundary, only : ocean_OBC_type
-use MOM_restart, only : query_initialized, MOM_restart_CS
+use MOM_restart, only : query_initialized, set_initialized, MOM_restart_CS
 use MOM_spatial_means, only : global_mass_int_EFP
 use MOM_sponge, only : set_up_sponge_field, sponge_CS
 use MOM_time_manager, only : time_type, time_type_to_real
@@ -92,9 +92,8 @@ function register_ideal_age_tracer(HI, GV, param_file, CS, tr_Reg, restart_CS)
   isd = HI%isd ; ied = HI%ied ; jsd = HI%jsd ; jed = HI%jed ; nz = GV%ke
 
   if (associated(CS)) then
-    call MOM_error(WARNING, "register_ideal_age_tracer called with an "// &
-                             "associated control structure.")
-    return
+    call MOM_error(FATAL, "register_ideal_age_tracer called with an "// &
+                          "associated control structure.")
   endif
   allocate(CS)
 
@@ -217,11 +216,6 @@ subroutine initialize_ideal_age_tracer(restart, day, G, GV, US, h, diag, OBC, CS
 
   ! Local variables
   character(len=24) :: name     ! A variable's name in a NetCDF file.
-  character(len=72) :: longname ! The long name of that variable.
-  character(len=48) :: units    ! The dimensions of the variable.
-  character(len=48) :: flux_units ! The units for age tracer fluxes, either
-                                ! years m3 s-1 or years kg s-1.
-  character(len=72) :: cmorname ! The CMOR name of that variable.
   logical :: OK
   integer :: i, j, k, is, ie, js, je, isd, ied, jsd, jed, nz, m
   integer :: IsdB, IedB, JsdB, JedB
@@ -271,6 +265,7 @@ subroutine initialize_ideal_age_tracer(restart, day, G, GV, US, h, diag, OBC, CS
         enddo ; enddo ; enddo
       endif
 
+      call set_initialized(CS%tr(:,:,:,m), name, CS%restart_CSp)
     endif ! restart
   enddo ! Tracer loop
 
@@ -387,8 +382,7 @@ function ideal_age_stock(h, stocks, G, GV, CS, names, units, stock_index)
   integer                                           :: ideal_age_stock !< The number of stocks calculated here.
 
   ! Local variables
-  integer :: i, j, k, is, ie, js, je, nz, m
-  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
+  integer :: m
 
   ideal_age_stock = 0
   if (.not.associated(CS)) return
@@ -447,8 +441,6 @@ end subroutine ideal_age_tracer_surface_state
 subroutine ideal_age_example_end(CS)
   type(ideal_age_tracer_CS), pointer :: CS !< The control structure returned by a previous
                                            !! call to register_ideal_age_tracer.
-
-  integer :: m
 
   if (associated(CS)) then
     if (associated(CS%tr)) deallocate(CS%tr)

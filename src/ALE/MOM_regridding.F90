@@ -117,9 +117,10 @@ type, public :: regridding_CS ; private
   !! If false, integrate from the bottom upward, as does the rest of the model.
   logical :: integrate_downward_for_e = .true.
 
-  !> If true, use the order of arithmetic and expressions that recover the remapping answers from 2018.
-  !! If false, use more robust forms of the same remapping expressions.
-  logical :: remap_answers_2018 = .true.
+  !> The vintage of the order of arithmetic and expressions to use for remapping.
+  !! Values below 20190101 recover the remapping answers from 2018.
+  !! Higher values use more robust forms of the same remapping expressions.
+  integer :: remap_answer_date = 99991231
 
   logical :: use_hybgen_unmix = .false.  !< If true, use the hybgen unmixing code before remapping
 
@@ -136,7 +137,7 @@ end type
 ! The following routines are visible to the outside world
 public initialize_regridding, end_regridding, regridding_main
 public regridding_preadjust_reqs, convective_adjustment
-public inflate_vanished_layers_old, check_remapping_grid, check_grid_column
+public inflate_vanished_layers_old, check_grid_column
 public set_regrid_params, get_regrid_size, write_regrid_file
 public uniformResolution, setCoordinateResolution
 public set_target_densities_from_GV, set_target_densities
@@ -202,10 +203,13 @@ subroutine initialize_regridding(CS, GV, US, max_depth, param_file, mdl, coord_m
   character(len=200) :: inputdir, fileName
   character(len=320) :: message ! Temporary strings
   character(len=12) :: expected_units, alt_units ! Temporary strings
-  logical :: tmpLogical, fix_haloclines, set_max, do_sum, main_parameters
+  logical :: tmpLogical, fix_haloclines, do_sum, main_parameters
   logical :: coord_is_state_dependent, ierr
-  logical :: default_2018_answers, remap_answers_2018
-  real :: filt_len, strat_tol, index_scale, tmpReal, P_Ref
+  integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags.
+  logical :: default_2018_answers ! The default setting for the various 2018_ANSWERS flags.
+  logical :: remap_answers_2018
+  integer :: remap_answer_date    ! The vintage of the remapping expressions to use.
+  real :: filt_len, strat_tol, tmpReal, P_Ref
   real :: maximum_depth ! The maximum depth of the ocean [m] (not in Z).
   real :: dz_fixed_sfc, Rho_avg_depth, nlay_sfc_int
   real :: adaptTimeRatio, adaptZoom, adaptZoomCoeff, adaptBuoyCoeff, adaptAlpha
@@ -264,14 +268,27 @@ subroutine initialize_regridding(CS, GV, US, max_depth, param_file, mdl, coord_m
                  trim(regriddingInterpSchemeDoc), default=trim(string2))
     call set_regrid_params(CS, interp_scheme=string)
 
+    call get_param(param_file, mdl, "DEFAULT_ANSWER_DATE", default_answer_date, &
+                 "This sets the default value for the various _ANSWER_DATE parameters.", &
+                 default=99991231)
     call get_param(param_file, mdl, "DEFAULT_2018_ANSWERS", default_2018_answers, &
                  "This sets the default value for the various _2018_ANSWERS parameters.", &
-                 default=.false.)
+                 default=(default_answer_date<20190101))
     call get_param(param_file, mdl, "REMAPPING_2018_ANSWERS", remap_answers_2018, &
                  "If true, use the order of arithmetic and expressions that recover the "//&
                  "answers from the end of 2018.  Otherwise, use updated and more robust "//&
                  "forms of the same expressions.", default=default_2018_answers)
-    call set_regrid_params(CS, remap_answers_2018=remap_answers_2018)
+    ! Revise inconsistent default answer dates for remapping.
+    if (remap_answers_2018 .and. (default_answer_date >= 20190101)) default_answer_date = 20181231
+    if (.not.remap_answers_2018 .and. (default_answer_date < 20190101)) default_answer_date = 20190101
+    call get_param(param_file, mdl, "REMAPPING_ANSWER_DATE", remap_answer_date, &
+                 "The vintage of the expressions and order of arithmetic to use for remapping.  "//&
+                 "Values below 20190101 result in the use of older, less accurate expressions "//&
+                 "that were in use at the end of 2018.  Higher values result in the use of more "//&
+                 "robust and accurate forms of mathematically equivalent expressions.  "//&
+                 "If both REMAPPING_2018_ANSWERS and REMAPPING_ANSWER_DATE are specified, the "//&
+                 "latter takes precedence.", default=default_answer_date)
+    call set_regrid_params(CS, remap_answer_date=remap_answer_date)
   endif
 
   if (main_parameters .and. coord_is_state_dependent) then
@@ -497,7 +514,6 @@ subroutine initialize_regridding(CS, GV, US, max_depth, param_file, mdl, coord_m
       call setCoordinateResolution(dz, CS, scale=1.0)
     elseif (coordinateMode(coord_mode) == REGRIDDING_RHO) then
       call setCoordinateResolution(dz, CS, scale=US%kg_m3_to_R)
-      CS%coord_scale = US%R_to_kg_m3
     elseif (coordinateMode(coord_mode) == REGRIDDING_ADAPTIVE) then
       call setCoordinateResolution(dz, CS, scale=GV%m_to_H)
       CS%coord_scale = GV%H_to_m
@@ -506,6 +522,14 @@ subroutine initialize_regridding(CS, GV, US, max_depth, param_file, mdl, coord_m
       CS%coord_scale = US%Z_to_m
     endif
   endif
+
+  ! set coord_scale for RHO regridding independent of allocation status of dz
+  if (coordinateMode(coord_mode) == REGRIDDING_RHO) then
+    CS%coord_scale = US%R_to_kg_m3
+  endif
+
+  ! ensure CS%ref_pressure is rescaled properly
+  CS%ref_pressure = (US%kg_m3_to_R * US%m_s_to_L_T**2) * CS%ref_pressure
 
   if (allocated(rho_target)) then
     call set_target_densities(CS, US%kg_m3_to_R*rho_target)
@@ -770,7 +794,7 @@ end subroutine end_regridding
 
 !------------------------------------------------------------------------------
 !> Dispatching regridding routine for orchestrating regridding & remapping
-subroutine regridding_main( remapCS, CS, G, GV, h, tv, h_new, dzInterface, conv_adjust, &
+subroutine regridding_main( remapCS, CS, G, GV, h, tv, h_new, dzInterface, &
                             frac_shelf_h, PCM_cell)
 !------------------------------------------------------------------------------
 ! This routine takes care of (1) building a new grid and (2) remapping between
@@ -799,24 +823,14 @@ subroutine regridding_main( remapCS, CS, G, GV, h, tv, h_new, dzInterface, conv_
   type(thermo_var_ptrs),                      intent(in)    :: tv     !< Thermodynamical variables (T, S, ...)
   real, dimension(SZI_(G),SZJ_(G),CS%nk),     intent(inout) :: h_new  !< New 3D grid consistent with target coordinate
   real, dimension(SZI_(G),SZJ_(G),CS%nk+1),   intent(inout) :: dzInterface !< The change in position of each interface
-  logical,                                    intent(in   ) :: conv_adjust !< If true, regridding_main should do
-                                                                      !! convective adjustment, but because it no
-                                                                      !! longer does convective adjustment this must
-                                                                      !! be false.  This argument has been retained to
-                                                                      !! trap inconsistent code, but will eventually
-                                                                      !! be eliminated.
   real, dimension(SZI_(G),SZJ_(G)), optional, intent(in   ) :: frac_shelf_h !< Fractional ice shelf coverage
   logical, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                                     optional, intent(out  ) :: PCM_cell !< Use PCM remapping in cells where true
 
   ! Local variables
   real :: trickGnuCompiler
+  integer :: i, j
 
-  if (conv_adjust) call MOM_error(FATAL, &
-                        "regridding_main: convective adjustment no longer is done inside of regridding_main. "//&
-                        "The code needs to be modified to call regridding_main() with conv_adjust=.false, "//&
-                        "and a call to convective_adjustment added before calling regridding_main() "//&
-                        "if regridding_preadjust_reqs() indicates that this is necessary.")
   if (present(PCM_cell)) PCM_cell(:,:,:) = .false.
 
   select case ( CS%regridding_scheme )
@@ -855,8 +869,18 @@ subroutine regridding_main( remapCS, CS, G, GV, h, tv, h_new, dzInterface, conv_
   end select ! type of grid
 
 #ifdef __DO_SAFETY_CHECKS__
-  if (CS%nk == GV%ke) call check_remapping_grid(G, GV, h, dzInterface,'in regridding_main')
+  if (CS%nk == GV%ke) then
+    do j = G%jsc-1,G%jec+1 ; do i = G%isc-1,G%iec+1 ; if (G%mask2dT(i,j)>0.) then
+      call check_grid_column( GV%ke, h(i,j,:), dzInterface(i,j,:), 'in regridding_main')
+    endif ; enddo ; enddo
+  endif
 #endif
+  do j=G%jsc,G%jec ; do i=G%isc,G%iec ; if (G%mask2dT(i,j) > 0.) then
+    if (minval(h(i,j,:)) < 0.0) then
+      write(0,*) 'regridding_main check_grid: i,j=', i, j, 'h_new(i,j,:)=', h_new(i,j,:)
+      call MOM_error(FATAL, "regridding_main: negative thickness encountered.")
+    endif
+  endif ; enddo ; enddo
 
 end subroutine regridding_main
 
@@ -928,23 +952,6 @@ subroutine calc_h_new_by_dz(CS, G, GV, h, dzInterface, h_new)
 
 end subroutine calc_h_new_by_dz
 
-!> Check that the total thickness of two grids match
-subroutine check_remapping_grid( G, GV, h, dzInterface, msg )
-  type(ocean_grid_type),                       intent(in) :: G   !< Grid structure
-  type(verticalGrid_type),                     intent(in) :: GV  !< Ocean vertical grid structure
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),   intent(in) :: h   !< Layer thicknesses [H ~> m or kg m-2]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1), intent(in) :: dzInterface !< Change in interface positions
-                                                                 !! [H ~> m or kg m-2]
-  character(len=*),                            intent(in) :: msg !< Message to append to errors
-  ! Local variables
-  integer :: i, j
-
-  !$OMP parallel do default(shared)
-  do j = G%jsc-1,G%jec+1 ; do i = G%isc-1,G%iec+1
-    if (G%mask2dT(i,j)>0.) call check_grid_column( GV%ke, h(i,j,:), dzInterface(i,j,:), msg )
-  enddo ; enddo
-
-end subroutine check_remapping_grid
 
 !> Check that the total thickness of new and old grids are consistent
 subroutine check_grid_column( nk, h, dzInterface, msg )
@@ -1152,7 +1159,10 @@ subroutine build_zstar_grid( CS, G, GV, h, dzInterface, frac_shelf_h)
   real, dimension(SZI_(G),SZJ_(G)), optional,intent(in)    :: frac_shelf_h !< Fractional
                                                                  !! ice shelf coverage [nondim].
   ! Local variables
-  real    :: nominalDepth, minThickness, totalThickness, dh  ! Depths and thicknesses [H ~> m or kg m-2]
+  real   :: nominalDepth, minThickness, totalThickness  ! Depths and thicknesses [H ~> m or kg m-2]
+#ifdef __DO_SAFETY_CHECKS__
+  real :: dh                                            ! [H ~> m or kg m-2]
+#endif
   real, dimension(SZK_(GV)+1) :: zOld    ! Previous coordinate interface heights [H ~> m or kg m-2]
   real, dimension(CS%nk+1)    :: zNew    ! New coordinate interface heights [H ~> m or kg m-2]
   integer :: i, j, k, nz
@@ -1165,7 +1175,10 @@ subroutine build_zstar_grid( CS, G, GV, h, dzInterface, frac_shelf_h)
 !$OMP parallel do default(none) shared(G,GV,dzInterface,CS,nz,h,frac_shelf_h, &
 !$OMP                                  ice_shelf,minThickness) &
 !$OMP                          private(nominalDepth,totalThickness, &
-!$OMP                                  zNew,dh,zOld)
+#ifdef __DO_SAFETY_CHECKS__
+!$OMP                                  dh, &
+#endif
+!$OMP                                  zNew,zOld)
   do j = G%jsc-1,G%jec+1
     do i = G%isc-1,G%iec+1
 
@@ -1257,7 +1270,10 @@ subroutine build_sigma_grid( CS, G, GV, h, dzInterface )
   ! Local variables
   integer :: i, j, k
   integer :: nz
-  real    :: nominalDepth, totalThickness, dh
+  real    :: nominalDepth, totalThickness
+#ifdef __DO_SAFETY_CHECKS__
+  real :: dh
+#endif
   real, dimension(SZK_(GV)+1) :: zOld    ! Previous coordinate interface heights [H ~> m or kg m-2]
   real, dimension(CS%nk+1)    :: zNew    ! New coordinate interface heights [H ~> m or kg m-2]
 
@@ -1365,7 +1381,7 @@ subroutine build_rho_grid( G, GV, US, h, tv, dzInterface, remapCS, CS, frac_shel
 #endif
   logical :: ice_shelf
 
-  if (.not.CS%remap_answers_2018) then
+  if (CS%remap_answer_date >= 20190101) then
     h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
   elseif (GV%Boussinesq) then
     h_neglect = GV%m_to_H*1.0e-30 ; h_neglect_edge = GV%m_to_H*1.0e-10
@@ -1503,12 +1519,12 @@ subroutine build_grid_HyCOM1( G, GV, US, h, tv, h_new, dzInterface, CS, frac_she
   real, dimension(CS%nk+1) :: z_col_new ! New interface positions relative to the surface [H ~> m or kg m-2]
   real, dimension(CS%nk+1) :: dz_col    ! The realized change in z_col [H ~> m or kg m-2]
   integer   :: i, j, k, nki
-  real :: depth, nominalDepth
+  real :: nominalDepth
   real :: h_neglect, h_neglect_edge
   real :: z_top_col, totalThickness
   logical :: ice_shelf
 
-  if (.not.CS%remap_answers_2018) then
+  if (CS%remap_answer_date >= 20190101) then
     h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
   elseif (GV%Boussinesq) then
     h_neglect = GV%m_to_H*1.0e-30 ; h_neglect_edge = GV%m_to_H*1.0e-10
@@ -1585,7 +1601,7 @@ subroutine build_grid_adaptive(G, GV, US, h, tv, dzInterface, remapCS, CS)
 
   ! local variables
   integer :: i, j, k, nz ! indices and dimension lengths
-  ! temperature, salinity and pressure on interfaces
+  ! temperature [C ~> degC], salinity [S ~> ppt] and pressure on interfaces
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: tInt, sInt
   ! current interface positions and after tendency term is applied
   ! positive downward
@@ -1660,7 +1676,7 @@ subroutine build_grid_SLight(G, GV, US, h, tv, dzInterface, CS)
   integer :: i, j, k, nz
   real :: h_neglect, h_neglect_edge
 
-  if (.not.CS%remap_answers_2018) then
+  if (CS%remap_answer_date >= 20190101) then
     h_neglect = GV%H_subroundoff ; h_neglect_edge = GV%H_subroundoff
   elseif (GV%Boussinesq) then
     h_neglect = GV%m_to_H*1.0e-30 ; h_neglect_edge = GV%m_to_H*1.0e-10
@@ -1927,8 +1943,8 @@ subroutine convective_adjustment(G, GV, h, tv)
 !------------------------------------------------------------------------------
 
   ! Local variables
-  real      :: T0, T1       ! temperatures of two layers [degC]
-  real      :: S0, S1       ! salinities of two layers [ppt]
+  real      :: T0, T1       ! temperatures of two layers [C ~> degC]
+  real      :: S0, S1       ! salinities of two layers [S ~> ppt]
   real      :: r0, r1       ! densities of two layers [R ~> kg m-3]
   real      :: h0, h1       ! Layer thicknesses  [H ~> m or kg m-2]
   real, dimension(GV%ke) :: p_col  ! A column of zero pressures [R L2 T-2 ~> Pa]
@@ -1944,7 +1960,7 @@ subroutine convective_adjustment(G, GV, h, tv)
   do j = G%jsc-1,G%jec+1 ; do i = G%isc-1,G%iec+1
 
     ! Compute densities within current water column
-    call calculate_density( tv%T(i,j,:), tv%S(i,j,:), p_col, densities, tv%eqn_of_state)
+    call calculate_density(tv%T(i,j,:), tv%S(i,j,:), p_col, densities, tv%eqn_of_state)
 
     ! Repeat restratification until complete
     do
@@ -1963,8 +1979,8 @@ subroutine convective_adjustment(G, GV, h, tv)
           tv%S(i,j,k) = S1 ; tv%S(i,j,k+1) = S0
           h(i,j,k)    = h1 ; h(i,j,k+1)    = h0
           ! Recompute densities at levels k and k+1
-          call calculate_density( tv%T(i,j,k), tv%S(i,j,k), p_col(k), densities(k), tv%eqn_of_state)
-          call calculate_density( tv%T(i,j,k+1), tv%S(i,j,k+1), p_col(k+1), &
+          call calculate_density(tv%T(i,j,k), tv%S(i,j,k), p_col(k), densities(k), tv%eqn_of_state)
+          call calculate_density(tv%T(i,j,k+1), tv%S(i,j,k+1), p_col(k+1), &
                                   densities(k+1), tv%eqn_of_state )
           ! Because p_col is has uniform values, these calculate_density calls are equivalent to
           ! densities(k) = r1 ; densities(k+1) = r0
@@ -2336,8 +2352,8 @@ end function getCoordinateShortName
 subroutine set_regrid_params( CS, boundary_extrapolation, min_thickness, old_grid_weight, &
              interp_scheme, depth_of_time_filter_shallow, depth_of_time_filter_deep, &
              compress_fraction, ref_pressure, dz_min_surface, nz_fixed_surface, Rho_ML_avg_depth, &
-             nlay_ML_to_interior, fix_haloclines, halocline_filt_len, &
-             halocline_strat_tol, integrate_downward_for_e, remap_answers_2018, &
+             nlay_ML_to_interior, fix_haloclines, halocline_filt_len, halocline_strat_tol, &
+             integrate_downward_for_e, remap_answers_2018, remap_answer_date, &
              adaptTimeRatio, adaptZoom, adaptZoomCoeff, adaptBuoyCoeff, adaptAlpha, adaptDoMin, adaptDrho0)
   type(regridding_CS), intent(inout) :: CS !< Regridding control structure
   logical, optional, intent(in) :: boundary_extrapolation !< Extrapolate in boundary cells
@@ -2367,6 +2383,7 @@ subroutine set_regrid_params( CS, boundary_extrapolation, min_thickness, old_gri
   logical, optional, intent(in) :: remap_answers_2018 !< If true, use the order of arithmetic and expressions
                                                     !! that recover the remapping answers from 2018.  Otherwise
                                                     !! use more robust but mathematically equivalent expressions.
+  integer, optional, intent(in) :: remap_answer_date !< The vintage of the expressions to use for remapping
   real,    optional, intent(in) :: adaptTimeRatio   !< Ratio of the ALE timestep to the grid timescale [nondim].
   real,    optional, intent(in) :: adaptZoom        !< Depth of near-surface zooming region [H ~> m or kg m-2].
   real,    optional, intent(in) :: adaptZoomCoeff   !< Coefficient of near-surface zooming diffusivity [nondim].
@@ -2397,7 +2414,14 @@ subroutine set_regrid_params( CS, boundary_extrapolation, min_thickness, old_gri
   if (present(compress_fraction)) CS%compressibility_fraction = compress_fraction
   if (present(ref_pressure)) CS%ref_pressure = ref_pressure
   if (present(integrate_downward_for_e)) CS%integrate_downward_for_e = integrate_downward_for_e
-  if (present(remap_answers_2018)) CS%remap_answers_2018 = remap_answers_2018
+  if (present(remap_answers_2018)) then
+    if (remap_answers_2018) then
+      CS%remap_answer_date = 20181231
+    else
+      CS%remap_answer_date = 20190101
+    endif
+  endif
+  if (present(remap_answer_date)) CS%remap_answer_date = remap_answer_date
 
   select case (CS%regridding_scheme)
   case (REGRIDDING_ZSTAR)

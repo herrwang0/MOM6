@@ -15,7 +15,7 @@ use MOM_unit_scaling,  only : unit_scale_type
 use MOM_spherical_harmonics, only : spherical_harmonics_init, spherical_harmonics_end, order2index, calc_lmax
 use MOM_spherical_harmonics, only : spherical_harmonics_forward, spherical_harmonics_inverse
 use MOM_spherical_harmonics, only : sht_CS
-use MOM_load_love_numbers, only : LoveDat
+use MOM_load_love_numbers, only : Love_Data
 
 implicit none ; private
 
@@ -50,7 +50,7 @@ type, public :: tidal_forcing_CS ; private
                       !! equilibrium tide. Set to false if providing tidal phases
                       !! that have already been shifted by the
                       !! astronomical/equilibrium argument.
-  logical :: tidal_sal_sht
+  logical :: tidal_sal_sht !< If true, use online spherical harmonics to calculate SAL
   real    :: sal_scalar !< The constant of proportionality between sea surface
                       !! height (really it should be bottom pressure) anomalies
                       !! and bottom geopotential anomalies [nondim].
@@ -75,14 +75,17 @@ type, public :: tidal_forcing_CS ; private
     cosphase_prev(:,:,:), & !< The cosine and sine of the phase of the
     sinphase_prev(:,:,:), & !< amphidromes in the previous tidal solutions.
     amp_prev(:,:,:)         !< The amplitude of the previous tidal solution [Z ~> m].
-  type(sht_CS) :: sht
-  integer :: sal_sht_Nd
-  real, allocatable :: LoveScaling(:)
   logical :: nobt
+
+  type(sht_CS) :: sht       !< Spherical harmonic transforms (SHT) for SAL
+  integer :: sal_sht_Nd     !< Maximum degree for SHT [nodim]
+  real, allocatable :: Love_Scaling(:)      !< Love number for each SHT mode [nodim]
+  real, allocatable :: Snm_Re(:), & !< Real and imaginary SHT coefficient for SHT SAL
+                       Snm_Im(:)    !< [Z ~> m]
 end type tidal_forcing_CS
 
 integer :: id_clock_tides !< CPU clock for tides
-integer :: id_clock_SAL   !< CPU clock for inline self-attration and loading
+integer :: id_clock_SAL   !< CPU clock for self-attraction and loading
 
 contains
 
@@ -256,18 +259,19 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
   real, dimension(MAX_CONSTITUENTS) :: amp_def  ! Default amplitude for each tidal constituent [m]
   real, dimension(MAX_CONSTITUENTS) :: love_def ! Default love number for each constituent [nondim]
   integer, dimension(3) :: tide_ref_date !< Reference date (t = 0) for tidal forcing.
-  logical :: use_const  ! True if a constituent is being used.
   logical :: use_M2, use_S2, use_N2, use_K2, use_K1, use_O1, use_P1, use_Q1
   logical :: use_MF, use_MM
   logical :: tides      ! True if a tidal forcing is to be used.
-  logical :: FAIL_IF_MISSING = .true.
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_tidal_forcing" ! This module's name.
   character(len=128) :: mesg
   character(len=200) :: tidal_input_files(4*MAX_CONSTITUENTS)
   integer :: i, j, c, is, ie, js, je, isd, ied, jsd, jed, nc
-  integer :: lmax
+  integer :: lmax ! Total modes of the real spherical harmonics [nondim]
+  real :: rhoW    ! The average density of sea water [R ~> kg m-3].
+  real :: rhoE    ! The average density of Earth [R ~> kg m-3].
+
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
   isd = G%isd ; ied = G%ied ; jsd = G%jsd; jed = G%jed
 
@@ -374,7 +378,8 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
                  fail_if_missing=.true.)
 
   call get_param(param_file, mdl, "TIDAL_SAL_SHT", CS%tidal_sal_sht, &
-                 "If true, use inline SAL.", default=.false.)
+                 "If true, use the online spherical harmonics method to calculate "//&
+                 "self-attraction and loading term in tides.", default=.false.)
 
   if (nc > MAX_CONSTITUENTS) then
     write(mesg,'("Increase MAX_CONSTITUENTS in MOM_tidal_forcing.F90 to at least",I3, &
@@ -543,9 +548,22 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
                    "The maximum degree of the spherical harmonics transformation used for "// &
                    "calculating the self-attraction and loading term for tides.", &
                    default=0, do_not_log=.not. CS%tidal_sal_sht)
+    call get_param(param_file, mdl, "RHO_0", rhoW, &
+                   "The mean ocean density used with BOUSSINESQ true to "//&
+                   "calculate accelerations and the mass for conservation "//&
+                   "properties, or with BOUSSINSEQ false to convert some "//&
+                   "parameters from vertical units of m to kg m-2.", &
+                   units="kg m-3", default=1035.0, scale=US%kg_m3_to_R, do_not_log=.True.)
+    call get_param(param_file, mdl, "RHO_E", rhoE, &
+                   "The mean solid earth density.  This is used for calculating the "// &
+                   "self-attraction and loading term.", units="kg m-3", &
+                   default=5517.0, scale=US%kg_m3_to_R, do_not_log=.not. CS%tidal_sal_sht)
     lmax = calc_lmax(CS%sal_sht_Nd)
-    allocate(CS%LoveScaling(lmax))
-    call calc_love_scaling(CS%sal_sht_Nd, CS%LoveScaling)
+    allocate(CS%Snm_Re(lmax)); CS%Snm_Re(:) = 0.0
+    allocate(CS%Snm_Im(lmax)); CS%Snm_Im(:) = 0.0
+
+    allocate(CS%Love_Scaling(lmax)); CS%Love_Scaling(:) = 0.0
+    call calc_love_scaling(CS%sal_sht_Nd, rhoW, rhoE, CS%Love_Scaling)
     call spherical_harmonics_init(G, param_file, CS%sht)
     id_clock_SAL = cpu_clock_id('(Ocean SAL)', grain=CLOCK_ROUTINE)
   endif
@@ -554,41 +572,42 @@ subroutine tidal_forcing_init(Time, G, US, param_file, CS)
 
 end subroutine tidal_forcing_init
 
-subroutine calc_love_scaling(nlm, LoveScaling)
-  integer, intent(in) :: nlm !< Maximum spherical harmonics degree
-  real, dimension(:), intent(out) :: LoveScaling ! Scaling factors for inverse SHT
+!> This subroutine calculates coefficients of the spherical harmonic modes for self-attraction and loading.
+!! The algorithm is based on the SAL implementation in MPAS-ocean, which was modified by Kristin Barton from
+!! routine written by K. Quinn (March 2010) and modified by M. Schindelegger (May 2017).
+subroutine calc_love_scaling(nlm, rhoW, rhoE, Love_Scaling)
+  integer, intent(in) :: nlm  !< Maximum spherical harmonics degree [nondim]
+  real,    intent(in) :: rhoW !< The average density of sea water [R ~> kg m-3]
+  real,    intent(in) :: rhoE !< The average density of Earth [R ~> kg m-3]
+  real, dimension(:), intent(out) :: Love_Scaling !< Scaling factors for inverse SHT [nondim]
 
   ! Local variables
-  real, parameter :: rhoE = 5517.0 ! Average density of Earth (kg/m^3)
-  real, parameter :: rhoW = 1035.0 ! Density of water (kg/m^3)
-  real, dimension(:), allocatable :: HDat, LDat, KDat
-  real :: H1, L1, K1
+  real, dimension(:), allocatable :: HDat, LDat, KDat ! Love numbers converted in CF reference frames
+  real :: H1, L1, K1 ! Temporary variables to store degree 1 Love numbers
+  integer :: n_tot ! Size of the stored Love numbers
   integer :: n, m, l
-  integer :: n_tot
 
-  n_tot = size(LoveDat, dim=2)
+  n_tot = size(Love_Data, dim=2)
 
   if (nlm+1 > n_tot) call MOM_error(FATAL, "MOM_tidal_forcing " // &
     "calc_love_scaling: maximum spherical harmonics degree is larger than " // &
-    "the size of the stored Love Number in MOM_load_love_number.")
+    "the size of the stored Love numbers in MOM_load_love_number.")
 
   allocate(HDat(nlm+1), LDat(nlm+1), KDat(nlm+1))
-  HDat(:) = LoveDat(2,1:nlm+1) ; LDat(:) = LoveDat(3,1:nlm+1) ; KDat(:) = LoveDat(4,1:nlm+1)
+  HDat(:) = Love_Data(2,1:nlm+1) ; LDat(:) = Love_Data(3,1:nlm+1) ; KDat(:) = Love_Data(4,1:nlm+1)
 
+  ! Convert reference frames from CM to CF
   if (nlm > 0) then
-    ! Convert from CM to CF
     H1 = HDat(2) ; L1 = LDat(2) ;  K1 = KDat(2)
-    HDat(2) = 2.0/3.0*(H1 - L1)
-    LDat(2) = -1.0/3.0*(H1 - L1)
-    KDat(2) = -1.0/3.0*H1 - 2.0/3.0*L1 - 1.0
+    HDat(2) = ( 2.0 / 3.0) * (H1 - L1)
+    LDat(2) = (-1.0 / 3.0) * (H1 - L1)
+    KDat(2) = (-1.0 / 3.0) * H1 - (2.0 / 3.0) * L1 - 1.0
   endif
 
-  do m=0,nlm
-    do n=m,nlm
-      l = order2index(m,nlm)
-      LoveScaling(l+n-m) = (1.0 + KDat(n+1) - HDat(n+1)) / real(2*n+1) * 3.0 * rhoW / rhoE
-    enddo
-  enddo
+  do m=0,nlm ; do n=m,nlm
+    l = order2index(m,nlm)
+    Love_Scaling(l+n-m) = (3.0 / real(2*n+1)) * (rhoW / rhoE) * (1.0 + KDat(n+1) - HDat(n+1))
+  enddo ; enddo
 end subroutine calc_love_scaling
 
 !> This subroutine finds a named variable in a list of files and reads its
@@ -662,7 +681,7 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS, eta_tidal_sal)
   real, dimension(SZI_(G),SZJ_(G)), optional, intent(out) :: eta_tidal_sal
 
   ! Local variables
-  real, dimension(SZI_(G),SZJ_(G))  :: eta_sal      !< SAL
+  real, dimension(SZI_(G),SZJ_(G))  :: eta_sal  !< SAL calculated by spherical harmonics
   real :: now       ! The relative time compared with the tidal reference [T ~> s]
   real :: amp_cosomegat, amp_sinomegat ! The tidal amplitudes times the components of phase [Z ~> m]
   real :: cosomegat, sinomegat ! The components of the phase [nondim]
@@ -733,49 +752,46 @@ subroutine calc_tidal_forcing(Time, eta, eta_tidal, G, US, CS, eta_tidal_sal)
     enddo ; enddo
   enddo ; endif
 
-  if (CS%TIDAL_SAL_SHT) then
-    eta_sal = 0.0
-    call calc_SAL_sht(eta, eta_sal, G, CS)
-    call pass_var(eta_sal, G%domain)
+  if (CS%tidal_sal_sht) then
+    eta_sal(:,:) = 0.0
+    call calc_SAL_sht(eta, eta_tidal_sal, G, CS)
+
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      eta_tidal(i,j) = eta_tidal(i,j) + eta_sal(i,j)
+      eta_tidal(i,j) = eta_tidal(i,j) + eta_tidal_sal(i,j)
     enddo ; enddo
   endif
   call cpu_clock_end(id_clock_tides)
 
 end subroutine calc_tidal_forcing
 
+!> This subroutine calculates self-attraction and loading using the spherical harmonics method.
 subroutine calc_SAL_sht(eta, eta_sal, G, CS)
-  type(ocean_grid_type),   intent(in) :: G    !< The ocean's grid structure.
-  real, dimension(SZI_(G),SZJ_(G)), intent(in)  :: eta       !< The sea surface height anomaly from
-                                                             !! a time-mean geoid [Z ~> m].
-  real, dimension(SZI_(G),SZJ_(G)), intent(out) :: eta_sal   !< The sea surface height anomaly from
-                                                             !! a time-mean geoid [Z ~> m].
-  ! type(sht_CS), intent(in) :: sht
-  type(tidal_forcing_CS), intent(in) :: CS   !< Tidal forcing control struct
-  real, allocatable :: SnmRe(:), SnmIm(:)
-  real, allocatable :: LoveScaling(:)
+  type(ocean_grid_type),   intent(in) :: G !< The ocean's grid structure.
+  real, dimension(SZI_(G),SZJ_(G)), intent(in)  :: eta  !< The sea surface height anomaly from
+                                                        !! a time-mean geoid [Z ~> m].
+  real, dimension(SZI_(G),SZJ_(G)), intent(out) :: eta_sal !< The sea surface height anomaly from
+                                                           !! self-attraction and loading [Z ~> m].
+  type(tidal_forcing_CS), intent(inout) :: CS !< Tidal forcing control struct
 
+  ! Local variables
   integer :: n, m, l
-  integer :: lmax
-  lmax = calc_lmax(CS%sal_sht_Nd)
 
   call cpu_clock_begin(id_clock_SAL)
 
-  allocate(SnmRe(lmax)); SnmRe = 0.0
-  allocate(SnmIm(lmax)); SnmIm = 0.0
+  call spherical_harmonics_forward(G, CS%sht, eta, CS%Snm_Re, CS%Snm_Im, CS%sal_sht_Nd)
 
-  call spherical_harmonics_forward(G, CS%sht, eta, SnmRe, SnmIm, CS%sal_sht_Nd)
-
+  ! Multiply scaling factors to each mode
   do m = 0,CS%sal_sht_Nd
-    l = order2index(m,CS%sal_sht_Nd)
+    l = order2index(m, CS%sal_sht_Nd)
     do n = m,CS%sal_sht_Nd
-      SnmRe(l+n-m) = SnmRe(l+n-m)*CS%LoveScaling(l+n-m)
-      SnmIm(l+n-m) = SnmIm(l+n-m)*CS%LoveScaling(l+n-m)
+      CS%Snm_Re(l+n-m) = CS%Snm_Re(l+n-m) * CS%Love_Scaling(l+n-m)
+      CS%Snm_Im(l+n-m) = CS%Snm_Im(l+n-m) * CS%Love_Scaling(l+n-m)
     enddo
   enddo
 
-  call spherical_harmonics_inverse(G, CS%sht, SnmRe, SnmIm, eta_sal, CS%sal_sht_Nd)
+  call spherical_harmonics_inverse(G, CS%sht, CS%Snm_Re, CS%Snm_Im, eta_sal, CS%sal_sht_Nd)
+
+  call pass_var(eta_sal, G%domain)
 
   call cpu_clock_end(id_clock_SAL)
 end subroutine calc_SAL_sht
@@ -797,7 +813,9 @@ subroutine tidal_forcing_end(CS)
   if (allocated(CS%amp_prev))      deallocate(CS%amp_prev)
 
   if (CS%tidal_sal_sht) then
-    if (allocated(CS%LoveScaling)) deallocate(CS%LoveScaling)
+    if (allocated(CS%Love_Scaling)) deallocate(CS%Love_Scaling)
+    if (allocated(CS%Snm_Re)) deallocate(CS%Snm_Re)
+    if (allocated(CS%Snm_Im)) deallocate(CS%Snm_Im)
     call spherical_harmonics_end(CS%sht)
   endif
 end subroutine tidal_forcing_end
@@ -830,5 +848,18 @@ end subroutine tidal_forcing_end
 !! details, see Arbic et al., 2004, DSR II). With TIDAL_SAL_FROM_FILE
 !! or USE_PREVIOUS_TIDES,a list of input files must be provided to
 !! describe each constituent's properties from a previous solution.
-
+!!
+!!   This module also contains a method to calculate self-attraction
+!! and loading using spherical harmonic transforms. The algorithm is
+!! based on SAL calculation in Model for Prediction Across Scales
+!! (MPAS)-Ocean developed by Los Alamos National Laboratory and
+!! University of Michigan (Barton et al. (2022) and Brus et al. (2022)).
+!!
+!! Barton, K.N., Nairita, P., Brus, S.R., Petersen, M.R., Arbic, B.K., Engwirda, D., Roberts, A.F., Westerink, J.,
+!! Wirasaet, D., and Schindelegger, M., 2022: Performance of Model for Prediction Across Scales (MPAS) Ocean as a
+!! Global Barotropic Tide Model. Journal of Advances in Modeling Earth Systems, in review.
+!!
+!! Brus, S.R., Barton, K.N., Nairita, P., Roberts, A.F., Engwirda, D., Petersen, M.R., Arbic, B.K., Wirasaet, D.,
+!! Westerink, J., and Schindelegger, M., 2022: Scalable self attraction and loading calculations for unstructured ocean
+!! models. Ocean Modelling, in review.
 end module MOM_tidal_forcing

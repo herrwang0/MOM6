@@ -42,8 +42,8 @@ subroutine MOM_initialize_coord(GV, US, PF, tv, max_depth)
   ! Local
   character(len=200) :: config
   logical :: debug
-! This include declares and sets the variable "version".
-#include "version_variable.h"
+  ! This include declares and sets the variable "version".
+# include "version_variable.h"
   integer :: nz
 
   nz = GV%ke
@@ -204,8 +204,8 @@ subroutine set_coord_from_TS_ref(Rlay, g_prime, GV, US, param_file, eqn_of_state
                                                       !! [R L2 T-2 ~> Pa].
 
   ! Local variables
-  real :: T_ref   ! Reference temperature
-  real :: S_ref   ! Reference salinity
+  real :: T_ref   ! Reference temperature [C ~> degC]
+  real :: S_ref   ! Reference salinity [S ~> ppt]
   real :: g_int   ! Reduced gravities across the internal interfaces [L2 Z-1 T-2 ~> m s-2].
   real :: g_fs    ! Reduced gravity across the free surface [L2 Z-1 T-2 ~> m s-2].
   character(len=40)  :: mdl = "set_coord_from_TS_ref" ! This subroutine's name.
@@ -214,11 +214,11 @@ subroutine set_coord_from_TS_ref(Rlay, g_prime, GV, US, param_file, eqn_of_state
 
   call callTree_enter(trim(mdl)//"(), MOM_coord_initialization.F90")
 
-  call get_param(param_file, mdl, "T_REF", T_Ref, &
-                 "The initial temperature of the lightest layer.", units="degC", &
-                 fail_if_missing=.true.)
-  call get_param(param_file, mdl, "S_REF", S_Ref, &
-                 "The initial salinities.", units="PSU", default=35.0)
+  call get_param(param_file, mdl, "T_REF", T_ref, &
+                 "The initial temperature of the lightest layer.", &
+                 units="degC", scale=US%degC_to_C, fail_if_missing=.true.)
+  call get_param(param_file, mdl, "S_REF", S_ref, &
+                 "The initial salinities.", units="PSU", default=35.0, scale=US%ppt_to_S)
   call get_param(param_file, mdl, "GFS", g_fs, &
                  "The reduced gravity at the free surface.", units="m s-2", &
                  default=GV%g_Earth*US%L_T_to_m_s**2*US%m_to_Z, scale=US%m_s_to_L_T**2*US%Z_to_m)
@@ -254,11 +254,15 @@ subroutine set_coord_from_TS_profile(Rlay, g_prime, GV, US, param_file, eqn_of_s
                                                    !! [R L2 T-2 ~> Pa].
 
   ! Local variables
-  real, dimension(GV%ke) :: T0, S0,  Pref
+  real, dimension(GV%ke) :: T0   ! A profile of temperatures [C ~> degC]
+  real, dimension(GV%ke) :: S0   ! A profile of salinities [S ~> ppt]
+  real, dimension(GV%ke) :: Pref ! A array of reference pressures [R L2 T-2 ~> Pa]
   real :: g_fs    ! Reduced gravity across the free surface [L2 Z-1 T-2 ~> m s-2].
   integer :: k, nz
   character(len=40)  :: mdl = "set_coord_from_TS_profile" ! This subroutine's name.
   character(len=200) :: filename, coord_file, inputdir ! Strings for file/path
+  character(len=64)  :: temp_var, salt_var ! Temperature and salinity names in files
+
   nz = GV%ke
 
   call callTree_enter(trim(mdl)//"(), MOM_coord_initialization.F90")
@@ -267,15 +271,21 @@ subroutine set_coord_from_TS_profile(Rlay, g_prime, GV, US, param_file, eqn_of_s
                  "The reduced gravity at the free surface.", units="m s-2", &
                  default=GV%g_Earth*US%L_T_to_m_s**2*US%m_to_Z, scale=US%m_s_to_L_T**2*US%Z_to_m)
   call get_param(param_file, mdl, "COORD_FILE", coord_file, &
-                 "The file from which the coordinate temperatures and "//&
-                 "salinities are read.", fail_if_missing=.true.)
+                 "The file from which the coordinate temperatures and salinities are read.", &
+                 fail_if_missing=.true.)
+  call get_param(param_file, mdl, "TEMP_COORD_VAR", temp_var, &
+                 "The coordinate reference profile variable name for potential temperature.", &
+                 default="PTEMP")
+  call get_param(param_file, mdl, "SALT_COORD_VAR", salt_var, &
+                 "The coordinate reference profile variable name for salinity.", &
+                 default="SALT")
 
   call get_param(param_file,  mdl, "INPUTDIR", inputdir, default=".")
   filename = trim(slasher(inputdir))//trim(coord_file)
   call log_param(param_file, mdl, "INPUTDIR/COORD_FILE", filename)
 
-  call MOM_read_data(filename, "PTEMP", T0(:))
-  call MOM_read_data(filename, "SALT", S0(:))
+  call MOM_read_data(filename, temp_var, T0(:), scale=US%degC_to_C)
+  call MOM_read_data(filename, salt_var, S0(:), scale=US%ppt_to_S)
 
   if (.not.file_exists(filename)) call MOM_error(FATAL, &
       " set_coord_from_TS_profile: Unable to open " //trim(filename))
@@ -301,9 +311,13 @@ subroutine set_coord_from_TS_range(Rlay, g_prime, GV, US, param_file, eqn_of_sta
                                                    !! [R L2 T-2 ~> Pa].
 
   ! Local variables
-  real, dimension(GV%ke) :: T0, S0,  Pref
-  real :: S_Ref, S_Light, S_Dense ! Salinity range parameters [ppt].
-  real :: T_Ref, T_Light, T_Dense ! Temperature range parameters [degC].
+  real, dimension(GV%ke) :: T0   ! A profile of temperatures [C ~> degC]
+  real, dimension(GV%ke) :: S0   ! A profile of salinities [S ~> ppt]
+  real, dimension(GV%ke) :: Pref ! A array of reference pressures [R L2 T-2 ~> Pa]
+  real :: S_Ref   ! Default salinity range parameters [ppt].
+  real :: T_Ref   ! Default temperature range parameters [degC].
+  real :: S_Light, S_Dense ! Salinity range parameters [S ~> ppt].
+  real :: T_Light, T_Dense ! Temperature range parameters [C ~> degC].
   real :: res_rat ! The ratio of density space resolution in the denser part
                   ! of the range to that in the lighter part of the range.
                   ! Setting this greater than 1 increases the resolution for
@@ -312,7 +326,7 @@ subroutine set_coord_from_TS_range(Rlay, g_prime, GV, US, param_file, eqn_of_sta
   real :: a1, frac_dense, k_frac  ! Nondimensional temporary variables [nondim]
   integer :: k, nz, k_light
   character(len=40)  :: mdl = "set_coord_from_TS_range" ! This subroutine's name.
-  character(len=200) :: filename, coord_file, inputdir ! Strings for file/path
+
   nz = GV%ke
 
   call callTree_enter(trim(mdl)//"(), MOM_coord_initialization.F90")
@@ -321,19 +335,19 @@ subroutine set_coord_from_TS_range(Rlay, g_prime, GV, US, param_file, eqn_of_sta
                  "The default initial temperatures.", units="degC", default=10.0)
   call get_param(param_file, mdl, "TS_RANGE_T_LIGHT", T_Light, &
                  "The initial temperature of the lightest layer when "//&
-                 "COORD_CONFIG is set to ts_range.", units="degC", default=T_Ref)
+                 "COORD_CONFIG is set to ts_range.", units="degC", default=T_Ref, scale=US%degC_to_C)
   call get_param(param_file, mdl, "TS_RANGE_T_DENSE", T_Dense, &
                  "The initial temperature of the densest layer when "//&
-                 "COORD_CONFIG is set to ts_range.", units="degC", default=T_Ref)
+                 "COORD_CONFIG is set to ts_range.", units="degC", default=T_Ref, scale=US%degC_to_C)
 
   call get_param(param_file, mdl, "S_REF", S_Ref, &
                  "The default initial salinities.", units="PSU", default=35.0)
   call get_param(param_file, mdl, "TS_RANGE_S_LIGHT", S_Light, &
                  "The initial lightest salinities when COORD_CONFIG "//&
-                 "is set to ts_range.", default = S_Ref, units="PSU")
+                 "is set to ts_range.", default = S_Ref, units="PSU", scale=US%ppt_to_S)
   call get_param(param_file, mdl, "TS_RANGE_S_DENSE", S_Dense, &
                  "The initial densest salinities when COORD_CONFIG "//&
-                 "is set to ts_range.", default = S_Ref, units="PSU")
+                 "is set to ts_range.", default = S_Ref, units="PSU", scale=US%ppt_to_S)
 
   call get_param(param_file, mdl, "TS_RANGE_RESOLN_RATIO", res_rat, &
                  "The ratio of density space resolution in the densest "//&
@@ -351,8 +365,8 @@ subroutine set_coord_from_TS_range(Rlay, g_prime, GV, US, param_file, eqn_of_sta
 
   k_light = GV%nk_rho_varies + 1
 
-  ! Set T0(k) to range from T_LIGHT to T_DENSE, and simliarly for S0(k).
-  T0(k_light) = T_light ; S0(k_light) = S_light
+  ! Set T0(k) to range from T_LIGHT to T_DENSE, and similarly for S0(k).
+  T0(k_light) = T_Light ; S0(k_light) = S_Light
   a1 = 2.0 * res_rat / (1.0 + res_rat)
   do k=k_light+1,nz
     k_frac = real(k-k_light)/real(nz-k_light)
@@ -408,10 +422,9 @@ subroutine set_coord_from_file(Rlay, g_prime, GV, US, param_file)
   if (.not.file_exists(filename)) call MOM_error(FATAL, &
       " set_coord_from_file: Unable to open "//trim(filename))
 
-  call MOM_read_data(filename, coord_var, Rlay)
-  do k=1,nz ; Rlay(k) = US%kg_m3_to_R*Rlay(k) ; enddo
+  call MOM_read_data(filename, coord_var, Rlay, scale=US%kg_m3_to_R)
   g_prime(1) = g_fs
-  do k=2,nz ; g_prime(k) = (GV%g_Earth/(GV%Rho0)) * (Rlay(k) - Rlay(k-1)) ; enddo
+  do k=2,nz ; g_prime(k) = (GV%g_Earth/GV%Rho0) * (Rlay(k) - Rlay(k-1)) ; enddo
   do k=1,nz ; if (g_prime(k) <= 0.0) then
     call MOM_error(FATAL, "MOM_initialization set_coord_from_file: "//&
        "Zero or negative g_primes read from variable "//"Layer"//" in file "//&
@@ -436,7 +449,8 @@ subroutine set_coord_linear(Rlay, g_prime, GV, US, param_file)
 
   ! Local variables
   character(len=40)  :: mdl = "set_coord_linear" ! This subroutine
-  real :: Rlay_ref, Rlay_range, g_fs
+  real :: Rlay_ref, Rlay_range ! A reference density and its range [R ~> kg m-3]
+  real :: g_fs  ! The reduced gravity across the free surface [L2 Z-1 T-2 ~> m s-2]
   integer :: k, nz
   nz = GV%ke
 
@@ -452,7 +466,7 @@ subroutine set_coord_linear(Rlay, g_prime, GV, US, param_file)
                  "The reduced gravity at the free surface.", units="m s-2", &
                  default=GV%g_Earth*US%L_T_to_m_s**2*US%m_to_Z, scale=US%m_s_to_L_T**2*US%Z_to_m)
 
-  ! This following sets the target layer densities such that a the
+  ! This following sets the target layer densities such that the
   ! surface interface has density Rlay_ref and the bottom
   ! is Rlay_range larger
   do k=1,nz

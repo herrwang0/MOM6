@@ -59,9 +59,9 @@ subroutine user_change_diff(h, tv, G, GV, US, CS, Kd_lay, Kd_int, T_f, S_f, Kd_i
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1), optional, intent(inout) :: Kd_int !< The diapycnal diffusivity
                                                                   !! at each interface [Z2 T-1 ~> m2 s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),   optional, intent(in)    :: T_f !< Temperature with massless
-                                                                  !! layers filled in vertically [degC].
+                                                                  !! layers filled in vertically [C ~> degC].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),   optional, intent(in)    :: S_f !< Salinity with massless
-                                                                  !! layers filled in vertically [ppt].
+                                                                  !! layers filled in vertically [S ~> ppt].
   real, dimension(:,:,:),                      optional, pointer       :: Kd_int_add !< The diapycnal
                                                                   !! diffusivity that is being added at
                                                                   !! each interface [Z2 T-1 ~> m2 s-1].
@@ -77,8 +77,6 @@ subroutine user_change_diff(h, tv, G, GV, US, CS, Kd_lay, Kd_int, T_f, S_f, Kd_i
   integer :: i, j, k, is, ie, js, je, nz
   integer :: isd, ied, jsd, jed
 
-  real :: kappa_fill  ! diffusivity used to fill massless layers
-  real :: dt_fill     ! timestep used to fill massless layers
   character(len=200) :: mesg
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -209,7 +207,6 @@ subroutine user_change_diff_init(Time, G, GV, US, param_file, diag, CS)
 # include "version_variable.h"
   character(len=40)  :: mdl = "user_set_diffusivity"  ! This module's name.
   character(len=200) :: mesg
-  integer :: i, j, is, ie, js, je
 
   if (associated(CS)) then
     call MOM_error(WARNING, "diabatic_entrain_init called with an associated "// &
@@ -219,9 +216,6 @@ subroutine user_change_diff_init(Time, G, GV, US, param_file, diag, CS)
   allocate(CS)
 
   CS%initialized = .true.
-
-  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
-
   CS%diag => diag
 
   ! Read all relevant parameters and write them to the model log.

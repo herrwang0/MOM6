@@ -154,7 +154,6 @@ subroutine tracer_hordiff(h, dt, MEKE, VarMix, G, GV, US, CS, Reg, tv, do_online
   real :: khdt_max ! The local limiting value of khdt_x or khdt_y [L2 ~> m2].
   real :: max_CFL ! The global maximum of the diffusive CFL number.
   logical :: use_VarMix, Resoln_scaled, do_online, use_Eady
-  integer :: S_idx, T_idx ! Indices for temperature and salinity if needed
   integer :: i, j, k, m, is, ie, js, je, nz, ntr, itt, num_itts
   real :: I_numitts  ! The inverse of the number of iterations, num_itts.
   real :: scale      ! The fraction of khdt_x or khdt_y that is applied in this
@@ -174,7 +173,7 @@ subroutine tracer_hordiff(h, dt, MEKE, VarMix, G, GV, US, CS, Reg, tv, do_online
 
   if (.not. associated(CS)) call MOM_error(FATAL, "MOM_tracer_hor_diff: "// &
        "register_tracer must be called before tracer_hordiff.")
-  if (LOC(Reg)==0) call MOM_error(FATAL, "MOM_tracer_hor_diff: "// &
+  if (.not. associated(Reg)) call MOM_error(FATAL, "MOM_tracer_hor_diff: "// &
        "register_tracer must be called before tracer_hordiff.")
   if (Reg%ntr == 0 .or. (CS%KhTr <= 0.0 .and. .not. VarMix%use_variable_mixing)) return
 
@@ -196,7 +195,7 @@ subroutine tracer_hordiff(h, dt, MEKE, VarMix, G, GV, US, CS, Reg, tv, do_online
   endif ; endif
   CS%first_call = .false.
 
-  if (CS%debug) call MOM_tracer_chksum("Before tracer diffusion ", Reg%Tr, ntr, G)
+  if (CS%debug) call MOM_tracer_chksum("Before tracer diffusion ", Reg, G)
 
   use_VarMix = .false. ; Resoln_scaled = .false. ; use_Eady = .false.
   if (VarMix%use_variable_mixing) then
@@ -513,6 +512,14 @@ subroutine tracer_hordiff(h, dt, MEKE, VarMix, G, GV, US, CS, Reg, tv, do_online
 
       enddo ! End of k loop.
 
+      ! Do user controlled underflow of the tracer concentrations.
+      do m=1,ntr ; if (Reg%Tr(m)%conc_underflow > 0.0) then
+        !$OMP parallel do default(shared)
+        do k=1,nz ; do j=js,je ; do i=is,ie
+          if (abs(Reg%Tr(m)%t(i,j,k)) < Reg%Tr(m)%conc_underflow) Reg%Tr(m)%t(i,j,k) = 0.0
+        enddo ; enddo ; enddo
+      endif ; enddo
+
     enddo ! End of "while" loop.
 
   endif   ! endif for CS%use_neutral_diffusion
@@ -521,7 +528,7 @@ subroutine tracer_hordiff(h, dt, MEKE, VarMix, G, GV, US, CS, Reg, tv, do_online
 
   if (CS%Diffuse_ML_interior) then
     if (CS%show_call_tree) call callTree_waypoint("Calling epipycnal_ML_diff (tracer_hordiff)")
-    if (CS%debug) call MOM_tracer_chksum("Before epipycnal diff ", Reg%Tr, ntr, G)
+    if (CS%debug) call MOM_tracer_chksum("Before epipycnal diff ", Reg, G)
 
     call cpu_clock_begin(id_clock_epimix)
     call tracer_epipycnal_ML_diff(h, dt, Reg%Tr, ntr, khdt_x, khdt_y, G, GV, US, &
@@ -529,7 +536,7 @@ subroutine tracer_hordiff(h, dt, MEKE, VarMix, G, GV, US, CS, Reg, tv, do_online
     call cpu_clock_end(id_clock_epimix)
   endif
 
-  if (CS%debug) call MOM_tracer_chksum("After tracer diffusion ", Reg%Tr, ntr, G)
+  if (CS%debug) call MOM_tracer_chksum("After tracer diffusion ", Reg, G)
 
   ! post diagnostics for 2d tracer diffusivity
   if (CS%id_KhTr_u > 0) then
@@ -692,7 +699,6 @@ subroutine tracer_epipycnal_ML_diff(h, dt, Tr, ntr, khdt_epi_x, khdt_epi_y, G, &
   integer :: isd, ied, jsd, jed, IsdB, IedB, k_size
   integer :: kL, kR, kLa, kLb, kRa, kRb, nP, itt, ns, max_itt
   integer :: PEmax_kRho
-  integer :: isv, iev, jsv, jev ! The valid range of the indices.
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
@@ -713,7 +719,7 @@ subroutine tracer_epipycnal_ML_diff(h, dt, Tr, ntr, khdt_epi_x, khdt_epi_y, G, &
   ! Determine which layers the mixed- and buffer-layers map into...
   !$OMP parallel do default(shared)
   do k=1,nkmb ; do j=js-2,je+2
-    call calculate_density(tv%T(:,j,k),tv%S(:,j,k), p_ref_cv, rho_coord(:,j,k), &
+    call calculate_density(tv%T(:,j,k), tv%S(:,j,k), p_ref_cv, rho_coord(:,j,k), &
                            tv%eqn_of_state, EOSdom)
   enddo ; enddo
 
@@ -1400,7 +1406,7 @@ subroutine tracer_epipycnal_ML_diff(h, dt, Tr, ntr, khdt_epi_x, khdt_epi_y, G, &
           endif
         enddo
       endif ; enddo ; enddo
-!$OMP parallel do default(none) shared(PEmax_kRho,is,ie,js,je,G,h,Tr,tr_flux_conv,m)
+      !$OMP parallel do default(shared)
       do k=1,PEmax_kRho ; do j=js,je ; do i=is,ie
         if ((G%mask2dT(i,j) > 0.0) .and. (h(i,j,k) > 0.0)) then
           Tr(m)%t(i,j,k) = Tr(m)%t(i,j,k) + tr_flux_conv(i,j,k) / &
@@ -1408,6 +1414,14 @@ subroutine tracer_epipycnal_ML_diff(h, dt, Tr, ntr, khdt_epi_x, khdt_epi_y, G, &
           tr_flux_conv(i,j,k) = 0.0
         endif
       enddo ; enddo ; enddo
+
+      ! Do user controlled underflow of the tracer concentrations.
+      if (Tr(m)%conc_underflow > 0.0) then
+        !$OMP parallel do default(shared)
+        do k=1,nz ; do j=js,je ; do i=is,ie
+          if (abs(Tr(m)%t(i,j,k)) < Tr(m)%conc_underflow) Tr(m)%t(i,j,k) = 0.0
+        enddo ; enddo ; enddo
+      endif
 
     enddo ! Loop over tracers
   enddo ! Loop over iterations
@@ -1444,7 +1458,6 @@ subroutine tracer_hor_diff_init(Time, G, GV, US, param_file, diag, EOS, diabatic
 ! This include declares and sets the variable "version".
 #include "version_variable.h"
   character(len=40)  :: mdl = "MOM_tracer_hor_diff" ! This module's name.
-  character(len=256) :: mesg    ! Message for error messages.
 
   if (associated(CS)) then
     call MOM_error(WARNING, "tracer_hor_diff_init called with associated control structure.")
@@ -1498,7 +1511,7 @@ subroutine tracer_hor_diff_init(Time, G, GV, US, param_file, diag, EOS, diabatic
   call get_param(param_File, mdl, "RECALC_NEUTRAL_SURF", CS%recalc_neutral_surf, &
                  "If true, then recalculate the neutral surfaces if the \n"//&
                  "diffusive CFL is exceeded. If false, assume that the  \n"//&
-                 "positions of the surfaces do not change \n", default = .false.)
+                 "positions of the surfaces do not change \n", default=.false.)
   CS%ML_KhTR_scale = 1.0
   if (CS%Diffuse_ML_interior) then
     call get_param(param_file, mdl, "ML_KHTR_SCALE", CS%ML_KhTR_scale, &

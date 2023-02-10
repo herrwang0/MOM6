@@ -7,7 +7,6 @@ module MOM_offline_aux
 use MOM_debugging,        only : check_column_integrals
 use MOM_domains,          only : pass_var, pass_vector, To_All
 use MOM_diag_mediator,    only : post_data
-use MOM_diag_vkernels,    only : reintegrate_column
 use MOM_error_handler,    only : callTree_enter, callTree_leave, MOM_error, FATAL, WARNING, is_root_pe
 use MOM_file_parser,      only : get_param, log_version, param_file_type
 use MOM_forcing_type,     only : forcing
@@ -53,7 +52,7 @@ subroutine update_h_horizontal_flux(G, GV, uhtr, vhtr, h_pre, h_new)
                            intent(inout) :: h_new !< Updated layer thicknesses [H ~> m or kg m-2]
 
   ! Local variables
-  integer :: i, j, k, m, is, ie, js, je, nz
+  integer :: i, j, k, is, ie, js, je, nz
   ! Set index-related variables for fields on T-grid
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
 
@@ -88,7 +87,7 @@ subroutine update_h_vertical_flux(G, GV, ea, eb, h_pre, h_new)
                            intent(inout) :: h_new !< Updated layer thicknesses [H ~> m or kg m-2]
 
   ! Local variables
-  integer :: i, j, k, m, is, ie, js, je, nz
+  integer :: i, j, k, is, ie, js, je, nz
   ! Set index-related variables for fields on T-grid
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
 
@@ -139,7 +138,7 @@ subroutine limit_mass_flux_3d(G, GV, uh, vh, ea, eb, h_pre)
   real :: hvol     ! Cell volume [H L2 ~> m3 or kg]
   real :: scale_factor  ! A nondimensional rescaling factor between 0 and 1 [nondim]
   real :: max_off_cfl   ! The maximum permitted fraction that can leave in a timestep [nondim]
-  integer :: i, j, k, m, is, ie, js, je, nz
+  integer :: i, j, k, is, ie, js, je, nz
 
   max_off_cfl = 0.5
 
@@ -227,7 +226,7 @@ subroutine distribute_residual_uh_barotropic(G, GV, hvol, uh)
   real :: abs_uh_sum  ! The vertical sum of the absolute value of the transports [H L2 ~> m3 or kg]
   real :: new_uh_sum  ! The vertically summed transports after redistribution [H L2 ~> m3 or kg]
   real :: uh_neglect  ! A negligible transport [H L2 ~> m3 or kg]
-  integer :: i, j, k, m, is, ie, js, je, nz
+  integer :: i, j, k, is, ie, js, je, nz
 
   ! Set index-related variables for fields on T-grid
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -306,7 +305,7 @@ subroutine distribute_residual_vh_barotropic(G, GV, hvol, vh)
   real :: abs_vh_sum  ! The vertical sum of the absolute value of the transports [H L2 ~> m3 or kg]
   real :: new_vh_sum  ! The vertically summed transports after redistribution [H L2 ~> m3 or kg]
   real :: vh_neglect  ! A negligible transport [H L2 ~> m3 or kg]
-  integer :: i, j, k, m, is, ie, js, je, nz
+  integer :: i, j, k, is, ie, js, je, nz
 
   ! Set index-related variables for fields on T-grid
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -380,10 +379,10 @@ subroutine distribute_residual_uh_upwards(G, GV, hvol, uh)
   real, dimension(SZIB_(G),SZK_(GV))  :: uh2d  ! A slice of transports [H L2 ~> m3 or kg]
   real, dimension(SZI_(G),SZK_(GV))   :: h2d   ! A slice of updated cell volumes [H L2 ~> m3 or kg]
 
-  real  :: uh_neglect, uh_remain, uh_add, uh_sum, uh_col, uh_max ! Transports [H L2 ~> m3 or kg]
+  real  :: uh_neglect, uh_remain, uh_sum, uh_col  ! Transports [H L2 ~> m3 or kg]
   real  :: hup, hlos ! Various cell volumes [H L2 ~> m3 or kg]
   real  :: min_h     ! A minimal layer thickness [H ~> m or kg m-2]
-  integer :: i, j, k, m, is, ie, js, je, nz, k_rev
+  integer :: i, j, k, is, ie, js, je, nz, k_rev
 
   ! Set index-related variables for fields on T-grid
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -475,14 +474,12 @@ subroutine distribute_residual_vh_upwards(G, GV, hvol, vh)
 
   ! Local variables
   real, dimension(SZJB_(G),SZK_(GV))  :: vh2d     ! A slice of transports [H L2 ~> m3 or kg]
-  real, dimension(SZJB_(G))           :: vh2d_sum ! Summed transports [H L2 ~> m3 or kg]
   real, dimension(SZJ_(G),SZK_(GV))   :: h2d      ! A slice of updated cell volumes [H L2 ~> m3 or kg]
-  real, dimension(SZJ_(G))            :: h2d_sum  ! Summed cell volumes [H L2 ~> m3 or kg]
 
   real  :: vh_neglect, vh_remain, vh_col, vh_sum  ! Transports [H L2 ~> m3 or kg]
   real  :: hup, hlos ! Various cell volumes [H L2 ~> m3 or kg]
   real  :: min_h     ! A minimal layer thickness [H ~> m or kg m-2]
-  integer :: i, j, k, m, is, ie, js, je, nz, k_rev
+  integer :: i, j, k, is, ie, js, je, nz, k_rev
 
   ! Set index-related variables for fields on T-grid
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -639,9 +636,9 @@ subroutine update_offline_from_files(G, GV, US, nk_input, mean_file, sum_file, s
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), &
                            intent(inout) :: vhtr      !< Meridional mass fluxes [H L2 ~> m3 or kg]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
-                           intent(inout) :: temp_mean !< Averaged temperature [degC]
+                           intent(inout) :: temp_mean !< Averaged temperature [C ~> degC]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
-                           intent(inout) :: salt_mean !< Averaged salinity [ppt]
+                           intent(inout) :: salt_mean !< Averaged salinity [S ~> ppt]
   real, dimension(SZI_(G),SZJ_(G)),          &
                            intent(inout) :: mld       !< Averaged mixed layer depth [Z ~> m]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1), &
@@ -684,9 +681,9 @@ subroutine update_offline_from_files(G, GV, US, nk_input, mean_file, sum_file, s
     call MOM_read_data(snap_file, 'h_end', h_end(:,:,1:nk_input), G%Domain, &
                        timelevel=ridx_snap, position=CENTER, scale=convert_to_H)
     call MOM_read_data(mean_file, 'temp', temp_mean(:,:,1:nk_input), G%Domain, &
-                       timelevel=ridx_sum,position=CENTER)
+                       timelevel=ridx_sum, position=CENTER, scale=US%degC_to_C)
     call MOM_read_data(mean_file, 'salt', salt_mean(:,:,1:nk_input), G%Domain, &
-                       timelevel=ridx_sum,position=CENTER)
+                       timelevel=ridx_sum, position=CENTER, scale=US%ppt_to_S)
 
     ! Fill temperature and salinity downward from the deepest input data.
     do k=nk_input+1,nz ; do j=js,je ; do i=is,ie
@@ -779,10 +776,10 @@ subroutine update_offline_from_arrays(G, GV, nk_input, ridx_sum, mean_file, sum_
   real, dimension(:,:,:,:), allocatable,     intent(inout) :: vhtr_all  !< Meridional mass fluxes [H L2 ~> m3 or kg]
   real, dimension(:,:,:,:), allocatable,     intent(inout) :: hend_all  !< End of timestep layer thickness
                                                                         !! [H ~> m or kg m-2]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: temp      !< Temperature array
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: salt      !< Salinity array
-  real, dimension(:,:,:,:), allocatable,     intent(inout) :: temp_all  !< Temperature array
-  real, dimension(:,:,:,:), allocatable,     intent(inout) :: salt_all  !< Salinity array
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: temp      !< Temperature array [C ~> degC]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: salt      !< Salinity array [ppt ~> S]
+  real, dimension(:,:,:,:), allocatable,     intent(inout) :: temp_all  !< Temperature array [C ~> degC]
+  real, dimension(:,:,:,:), allocatable,     intent(inout) :: salt_all  !< Salinity array [ppt ~> S]
 
   integer :: i, j, k, is, ie, js, je, nz
   real, parameter :: fill_value = 0.

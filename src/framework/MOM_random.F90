@@ -159,6 +159,7 @@ subroutine random_2d_constructor(CS, HI, Time, seed)
   if (.not. allocated(CS%stream2d)) allocate( CS%stream2d(HI%isd:HI%ied,HI%jsd:HI%jed) )
 
   tseed = seed_from_time(Time)
+
   tseed = ieor(tseed*9007, seed)
   do j = HI%jsd,HI%jed
     do i = HI%isd,HI%ied
@@ -192,7 +193,7 @@ integer function seed_from_index(HI, i, j)
   integer,              intent(in) :: i !< i-index (of h-cell)
   integer,              intent(in) :: j !< j-index (of h-cell)
   ! Local variables
-  integer :: ig, jg, ni, nj, ij
+  integer :: ig, jg, ni, nj
 
   ni = HI%niglobal
   nj = HI%njglobal

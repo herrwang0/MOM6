@@ -355,8 +355,6 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
   real, dimension(SZI_(G),ntr) :: &
     T_tmp               ! The copy of the tracer concentration at constant i,k [conc].
 
-  real :: maxslope      ! The maximum concentration slope per grid point
-                        ! consistent with monotonicity [conc].
   real :: hup, hlos     ! hup is the upwind volume, hlos is the
                         ! part of that volume that might be lost
                         ! due to advection out the other side of
@@ -382,7 +380,6 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
   real :: mA            ! Average of the reconstruction tracer edge values [conc]
   real :: a6            ! Curvature of the reconstruction tracer values [conc]
   logical :: do_i(SZIB_(G),SZJ_(G))     ! If true, work on given points.
-  logical :: do_any_i
   logical :: usePLMslope
   integer :: i, j, m, n, i_up, stencil
   type(OBC_segment_type), pointer :: segment=>NULL()
@@ -673,10 +670,14 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
 
     enddo
 
-  endif
+  endif ; enddo ! End of j-loop.
 
-
-  enddo ! End of j-loop.
+  ! Do user controlled underflow of the tracer concentrations.
+  do m=1,ntr ; if (Tr(m)%conc_underflow > 0.0) then
+    do j=js,je ; do i=is,ie
+      if (abs(Tr(m)%t(i,j,k)) < Tr(m)%conc_underflow) Tr(m)%t(i,j,k) = 0.0
+    enddo ; enddo
+  endif ; enddo
 
   ! compute ad2d_x diagnostic outside above j-loop so as to make the summation ordered when OMP is active.
 
@@ -726,8 +727,6 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
     flux_y                      ! The tracer flux across a boundary [H L2 conc ~> m3 conc or kg conc].
   real, dimension(SZI_(G),ntr,SZJB_(G)) :: &
     T_tmp               ! The copy of the tracer concentration at constant i,k [conc].
-  real :: maxslope              ! The maximum concentration slope per grid point
-                                ! consistent with monotonicity [conc].
   real :: vhh(SZI_(G),SZJB_(G)) ! The meridional flux that occurs during the
                                 ! current iteration [H L2 ~> m3 or kg].
   real :: hup, hlos             ! hup is the upwind volume, hlos is the
@@ -754,7 +753,6 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
   real :: a6            ! Curvature of the reconstruction tracer values [conc]
   logical :: do_j_tr(SZJ_(G))   ! If true, calculate the tracer profiles.
   logical :: do_i(SZIB_(G), SZJ_(G))     ! If true, work on given points.
-  logical :: do_any_i
   logical :: usePLMslope
   integer :: i, j, j2, m, n, j_up, stencil
   type(OBC_segment_type), pointer :: segment=>NULL()
@@ -969,7 +967,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
                     (vhr(i,J,k) < 0.0) .and. (segment%direction == OBC_DIRECTION_N)) then
                   vhh(i,J) = vhr(i,J,k)
                   do m=1,ntr
-                    if (allocated(segment%tr_Reg%Tr(m)%t)) then
+                    if (allocated(segment%tr_Reg%Tr(m)%tres)) then
                       flux_y(i,m,J) = vhh(i,J)*OBC%segment(n)%tr_Reg%Tr(m)%tres(i,J,k)
                     else ; flux_y(i,m,J) = vhh(i,J)*OBC%segment(n)%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
                   enddo
@@ -992,7 +990,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
                   (vhr(i,J,k) < 0.0) .and. (G%mask2dT(i,j+1) < 0.5)) then
                 vhh(i,J) = vhr(i,J,k)
                 do m=1,ntr
-                  if (allocated(segment%tr_Reg%Tr(m)%t)) then
+                  if (allocated(segment%tr_Reg%Tr(m)%tres)) then
                     flux_y(i,m,J) = vhh(i,J)*segment%tr_Reg%Tr(m)%tres(i,J,k)
                   else ; flux_y(i,m,J) = vhh(i,J)*segment%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
                 enddo
@@ -1053,6 +1051,13 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
     enddo
   endif ; enddo ! End of j-loop.
 
+  ! Do user controlled underflow of the tracer concentrations.
+  do m=1,ntr ; if (Tr(m)%conc_underflow > 0.0) then
+    do j=js,je ; do i=is,ie
+      if (abs(Tr(m)%t(i,j,k)) < Tr(m)%conc_underflow) Tr(m)%t(i,j,k) = 0.0
+    enddo ; enddo
+  endif ; enddo
+
   ! compute ad2d_y diagnostic outside above j-loop so as to make the summation ordered when OMP is active.
 
   !$OMP ordered
@@ -1075,8 +1080,6 @@ subroutine tracer_advect_init(Time, G, US, param_file, diag, CS)
   type(param_file_type),   intent(in)    :: param_file  !< open file to parse for model parameters
   type(diag_ctrl), target, intent(inout) :: diag        !< regulates diagnostic output
   type(tracer_advect_CS),  pointer       :: CS          !< module control structure
-
-  integer, save :: init_calls = 0
 
   ! This include declares and sets the variable "version".
 # include "version_variable.h"

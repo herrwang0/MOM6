@@ -13,7 +13,7 @@ use MOM_grid, only : ocean_grid_type
 use MOM_hor_index, only : hor_index_type
 use MOM_io, only : slasher, vardesc, var_desc, query_vardesc
 use MOM_open_boundary, only : ocean_OBC_type
-use MOM_restart, only : query_initialized, MOM_restart_CS
+use MOM_restart, only : query_initialized, set_initialized, MOM_restart_CS
 use MOM_spatial_means, only : global_mass_int_EFP
 use MOM_sponge, only : set_up_sponge_field, sponge_CS
 use MOM_time_manager, only : time_type
@@ -89,9 +89,8 @@ function register_advection_test_tracer(HI, GV, param_file, CS, tr_Reg, restart_
   isd = HI%isd ; ied = HI%ied ; jsd = HI%jsd ; jed = HI%jed ; nz = GV%ke
 
   if (associated(CS)) then
-    call MOM_error(WARNING, "register_advection_test_tracer called with an "// &
-                            "associated control structure.")
-    return
+    call MOM_error(FATAL, "register_advection_test_tracer called with an "// &
+                          "associated control structure.")
   endif
   allocate(CS)
 
@@ -182,23 +181,12 @@ subroutine initialize_advection_test_tracer(restart, day, G, GV, h,diag, OBC, CS
   type(sponge_CS),                    pointer    :: sponge_CSp !< Pointer to the control structure for the sponges.
 
   ! Local variables
-  real, allocatable :: temp(:,:,:)
-  real, pointer, dimension(:,:,:) :: &
-    OBC_tr1_u => NULL(), & ! These arrays should be allocated and set to
-    OBC_tr1_v => NULL()    ! specify the values of tracer 1 that should come
-                           ! in through u- and v- points through the open
-                           ! boundary conditions, in the same units as tr.
   character(len=16) :: name     ! A variable's name in a NetCDF file.
-  character(len=72) :: longname ! The long name of that variable.
-  character(len=48) :: units    ! The dimensions of the variable.
-  character(len=48) :: flux_units ! The units for tracer fluxes, usually
-                            ! kg(tracer) kg(water)-1 m3 s-1 or kg(tracer) s-1.
-  real, pointer :: tr_ptr(:,:,:) => NULL()
   real :: h_neglect         ! A thickness that is so small it is usually lost
                             ! in roundoff and can be neglected [H ~> m or kg m-2].
   integer :: i, j, k, is, ie, js, je, isd, ied, jsd, jed, nz, m
   integer :: IsdB, IedB, JsdB, JedB
-  real :: tmpx, tmpy, locx, locy
+  real :: locx, locy
 
   if (.not.associated(CS)) return
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -246,6 +234,8 @@ subroutine initialize_advection_test_tracer(restart, day, G, GV, h,diag, OBC, CS
         if (locx**2+locy**2<=1.0) CS%tr(i,j,k,m) = 1.0
         if (locx>0.0.and.abs(locy)<0.2) CS%tr(i,j,k,m) = 0.0
       enddo ; enddo
+
+      call set_initialized(CS%tr(:,:,:,m), name, CS%restart_CSp)
     endif ! restart
   enddo
 
@@ -360,7 +350,7 @@ function advection_test_stock(h, stocks, G, GV, CS, names, units, stock_index)
   integer                                           :: advection_test_stock !< the number of stocks calculated here.
 
   ! Local variables
-  integer :: i, j, k, is, ie, js, je, nz, m
+  integer :: is, ie, js, je, nz, m
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
 
   advection_test_stock = 0
@@ -386,8 +376,6 @@ end function advection_test_stock
 subroutine advection_test_tracer_end(CS)
   type(advection_test_tracer_CS), pointer :: CS !< The control structure returned by a previous
                                               !! call to register_advection_test_tracer.
-  integer :: m
-
   if (associated(CS)) then
     if (associated(CS%tr)) deallocate(CS%tr)
     deallocate(CS)
