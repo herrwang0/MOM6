@@ -22,7 +22,8 @@ use MOM_open_boundary, only : OBC_DIRECTION_E, OBC_DIRECTION_W
 use MOM_open_boundary, only : OBC_DIRECTION_N, OBC_DIRECTION_S, OBC_segment_type
 use MOM_restart, only : register_restart_field, register_restart_pair
 use MOM_restart, only : query_initialized, MOM_restart_CS
-use MOM_tidal_forcing, only : tidal_forcing_sensitivity, tidal_forcing_CS
+use MOM_self_attr_load, only : tidal_forcing_sensitivity
+use MOM_tidal_forcing, only : tidal_forcing_CS
 use MOM_time_manager, only : time_type, real_to_time, operator(+), operator(-)
 use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : BT_cont_type, alloc_bt_cont_type
