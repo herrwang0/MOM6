@@ -4,16 +4,19 @@ use MOM_cpu_clock,     only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, &
                               CLOCK_MODULE, CLOCK_ROUTINE
 use MOM_domains,       only : pass_var
 use MOM_error_handler, only : MOM_error, MOM_mesg, FATAL, WARNING
+use MOM_file_parser,   only : get_param, log_version, param_file_type
 use MOM_grid,          only : ocean_grid_type
 use MOM_spherical_harmonics, only : spherical_harmonics_init, spherical_harmonics_end, order2index, calc_lmax
 use MOM_spherical_harmonics, only : spherical_harmonics_forward, spherical_harmonics_inverse
 use MOM_spherical_harmonics, only : sht_CS
 use MOM_load_love_numbers, only : Love_Data
-use MOM_tidal_forcing, only : tidal_forcing_CS
+use MOM_unit_scaling,  only : unit_scale_type
 
 implicit none ; private
 
-public calc_SAL, tidal_forcing_sensitivity
+public calc_SAL, tidal_forcing_sensitivity, SAL_init, SAL_end
+
+#include <MOM_memory.h>
 
 !> The control structure for the MOM_self_attr_load module
 type, public :: SAL_CS ; private
@@ -41,16 +44,18 @@ contains
 !! across the spectrum. Tidal-specific methods that assume periodicity, i.e. iterative and read-in SAL, are
 !! stored in MOM_tidal_forcing module.
 subroutine calc_SAL(eta, eta_sal, G, CS)
+  type(ocean_grid_type), intent(in)  :: G  !< The ocean's grid structure.
   real, dimension(SZI_(G),SZJ_(G)), intent(in)  :: eta     !< The sea surface height anomaly from
                                                            !! a time-mean geoid [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G)), intent(out) :: eta_sal !< The sea surface height anomaly from
                                                            !! self-attraction and loading [Z ~> m].
-  type(ocean_grid_type), intent(in)  :: G  !< The ocean's grid structure.
-  type(SAL_CS),          intent(in)  :: CS !< The control structure returned by a previous call to SAL_init.
+  type(SAL_CS), intent(inout) :: CS !< The control structure returned by a previous call to SAL_init.
 
   ! Local variables
   integer :: n, m, l
   integer :: Isq, Ieq, Jsq, Jeq
+  integer :: i, j
+  real :: eta_prop
 
   call cpu_clock_begin(id_clock_SAL)
 
@@ -156,14 +161,15 @@ subroutine SAL_init(G, US, param_file, CS)
   ! Read all relevant parameters and write them to the model log.
   call log_version(param_file, mdl, version, "")
 
-  call get_param(param_file, '', "TIDES", tides,
-                 default=.false., do_not_log=.True.)
+  call get_param(param_file, '', "TIDES", tides, default=.false., do_not_log=.True.)
 
   CS%use_prev_tides = .false.
   tidal_sal_from_file = .false.
   if (tides) then
-    call read_param(param_file, "USE_PREVIOUS_TIDES", CS%use_prev_tides)
-    call read_param(param_file, "TIDAL_SAL_FROM_FILE", tidal_sal_from_file)
+    call get_param(param_file, '', "USE_PREVIOUS_TIDES", CS%use_prev_tides,&
+                   default=.false., do_not_log=.True.)
+    call get_param(param_file, '', "TIDAL_SAL_FROM_FILE", tidal_sal_from_file,&
+                   default=.false., do_not_log=.True.)
   endif
 
   call get_param(param_file, mdl, "TIDE_USE_SAL_SCALAR", CS%use_sal_scalar, &
@@ -183,7 +189,7 @@ subroutine SAL_init(G, US, param_file, CS)
                  "self-attraction and loading term in tides.", default=.false.)
 
   call get_param(param_file, mdl, "CALCULATE_SAL", calculate_sal, &
-                 "If true, apply self-attraction and loading.", default=.true.)
+                 "If true, calculate self-attraction and loading.", default=tides)
 
   ! ! Default USE_SAL is TRUE for now to keep backward compatibility with old MOM_INPUT files. It should be changed to
   ! ! FALSE in the future (mostly to avoid the SSH calculations in MOM_PressureForce). In that case, the following check
@@ -211,7 +217,7 @@ subroutine SAL_init(G, US, param_file, CS)
     call spherical_harmonics_init(G, param_file, CS%sht)
   endif
 
-  id_clock_tides = cpu_clock_id('(Ocean SAL)', grain=CLOCK_MODULE)
+  id_clock_SAL = cpu_clock_id('(Ocean SAL)', grain=CLOCK_MODULE)
 
 end subroutine SAL_init
 

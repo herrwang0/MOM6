@@ -105,10 +105,10 @@ subroutine PressureForce_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp, ti
 
   if (CS%Analytic_FV_PGF) then
     call PressureForce_FV_init(Time, G, GV, US, param_file, diag, &
-             CS%PressureForce_FV, tides_CSp)
+             CS%PressureForce_FV, SAL_CSp, tides_CSp)
   else
     call PressureForce_Mont_init(Time, G, GV, US, param_file, diag, &
-             CS%PressureForce_Mont, tides_CSp)
+             CS%PressureForce_Mont, SAL_CSp, tides_CSp)
   endif
 end subroutine PressureForce_init
 

@@ -67,11 +67,6 @@ type, public :: tidal_forcing_CS ; private
     cosphase_prev(:,:,:), & !< The cosine and sine of the phase of the
     sinphase_prev(:,:,:), & !< amphidromes in the previous tidal solutions.
     amp_prev(:,:,:)         !< The amplitude of the previous tidal solution [Z ~> m].
-  type(sht_CS) :: sht       !< Spherical harmonic transforms (SHT) for SAL
-  integer :: sal_sht_Nd     !< Maximum degree for SHT [nodim]
-  real, allocatable :: Love_Scaling(:)      !< Love number for each SHT mode [nodim]
-  real, allocatable :: Snm_Re(:), & !< Real and imaginary SHT coefficient for SHT SAL
-                       Snm_Im(:)    !< [Z ~> m]
 end type tidal_forcing_CS
 
 integer :: id_clock_tides !< CPU clock for tides

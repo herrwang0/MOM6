@@ -36,7 +36,7 @@ public PressureForce_FV_Bouss, PressureForce_FV_nonBouss
 !> Finite volume pressure gradient control structure
 type, public :: PressureForce_FV_CS ; private
   logical :: initialized = .false. !< True if this control structure has been initialized.
-  logical :: sal            !< If true, calculate self-attraction and loading.
+  logical :: calculate_SAL  !< If true, calculate self-attraction and loading.
   logical :: tides          !< If true, apply tidal momentum forcing.
   real    :: Rho0           !< The density used in the Boussinesq
                             !! approximation [R ~> kg m-3].
@@ -313,11 +313,11 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       SSH(i,j) = (za(i,j) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref
     enddo ; enddo
-    call calc_sal(SSH, e_sal, G, CS%sal_CSp)
+    call calc_SAL(SSH, e_sal, G, CS%SAL_CSp)
   else
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      eta_sal(i,j) = 0.0
+      e_sal(i,j) = 0.0
     enddo ; enddo
   endif
 
@@ -561,11 +561,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
       enddo ; enddo
     enddo
-    call calc_SAL(SSH, e_sal, G, CS%sal_CS)
+    call calc_SAL(SSH, e_sal, G, CS%SAL_CSp)
   else
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      eta_sal(i,j) = 0.0
+      e_sal(i,j) = 0.0
     enddo ; enddo
   endif
 
