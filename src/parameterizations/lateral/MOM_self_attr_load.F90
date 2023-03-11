@@ -199,7 +199,7 @@ subroutine SAL_init(G, US, param_file, CS)
   !   call MOM_error(FATAL, trim(mdl)//": USE_SAL is False but one of the options is True. Nothing will happen.")
 
   if (CS%use_sal_sht) then
-    call get_param(param_file, mdl, "SAL_SHT_DEGREE", CS%sal_sht_Nd, &
+    call get_param(param_file, mdl, "TIDAL_SAL_SHT_DEGREE", CS%sal_sht_Nd, &
                    "The maximum degree of the spherical harmonics transformation used for "// &
                    "calculating the self-attraction and loading term.", &
                    default=0, do_not_log=.not. CS%use_sal_sht)
