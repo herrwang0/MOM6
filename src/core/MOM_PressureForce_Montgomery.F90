@@ -467,6 +467,7 @@ subroutine PressureForce_Mont_Bouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pbce,
         SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
       enddo ; enddo
     enddo
+    call calc_SAL(SSH, e_sal, G, CS%SAL_CSp)
   else
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       e_sal(i,j) = 0.0
@@ -863,6 +864,8 @@ subroutine PressureForce_Mont_init(Time, G, GV, US, param_file, diag, CS, SAL_CS
   CS%diag => diag ; CS%Time => Time
   if (present(tides_CSp)) &
     CS%tides_CSp => tides_CSp
+  if (present(SAL_CSp)) &
+    CS%SAL_CSp => SAL_CSp
 
   mdl = "MOM_PressureForce_Mont"
   call log_version(param_file, mdl, version, "")
@@ -872,10 +875,10 @@ subroutine PressureForce_Mont_init(Time, G, GV, US, param_file, diag, CS, SAL_CS
                  "properties, or with BOUSSINSEQ false to convert some "//&
                  "parameters from vertical units of m to kg m-2.", &
                  units="kg m-3", default=1035.0, scale=US%R_to_kg_m3)
-  call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
-                 "If true, calculate self-attraction and loading.", default=.true.)
   call get_param(param_file, mdl, "TIDES", CS%tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
+  call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
+                 "If true, calculate self-attraction and loading.", default=CS%tides)
   call get_param(param_file, mdl, "USE_EOS", use_EOS, default=.true., &
                  do_not_log=.true.) ! Input for diagnostic use only.
 

@@ -4338,6 +4338,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                              ! the answers from the end of 2018.  Otherwise, use more efficient
                              ! or general expressions.
   logical :: use_BT_cont_type
+  logical :: use_tides
   character(len=48) :: thickness_units, flux_units
   character*(40) :: hvel_str
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
@@ -4489,8 +4490,10 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "If both BAROTROPIC_2018_ANSWERS and BAROTROPIC_ANSWER_DATE are specified, the "//&
                  "latter takes precedence.", default=default_answer_date)
 
+  call get_param(param_file, mdl, "TIDES", use_tides, &
+                 "If true, apply tidal momentum forcing.", default=.false.)
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
-                 "If true, calculate self-attraction and loading.", default=.true.)
+                 "If true, calculate self-attraction and loading.", default=use_tides)
   det_de = 0.0
   if (CS%calculate_SAL .and. associated(CS%SAL_CSp)) &
     call tidal_forcing_sensitivity(CS%SAL_CSp, det_de)
