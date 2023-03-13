@@ -121,7 +121,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     SSH, &      ! The sea surface height anomaly, in depth units [Z ~> m].
     e_sal, &    ! The bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
     e_tidal, &  ! The bottom geopotential anomaly due to tidal forces from astronomical sources
-                ! and self-attraction and loading with tidal frequencies [Z ~> m].
+                ! and harmonic self-attraction and loading specific to tides [Z ~> m].
     dM, &       ! The barotropic adjustment to the Montgomery potential to
                 ! account for a reduced gravity model [L2 T-2 ~> m2 s-2].
     za          ! The geopotential anomaly (i.e. g*e + alpha_0*pressure) at the
@@ -306,7 +306,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     enddo ; enddo
   enddo
 
-  ! The following two if-statements are arranged in a way that old answers are not changed.
+  !   The following two if-statements are arranged in a way that answers are not
+  ! changed from old versions in which SAL is part of the tidal forcing module.
   if (CS%calculate_SAL) then
     ! Find and add the self-attraction and loading geopotential anomaly.
     !$OMP parallel do default(shared)
@@ -326,7 +327,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     call calc_tidal_forcing(CS%Time, e_tidal, G, US, CS%tides_CSp)
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      za(i,j) = za(i,j) - GV%g_Earth * (e_sal(i,j)+e_tidal(i,j))
+      za(i,j) = za(i,j) - GV%g_Earth * (e_sal(i,j) + e_tidal(i,j))
     enddo ; enddo
   else
     !$OMP parallel do default(shared)
@@ -466,7 +467,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G))  :: &
     e_sal, &    ! The bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
     e_tidal, &  ! The bottom geopotential anomaly due to tidal forces from astronomical sources
-                ! and self-attraction and loading with tidal frequencies [Z ~> m].
+                ! and harmonic self-attraction and loading specific to tides [Z ~> m].
     SSH, &      ! The sea surface height anomaly, in depth units [Z ~> m].
     dM          ! The barotropic adjustment to the Montgomery potential to
                 ! account for a reduced gravity model [L2 T-2 ~> m2 s-2].
@@ -546,7 +547,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   G_Rho0 = GV%g_Earth / GV%Rho0
   rho_ref = CS%Rho0
 
-  ! The following two if-statements are arranged in a way that old answers are not changed.
+  !   The following two if-statements are arranged in a way that answers are not
+  ! changed from old versions in which SAL is part of the tidal forcing module.
   if (CS%calculate_SAL) then
     !   Determine the surface height anomaly for calculating self attraction
     ! and loading.  This should really be based on bottom pressure anomalies,
@@ -779,12 +781,12 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     ! what is used for eta in btstep.  See how e was calculated about 200 lines above.
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        eta(i,j) = e(i,j,1)*GV%Z_to_H + (e_sal(i,j)+e_tidal(i,j))*GV%Z_to_H
+        eta(i,j) = e(i,j,1)*GV%Z_to_H + (e_sal(i,j) + e_tidal(i,j))*GV%Z_to_H
       enddo ; enddo
     else
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        eta(i,j) = e(i,j,1)*GV%Z_to_H + e_sal(i,j)*GV%Z_to_H
+        eta(i,j) = (e(i,j,1) + e_sal(i,j))*GV%Z_to_H
       enddo ; enddo
     endif
   endif
@@ -823,7 +825,7 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
   type(param_file_type),      intent(in)    :: param_file !< Parameter file handles
   type(diag_ctrl), target,    intent(inout) :: diag !< Diagnostics control structure
   type(PressureForce_FV_CS),  intent(inout) :: CS !< Finite volume PGF control structure
-  type(SAL_CS), intent(in), target, optional :: SAL_CSp !< SAL control structure
+  type(SAL_CS),           intent(in), target, optional :: SAL_CSp !< SAL control structure
   type(tidal_forcing_CS), intent(in), target, optional :: tides_CSp !< Tides control structure
   ! This include declares and sets the variable "version".
 # include "version_variable.h"

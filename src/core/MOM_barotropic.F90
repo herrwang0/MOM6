@@ -22,7 +22,7 @@ use MOM_open_boundary, only : OBC_DIRECTION_E, OBC_DIRECTION_W
 use MOM_open_boundary, only : OBC_DIRECTION_N, OBC_DIRECTION_S, OBC_segment_type
 use MOM_restart, only : register_restart_field, register_restart_pair
 use MOM_restart, only : query_initialized, MOM_restart_CS
-use MOM_self_attr_load, only : tidal_forcing_sensitivity
+use MOM_self_attr_load, only : scalar_SAL_sensitivity
 use MOM_self_attr_load, only : SAL_CS
 use MOM_time_manager, only : time_type, real_to_time, operator(+), operator(-)
 use MOM_unit_scaling, only : unit_scale_type
@@ -225,7 +225,7 @@ type, public :: barotropic_CS ; private
   real    :: const_dyn_psurf !< The constant that scales the dynamic surface
                              !! pressure [nondim].  Stable values are < ~1.0.
                              !! The default is 0.9.
-  logical :: calculate_SAL   !< If true, calculate tidal momentum forcing.
+  logical :: calculate_SAL   !< If true, calculate self-attration and loading.
   logical :: tidal_sal_bug   !< If true, the tidal self-attraction and loading anomaly in the
                              !! barotropic solver has the wrong sign, replicating a long-standing
                              !! bug.
@@ -1087,7 +1087,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   endif
 
   if (CS%calculate_SAL) then
-    call tidal_forcing_sensitivity(CS%SAL_CSp, det_de)
+    call scalar_SAL_sensitivity(CS%SAL_CSp, det_de)
     if (CS%tidal_sal_bug) then
       dgeo_de = 1.0 + det_de + CS%G_extra
     else
@@ -2835,7 +2835,7 @@ subroutine set_dtbt(G, GV, US, CS, eta, pbce, BT_cont, gtot_est, SSH_add)
   endif
 
   det_de = 0.0
-  if (CS%calculate_SAL) call tidal_forcing_sensitivity(CS%SAL_CSp, det_de)
+  if (CS%calculate_SAL) call scalar_SAL_sensitivity(CS%SAL_CSp, det_de)
   if (CS%tidal_sal_bug) then
     dgeo_de = 1.0 + max(0.0, det_de + CS%G_extra)
   else
@@ -4496,7 +4496,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "If true, calculate self-attraction and loading.", default=use_tides)
   det_de = 0.0
   if (CS%calculate_SAL .and. associated(CS%SAL_CSp)) &
-    call tidal_forcing_sensitivity(CS%SAL_CSp, det_de)
+    call scalar_SAL_sensitivity(CS%SAL_CSp, det_de)
   call get_param(param_file, mdl, "BAROTROPIC_TIDAL_SAL_BUG", CS%tidal_sal_bug, &
                  "If true, the tidal self-attraction and loading anomaly in the barotropic "//&
                  "solver has the wrong sign, replicating a long-standing bug with a scalar "//&

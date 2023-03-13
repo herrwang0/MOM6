@@ -553,11 +553,7 @@ subroutine find_in_files(filenames, varname, array, G, scale)
 end subroutine find_in_files
 
 !>   This subroutine calculates the geopotential anomalies that drive the tides,
-!! including self-attraction and loading.  Optionally, it also returns the
-!! partial derivative of the local geopotential height with the input sea surface
-!! height.  For now, eta and eta_tidal are both geopotential heights in depth
-!! units, but probably the input for eta should really be replaced with the
-!! column mass anomalies.
+!! including tidal self-attraction and loading from previous solutions.
 subroutine calc_tidal_forcing(Time, eta_tidal, G, US, CS)
   type(ocean_grid_type),            intent(in)  :: G         !< The ocean's grid structure.
   type(time_type),                  intent(in)  :: Time      !< The time for the caluculation.
@@ -655,28 +651,16 @@ end subroutine tidal_forcing_end
 !! can be changed at run time by setting variables like TIDE_M2_FREQ,
 !! TIDE_M2_AMP and TIDE_M2_PHASE_T0 (for M2).
 !!
-!!   In addition, the approach to calculating self-attraction and
-!! loading is set at run time.  The default is to use the scalar
-!! approximation, with a coefficient TIDE_SAL_SCALAR_VALUE that must
-!! be set in the run-time file (for global runs, 0.094 is typical).
-!! Alternately, TIDAL_SAL_FROM_FILE can be set to read the SAL from
-!! a file containing the results of a previous simulation. To iterate
-!! the SAL to convergence, USE_PREVIOUS_TIDES may be useful (for
-!! details, see Arbic et al., 2004, DSR II). With TIDAL_SAL_FROM_FILE
-!! or USE_PREVIOUS_TIDES,a list of input files must be provided to
-!! describe each constituent's properties from a previous solution.
-!!
-!!   This module also contains a method to calculate self-attraction
-!! and loading using spherical harmonic transforms. The algorithm is
-!! based on SAL calculation in Model for Prediction Across Scales
-!! (MPAS)-Ocean developed by Los Alamos National Laboratory and
-!! University of Michigan (Barton et al. (2022) and Brus et al. (2022)).
-!!
-!! Barton, K.N., Nairita, P., Brus, S.R., Petersen, M.R., Arbic, B.K., Engwirda, D., Roberts, A.F., Westerink, J.,
-!! Wirasaet, D., and Schindelegger, M., 2022: Performance of Model for Prediction Across Scales (MPAS) Ocean as a
-!! Global Barotropic Tide Model. Journal of Advances in Modeling Earth Systems, in review.
-!!
-!! Brus, S.R., Barton, K.N., Nairita, P., Roberts, A.F., Engwirda, D., Petersen, M.R., Arbic, B.K., Wirasaet, D.,
-!! Westerink, J., and Schindelegger, M., 2022: Scalable self attraction and loading calculations for unstructured ocean
-!! models. Ocean Modelling, in review.
+!!   In addition, approaches to calculate self-attraction and loading
+!! due to tides (harmonics of astronomical forcing frequencies)
+!! are provided. TIDAL_SAL_FROM_FILE can be set to read the phase and
+!! amplitude of the tidal SAL. USE_PREVIOUS_TIDES may be useful in
+!! combination with the scalar approximation to iterate the SAL to
+!! convergence (for details, see Arbic et al., 2004, DSR II). With
+!! TIDAL_SAL_FROM_FILE or USE_PREVIOUS_TIDES, a list of input files
+!! must be provided to describe each constituent's properties from
+!! a previous solution. The online SAL calculations that are functions
+!! of SSH (rather should be bottom pressure anmoaly), either a scalar
+!! approximation or with spherical harmonic transforms, are located in
+!! MOM_self_attr_load.
 end module MOM_tidal_forcing

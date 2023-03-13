@@ -1,20 +1,19 @@
 module MOM_self_attr_load
 
-use MOM_cpu_clock,     only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, &
-                              CLOCK_MODULE, CLOCK_ROUTINE
+use MOM_cpu_clock,     only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_MODULE
 use MOM_domains,       only : pass_var
-use MOM_error_handler, only : MOM_error, MOM_mesg, FATAL, WARNING
+use MOM_error_handler, only : MOM_error, FATAL, WARNING
 use MOM_file_parser,   only : get_param, log_version, param_file_type
 use MOM_grid,          only : ocean_grid_type
+use MOM_unit_scaling,  only : unit_scale_type
 use MOM_spherical_harmonics, only : spherical_harmonics_init, spherical_harmonics_end, order2index, calc_lmax
 use MOM_spherical_harmonics, only : spherical_harmonics_forward, spherical_harmonics_inverse
 use MOM_spherical_harmonics, only : sht_CS
 use MOM_load_love_numbers, only : Love_Data
-use MOM_unit_scaling,  only : unit_scale_type
 
 implicit none ; private
 
-public calc_SAL, tidal_forcing_sensitivity, SAL_init, SAL_end
+public calc_SAL, scalar_SAL_sensitivity, SAL_init, SAL_end
 
 #include <MOM_memory.h>
 
@@ -62,7 +61,7 @@ subroutine calc_SAL(eta, eta_sal, G, CS)
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
 
   ! use the scalar approximation, iterative tidal SAL or no SAL
-  call tidal_forcing_sensitivity(CS, eta_prop)
+  call scalar_SAL_sensitivity(CS, eta_prop)
   do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
     eta_sal(i,j) = eta_prop*eta(i,j)
   enddo ; enddo
@@ -87,22 +86,21 @@ subroutine calc_SAL(eta, eta_sal, G, CS)
   call cpu_clock_end(id_clock_SAL)
 end subroutine calc_SAL
 
-!>   This subroutine calculates returns the partial derivative of the local
-!! geopotential height with the input sea surface height due to self-attraction
-!! and loading.
-subroutine tidal_forcing_sensitivity(CS, deta_tidal_deta)
-  type(SAL_CS), intent(in)  :: CS !< The control structure returned by a previous call to tidal_forcing_init.
-  real,         intent(out) :: deta_tidal_deta !< The partial derivative of eta_tidal with
-                                               !! the local value of eta [nondim].
+!>   This subroutine calculates the partial derivative of the local geopotential height with the input
+!! sea surface height due to the scalar approximation of self-attraction and loading.
+subroutine scalar_SAL_sensitivity(CS, deta_sal_deta)
+  type(SAL_CS), intent(in)  :: CS !< The control structure returned by a previous call to SAL_init.
+  real,         intent(out) :: deta_sal_deta !< The partial derivative of eta_sal with
+                                             !! the local value of eta [nondim].
 
   if (CS%USE_SAL_SCALAR .and. CS%USE_PREV_TIDES) then
-    deta_tidal_deta = 2.0*CS%SAL_SCALAR
+    deta_sal_deta = 2.0*CS%SAL_SCALAR
   elseif (CS%USE_SAL_SCALAR .or. CS%USE_PREV_TIDES) then
-    deta_tidal_deta = CS%SAL_SCALAR
+    deta_sal_deta = CS%SAL_SCALAR
   else
-    deta_tidal_deta = 0.0
+    deta_sal_deta = 0.0
   endif
-end subroutine tidal_forcing_sensitivity
+end subroutine scalar_SAL_sensitivity
 
 !> This subroutine calculates coefficients of the spherical harmonic modes for self-attraction and loading.
 !! The algorithm is based on the SAL implementation in MPAS-ocean, which was modified by Kristin Barton from
@@ -142,15 +140,15 @@ subroutine calc_love_scaling(nlm, rhoW, rhoE, Love_Scaling)
   enddo ; enddo
 end subroutine calc_love_scaling
 
+!> This subroutine initializeds the self-attraction and loading control structure.
 subroutine SAL_init(G, US, param_file, CS)
   type(ocean_grid_type),  intent(inout) :: G    !< The ocean's grid structure.
   type(unit_scale_type),  intent(in)    :: US   !< A dimensional unit scaling type
   type(param_file_type),  intent(in)    :: param_file !< A structure to parse for run-time parameters.
-  type(SAL_CS), intent(inout) :: CS   !< Tidal forcing control structure
+  type(SAL_CS), intent(inout) :: CS   !< Self-attraction and loading control structure
 
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_self_attr_load" ! This module's name.
-  character(len=128) :: mesg
   integer :: lmax ! Total modes of the real spherical harmonics [nondim]
   real :: rhoW    ! The average density of sea water [R ~> kg m-3].
   real :: rhoE    ! The average density of Earth [R ~> kg m-3].
@@ -221,7 +219,7 @@ subroutine SAL_init(G, US, param_file, CS)
 
 end subroutine SAL_init
 
-!> This subroutine deallocates memory associated with the tidal forcing module.
+!> This subroutine deallocates memory associated with the SAL module.
 subroutine SAL_end(CS)
   type(SAL_CS), intent(inout) :: CS !< The control structure returned by a previous call
                                     !! to SAL_init; it is deallocated here.
@@ -233,5 +231,41 @@ subroutine SAL_end(CS)
   endif
 end subroutine SAL_end
 
-! A neater way would be use strings for SAL methods.
+!> \namespace self_attr_load
+!!
+!! This module contains methods to calculate self-attraction and loading (SAL) as a function of sea surface height (SSH)
+!! (rather, it should be bottom pressure anomaly). SAL is primarily used for fast evolving processes like tides or
+!! storm surges, but the effect applys to all motions.
+!!
+!!     If TIDE_USE_SAL_SCALAR is true, a scalar approximiation is applied (Accad and Pekeris 1978) and the SAL is simply
+!! a fraction (set by TIDE_SAL_SCALAR_VALUE, usualy around 10% for global tides) of local SSH . For the tides, the
+!! scalar approximation can also be used to iterate the SAL to convergence [see USE_PREVIOUS_TIDES in MOM_tidal_forcing,
+!! Arbic et al. (2004)].
+!!
+!!    If TIDAL_SAL_SHT is true, a more accurate online spherical harmonic transforms are used to calculate SAL.
+!! Subroutines in module MOM_spherical_harmonics are called and the degree of spherical harmonic transforms is set by
+!! TIDAL_SAL_SHT_DEGREE. The algorithm is based on SAL calculation in Model for Prediction Across Scales (MPAS)-Ocean
+!! developed by Los Alamos National Laboratory and University of Michigan [Barton et al. (2022) and Brus et al. (2023)].
+!!
+!! References:
+!!
+!! Accad, Y. and Pekeris, C.L., 1978. Solution of the tidal equations for the M2 and S2 tides in the world oceans from a
+!! knowledge of the tidal potential alone. Philosophical Transactions of the Royal Society of London. Series A,
+!! Mathematical and Physical Sciences, 290(1368), pp.235-266.
+!! https://doi.org/10.1098/rsta.1978.0083
+!!
+!! Arbic, B.K., Garner, S.T., Hallberg, R.W. and Simmons, H.L., 2004. The accuracy of surface elevations in forward
+!! global barotropic and baroclinic tide models. Deep Sea Research Part II: Topical Studies in Oceanography, 51(25-26),
+!! pp.3069-3101.
+!! https://doi.org/10.1016/j.dsr2.2004.09.014
+!!
+!! Barton, K.N., Pal, N., Brus, S.R., Petersen, M.R., Arbic, B.K., Engwirda, D., Roberts, A.F., Westerink, J.J.,
+!! Wirasaet, D. and Schindelegger, M., 2022. Global Barotropic Tide Modeling Using Inline Self‐Attraction and Loading in
+!! MPAS‐Ocean. Journal of Advances in Modeling Earth Systems, 14(11), p.e2022MS003207.
+!! https://doi.org/10.1029/2022MS003207
+!!
+!! Brus, S.R., Barton, K.N., Pal, N., Roberts, A.F., Engwirda, D., Petersen, M.R., Arbic, B.K., Wirasaet, D.,
+!! Westerink, J.J. and Schindelegger, M., 2023. Scalable self attraction and loading calculations for unstructured ocean
+!! tide models. Ocean Modelling, p.102160.
+!! https://doi.org/10.1016/j.ocemod.2023.102160
 end module MOM_self_attr_load
