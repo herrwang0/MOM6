@@ -81,6 +81,8 @@ type, public :: diagnostics_CS ; private
   integer :: id_col_ht         = -1, id_dh_dt          = -1
   integer :: id_KE             = -1, id_dKEdt          = -1
   integer :: id_PE_to_KE       = -1, id_KE_BT          = -1
+  integer :: id_KE_BT_PF       = -1, id_KE_BT_CF       = -1
+  integer :: id_KE_BT_BC       = -1, id_KE_BT_WD       = -1
   integer :: id_KE_Coradv      = -1, id_KE_adv         = -1
   integer :: id_KE_visc        = -1, id_KE_stress      = -1
   integer :: id_KE_horvisc     = -1, id_KE_dia         = -1
@@ -1048,6 +1050,82 @@ subroutine calculate_energy_diagnostics(u, v, h, uh, vh, ADp, CDp, G, GV, US, CS
     call post_data(CS%id_KE_BT, KE_term, CS%diag)
   endif
 
+  if (CS%id_KE_BT_PF > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_pf(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_pf(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_PF, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_BT_CF > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_cf(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_cf(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_CF, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_BT_BC > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_bc(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_bc(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_BC, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_BT_WD > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_wd(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_wd(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_WD, KE_term, CS%diag)
+  endif
+
   if (CS%id_KE_Coradv > 0) then
     ! Calculate the KE source from the combined Coriolis and advection terms [H L2 T-3 ~> m3 s-3].
     ! The Coriolis source should be zero, but is not due to truncation errors.  There should be
@@ -1791,6 +1869,18 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
       'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
   if (split) then
     CS%id_KE_BT = register_diag_field('ocean_model', 'KE_BT', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_PF = register_diag_field('ocean_model', 'KE_BT_PF', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_CF = register_diag_field('ocean_model', 'KE_BT_CF', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_BC = register_diag_field('ocean_model', 'KE_BT_BC', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_WD = register_diag_field('ocean_model', 'KE_BT_WD', diag%axesTL, Time, &
         'Barotropic contribution to Kinetic Energy', &
         'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
   endif

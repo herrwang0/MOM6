@@ -300,6 +300,7 @@ type, public :: barotropic_CS ; private
 
   !>@{ Diagnostic IDs
   integer :: id_PFu_bt = -1, id_PFv_bt = -1, id_Coru_bt = -1, id_Corv_bt = -1
+  integer :: id_WDragu_bt = -1, id_WDragv_bt = -1
   integer :: id_ubtforce = -1, id_vbtforce = -1, id_uaccel = -1, id_vaccel = -1
   integer :: id_visc_rem_u = -1, id_visc_rem_v = -1, id_eta_cor = -1
   integer :: id_ubt = -1, id_vbt = -1, id_eta_bt = -1, id_ubtav = -1, id_vbtav = -1
@@ -542,9 +543,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     Cor_ref_u, &  ! The zonal barotropic Coriolis acceleration due
                   ! to the reference velocities [L T-2 ~> m s-2].
     PFu, &        ! The zonal pressure force acceleration [L T-2 ~> m s-2].
+    WDragu, &     ! The zonal linear wave drag acceleration [L T-2 ~> m s-2].
     Rayleigh_u, & ! A Rayleigh drag timescale operating at u-points [T-1 ~> s-1].
     PFu_bt_sum, & ! The summed zonal barotropic pressure gradient force [L T-2 ~> m s-2].
     Coru_bt_sum, & ! The summed zonal barotropic Coriolis acceleration [L T-2 ~> m s-2].
+    WDragu_bt_sum, & ! The summed zonal barotropic linear wave drag acceleration [L T-2 ~> m s-2].
     DCor_u, &     ! An averaged depth or total thickness at u points [Z ~> m] or [H ~> m or kg m-2].
     Datu          ! Basin depth at u-velocity grid points times the y-grid
                   ! spacing [H L ~> m2 or kg m-1].
@@ -573,10 +576,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     Cor_ref_v, &  ! The meridional barotropic Coriolis acceleration due
                   ! to the reference velocities [L T-2 ~> m s-2].
     PFv, &        ! The meridional pressure force acceleration [L T-2 ~> m s-2].
+    WDragv, &     ! The meridional linear wave drag acceleration [L T-2 ~> m s-2].
     Rayleigh_v, & ! A Rayleigh drag timescale operating at v-points [T-1 ~> s-1].
     PFv_bt_sum, & ! The summed meridional barotropic pressure gradient force,
                   ! [L T-2 ~> m s-2].
     Corv_bt_sum, & ! The summed meridional barotropic Coriolis acceleration,
+                  ! [L T-2 ~> m s-2].
+    WDragv_bt_sum, & ! The summed meridional barotropic linear wave drag acceleration,
                   ! [L T-2 ~> m s-2].
     DCor_v, &     ! An averaged depth or total thickness at v points [Z ~> m] or [H ~> m or kg m-2].
     Datv          ! Basin depth at v-velocity grid points times the x-grid
@@ -615,6 +621,23 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   type(local_BT_cont_v_type), dimension(SZIW_(CS),SZJBW_(CS)) :: &
     BTCL_v        ! A repackaged version of the v-point information in BT_cont.
   ! End of wide-sized variables.
+
+  ! real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: accel_layer_u_pf
+  !   !< accel_layer_u due to pga [L T-2 ~> m s-2]
+  ! real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: accel_layer_v_pf
+  !   !< accel_layer_v due to pga [L T-2 ~> m s-2]
+  ! real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: accel_layer_u_cf
+  !   !< accel_layer_u due to Coriolis [L T-2 ~> m s-2]
+  ! real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: accel_layer_v_cf
+  !   !< accel_layer_v due to Coriolis [L T-2 ~> m s-2]
+  ! real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: accel_layer_u_bc
+  !   !< accel_layer_u due to layer pressure anomaly [L T-2 ~> m s-2]
+  ! real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: accel_layer_v_bc
+  !   !< accel_layer_v due to layer pressure anomaly [L T-2 ~> m s-2]
+  ! real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: accel_layer_u_wd
+  !   !< accel_layer_u due to linear wave drag [L T-2 ~> m s-2]
+  ! real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: accel_layer_v_wd
+  !   !< accel_layer_v due to linear wave drag [L T-2 ~> m s-2]
 
   real, dimension(SZIBW_(CS),SZJW_(CS)) :: &
     ubt_prev, ubt_sum_prev, ubt_wtd_prev, & ! Previous velocities stored for OBCs [L T-1 ~> m s-1]
@@ -655,7 +678,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   real :: Htot_avg    ! The average total thickness of the tracer columns adjacent to a
                       ! velocity point [H ~> m or kg m-2]
   logical :: do_hifreq_output  ! If true, output occurs every barotropic step.
-  logical :: use_BT_cont, do_ave, find_etaav, find_PF, find_Cor
+  logical :: use_BT_cont, do_ave, find_etaav, find_PF, find_Cor, find_WDrag
   logical :: integral_BT_cont ! If true, update the barotropic continuity equation directly
                       ! from the initial condition using the time-integrated barotropic velocity.
   logical :: ice_is_rigid, nonblock_setup, interp_eta_PF
@@ -744,6 +767,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   find_etaav = present(etaav)
   find_PF = (do_ave .and. ((CS%id_PFu_bt > 0) .or. (CS%id_PFv_bt > 0)))
   find_Cor = (do_ave .and. ((CS%id_Coru_bt > 0) .or. (CS%id_Corv_bt > 0)))
+  find_WDrag = (do_ave .and. ((CS%id_WDragu_bt > 0) .or. (CS%id_WDragv_bt > 0)))
 
   add_uh0 = associated(uh0)
   if (add_uh0 .and. .not.(associated(vh0) .and. associated(u_uh0) .and. &
@@ -1969,6 +1993,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (CS%linear_wave_drag) then
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv-1,iev+1
+          WDragv(i,J) = - vbt(i,J)*Rayleigh_v(i,J)
           v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * &
               ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
         enddo ; enddo
@@ -2047,6 +2072,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (CS%linear_wave_drag) then
         !$OMP do schedule(static)
         do j=jsv,jev ; do I=isv-1,iev
+          WDragu(I,j) = - ubt(I,j)*Rayleigh_u(I,j)
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
              ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
         enddo ; enddo
@@ -2124,6 +2150,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (CS%linear_wave_drag) then
         !$OMP do schedule(static)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
+          WDragu(I,j) = - ubt(I,j)*Rayleigh_u(I,j)
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
               ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
         enddo ; enddo
@@ -2213,6 +2240,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (CS%linear_wave_drag) then
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv,iev
+          WDragv(i,J) = - vbt(i,J)*Rayleigh_v(i,J)
           v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * &
              ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
         enddo ; enddo
@@ -2295,6 +2323,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       !$OMP do
       do J=js-1,je ; do i=is,ie
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) + wt_accel2(n) * Cor_v(i,J)
+      enddo ; enddo
+      !$OMP end do nowait
+    endif
+
+    if (find_WDrag) then
+      !$OMP do
+      do j=js,je ; do I=is-1,ie
+        WDragu_bt_sum(I,j) = WDragu_bt_sum(I,j) + wt_accel2(n) * WDragu(I,j)
+      enddo ; enddo
+      !$OMP end do nowait
+      !$OMP do
+      do J=js-1,je ; do i=is,ie
+        WDragv_bt_sum(i,J) = WDragv_bt_sum(i,J) + wt_accel2(n) * WDragv(i,J)
       enddo ; enddo
       !$OMP end do nowait
     endif
@@ -2576,30 +2617,71 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     endif
 
 !  Offer various barotropic terms for averaging.
-    if (CS%id_PFu_bt > 0) then
+    if (CS%id_PFu_bt > 0 .or. associated(ADp%u_accel_bt_pf)) then
       do j=js,je ; do I=is-1,ie
         PFu_bt_sum(I,j) = PFu_bt_sum(I,j) * I_sum_wt_accel
       enddo ; enddo
       call post_data(CS%id_PFu_bt, PFu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+      if (associated(ADp%u_accel_bt_pf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+        ADp%u_accel_bt_pf(I,j,k) = PFu_bt_sum(I,j)
+        if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_pf(I,j,k) = 0.0
+      enddo ; enddo ; enddo ; endif
     endif
-    if (CS%id_PFv_bt > 0) then
+    if (CS%id_PFv_bt > 0 .or. associated(ADp%v_accel_bt_pf)) then
       do J=js-1,je ; do i=is,ie
         PFv_bt_sum(i,J) = PFv_bt_sum(i,J) * I_sum_wt_accel
       enddo ; enddo
       call post_data(CS%id_PFv_bt, PFv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+      if (associated(ADp%v_accel_bt_pf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+        ADp%v_accel_bt_pf(i,J,k) = PFv_bt_sum(i,J)
+        if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_pf(i,J,k) = 0.0
+      enddo ; enddo ; enddo ; endif
     endif
-    if (CS%id_Coru_bt > 0) then
+
+    if (CS%id_Coru_bt > 0 .or. associated(ADp%u_accel_bt_cf)) then
       do j=js,je ; do I=is-1,ie
         Coru_bt_sum(I,j) = Coru_bt_sum(I,j) * I_sum_wt_accel
       enddo ; enddo
       call post_data(CS%id_Coru_bt, Coru_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+      if (associated(ADp%u_accel_bt_cf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+        ADp%u_accel_bt_cf(I,j,k) = Coru_bt_sum(I,j)
+        if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_cf(I,j,k) = 0.0
+        enddo ; enddo ; enddo ; endif
     endif
-    if (CS%id_Corv_bt > 0) then
+    if (CS%id_Corv_bt > 0 .or. associated(ADp%v_accel_bt_cf)) then
       do J=js-1,je ; do i=is,ie
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) * I_sum_wt_accel
       enddo ; enddo
       call post_data(CS%id_Corv_bt, Corv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+      if (associated(ADp%v_accel_bt_cf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+        ADp%v_accel_bt_cf(i,J,k) = Corv_bt_sum(i,J)
+        if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_cf(i,J,k) = 0.0
+      enddo ; enddo ; enddo ; endif
     endif
+
+    if (CS%linear_wave_drag) then
+      if (CS%id_WDragu_bt > 0 .or. associated(ADp%u_accel_bt_wd)) then
+        do j=js,je ; do I=is-1,ie
+          WDragu_bt_sum(I,j) = WDragu_bt_sum(I,j) * I_sum_wt_accel
+        enddo ; enddo
+        call post_data(CS%id_WDragu_bt, WDragu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+        if (associated(ADp%u_accel_bt_wd)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+          ADp%u_accel_bt_wd(I,j,k) = WDragu_bt_sum(I,j)
+          if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_wd(I,j,k) = 0.0
+          enddo ; enddo ; enddo ; endif
+      endif
+      if (CS%id_WDragv_bt > 0 .or. associated(ADp%v_accel_bt_wd)) then
+        do J=js-1,je ; do i=is,ie
+          WDragv_bt_sum(i,J) = WDragv_bt_sum(i,J) * I_sum_wt_accel
+        enddo ; enddo
+        call post_data(CS%id_WDragv_bt, WDragv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+        if (associated(ADp%v_accel_bt_cf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+          ADp%v_accel_bt_wd(i,J,k) = WDragv_bt_sum(i,J)
+          if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_wd(i,J,k) = 0.0
+        enddo ; enddo ; enddo ; endif
+      endif
+    endif
+
     if (CS%id_ubtdt > 0) then
       do j=js,je ; do I=is-1,ie
         ubt_dt(I,j) = (ubt_wtd(I,j) - ubt_st(I,j))*Idt
@@ -2611,6 +2693,21 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         vbt_dt(i,J) = (vbt_wtd(i,J) - vbt_st(i,J))*Idt
       enddo ; enddo
       call post_data(CS%id_vbtdt, vbt_dt(isd:ied,JsdB:JedB), CS%diag)
+    endif
+
+    if (associated(ADp%u_accel_bt_bc)) then
+      do k=1,nz ; do j=js,je ; do I=is-1,ie
+        ADp%u_accel_bt_bc(I,j,k) = &
+          ((pbce(i+1,j,k) - gtot_W(i+1,j)) * e_anom(i+1,j) - (pbce(i,j,k) - gtot_E(i,j)) * e_anom(i,j)) * CS%IdxCu(I,j)
+        if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_bc(I,j,k) = 0.0
+      enddo ; enddo ; enddo
+    endif
+    if (associated(ADp%v_accel_bt_bc)) then
+      do k=1,nz ; do J=js-1,je ; do i=is,ie
+        ADp%v_accel_bt_bc(i,J,k) = &
+          ((pbce(i,j+1,k) - gtot_S(i,j+1)) * e_anom(i,j+1) - (pbce(i,j,k) - gtot_N(i,j)) * e_anom(i,j)) * CS%IdyCv(i,J)
+        if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_bc(i,J,k) = 0.0
+      enddo ; enddo ; enddo
     endif
 
     if (CS%id_ubtforce > 0) call post_data(CS%id_ubtforce, BT_force_u(IsdB:IedB,jsd:jed), CS%diag)
@@ -4818,6 +4915,12 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
       'Zonal Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_PFv_bt = register_diag_field('ocean_model', 'PFvBT', diag%axesCv1, Time, &
       'Meridional Anomalous Barotropic Pressure Force Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  if (CS%linear_wave_drag) then
+    CS%id_WDragu_bt = register_diag_field('ocean_model', 'WaveDraguBT', diag%axesCu1, Time, &
+      'Zonal Anomalous Barotropic Linear Wave Drag Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_WDragv_bt = register_diag_field('ocean_model', 'WaveDragvBT', diag%axesCv1, Time, &
+      'Meridional Anomalous Barotropic Linear Wave Drag Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  endif
   CS%id_Coru_bt = register_diag_field('ocean_model', 'CoruBT', diag%axesCu1, Time, &
       'Zonal Barotropic Coriolis Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_Corv_bt = register_diag_field('ocean_model', 'CorvBT', diag%axesCv1, Time, &
