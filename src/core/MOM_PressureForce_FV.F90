@@ -445,7 +445,8 @@ end subroutine PressureForce_FV_nonBouss
 !! To work, the following fields must be set outside of the usual (is:ie,js:je)
 !! range before this subroutine is called:
 !!   h(isB:ie+1,jsB:je+1), T(isB:ie+1,jsB:je+1), and S(isB:ie+1,jsB:je+1).
-subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta)
+subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta, &
+                                  PFu_tide, PFv_tide, PFu_sal, PFv_sal)
   type(ocean_grid_type),                      intent(in)  :: G   !< Ocean grid structure
   type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -463,6 +464,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G)),          optional, intent(out) :: eta !< The sea-surface height used to
                                                          !! calculate PFu and PFv [H ~> m], with any
                                                          !! tidal contributions.
+  real, dimension(:,:,:), optional, pointer :: PFu_tide, PFu_sal
+  real, dimension(:,:,:), optional, pointer :: PFv_tide, PFv_sal
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: e ! Interface height in depth units [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G))  :: &
@@ -529,6 +532,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer :: i, j, k
+  logical :: calc_PF_tide, calc_PF_sal
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -543,6 +547,9 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   do i=Isq,Ieq+1 ; p0(i) = 0.0 ; enddo
   use_ALE = .false.
   if (associated(ALE_CSp)) use_ALE = CS%reconstruct .and. use_EOS
+
+  if (present(PFu_tide) .and. present(PFv_tide)) calc_PF_tide = associated(PFu_tide) .and. associated(PFv_tide)
+  if (present(PFu_sal) .and. present(PFv_sal)) calc_PF_sal = associated(PFu_sal) .and. associated(PFv_sal)
 
   h_neglect = GV%H_subroundoff
   dz_neglect = GV%H_subroundoff * GV%H_to_Z
@@ -809,6 +816,34 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         p_stanley_scalar = p_stanley_scalar + 0.5 * h(i,j,k) * GV%H_to_Pa !Pressure at bottom of layer
      enddo; enddo; enddo
    endif
+
+  if (CS%tides .and. calc_PF_tide) then
+    do k=1,nz
+      !$OMP parallel do default(shared)
+      do j=js,je ; do I=Isq,Ieq
+        PFu_tide(I,j,k) = -(e_tidal(i+1,j) - e_tidal(i,j)) * G%IdxCu(I,j) * GV%g_Earth
+      enddo ; enddo
+      !$OMP parallel do default(shared)
+      do J=Jsq,Jeq ; do i=is,ie
+        PFv_tide(i,J,k) = -(e_tidal(i,j+1) - e_tidal(i,j)) * G%IdyCv(i,J) * GV%g_Earth
+      enddo ; enddo
+    enddo
+  endif
+
+  if (CS%calculate_SAL .and. calc_PF_sal) then
+    do k=1,nz
+      !$OMP parallel do default(shared)
+      do j=js,je ; do I=Isq,Ieq
+        PFu_tide(I,j,k) = -((e_sal(i+1,j) - e_sal(i,j)) + (e_tidal_sal(i+1,j) - e_tidal_sal(i,j))) &
+                           * G%IdxCu(I,j) * GV%g_Earth
+      enddo ; enddo
+      !$OMP parallel do default(shared)
+      do J=Jsq,Jeq ; do i=is,ie
+        PFv_tide(i,J,k) = -((e_sal(i,j+1) - e_sal(i,j)) + (e_tidal_sal(i,j+1) - e_tidal_sal(i,j))) &
+                           * G%IdyCv(i,J) * GV%g_Earth
+      enddo ; enddo
+    enddo
+  endif
 
   ! To be consistent with old runs, tidal forcing diagnostic also includes SAL.
   if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal+e_tidal_sal, CS%diag)

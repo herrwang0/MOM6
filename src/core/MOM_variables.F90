@@ -166,6 +166,10 @@ type, public :: accel_diag_ptrs
     CAv => NULL(), &       !< Meridional Coriolis and momentum advection accelerations [L T-2 ~> m s-2]
     PFu => NULL(), &       !< Zonal acceleration due to pressure forces [L T-2 ~> m s-2]
     PFv => NULL(), &       !< Meridional acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFu_tide => NULL(), &  !< Zonal acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFv_tide => NULL(), &  !< Meridional acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFu_sal => NULL(), &   !< Zonal acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFv_sal => NULL(), &   !< Meridional acceleration due to pressure forces [L T-2 ~> m s-2]
     du_dt_visc => NULL(), &!< Zonal acceleration due to vertical viscosity [L T-2 ~> m s-2]
     dv_dt_visc => NULL(), &!< Meridional acceleration due to vertical viscosity [L T-2 ~> m s-2]
     du_dt_str => NULL(), & !< Zonal acceleration due to the surface stress (included
