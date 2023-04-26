@@ -120,8 +120,9 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     dp, &       ! The (positive) change in pressure across a layer [R L2 T-2 ~> Pa].
     SSH, &      ! The sea surface height anomaly, in depth units [Z ~> m].
     e_sal, &    ! The bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
-    e_tidal, &  ! The bottom geopotential anomaly due to tidal forces from astronomical sources
-                ! and harmonic self-attraction and loading specific to tides [Z ~> m].
+    e_tidal, &  ! The bottom geopotential anomaly due to tidal forces from astronomical sources [Z ~> m].
+    e_tidal_sal, &  ! The bottom geopotential anomaly due to harmonic self-attraction and loading
+                    ! specific to tides [Z ~> m].
     dM, &       ! The barotropic adjustment to the Montgomery potential to
                 ! account for a reduced gravity model [L2 T-2 ~> m2 s-2].
     za          ! The geopotential anomaly (i.e. g*e + alpha_0*pressure) at the
@@ -324,10 +325,10 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
   if (CS%tides) then
     ! Find and add the tidal geopotential anomaly.
-    call calc_tidal_forcing(CS%Time, e_tidal, G, US, CS%tides_CSp)
+    call calc_tidal_forcing(CS%Time, e_tidal, e_tidal_sal, G, US, CS%tides_CSp)
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      za(i,j) = za(i,j) - GV%g_Earth * (e_sal(i,j) + e_tidal(i,j))
+      za(i,j) = za(i,j) - GV%g_Earth * (e_sal(i,j) + e_tidal(i,j) + e_tidal_sal(i,j))
     enddo ; enddo
   else
     !$OMP parallel do default(shared)
@@ -431,7 +432,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   endif
 
   ! To be consistent with old runs, tidal forcing diagnostic also includes SAL.
-  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal, CS%diag)
+  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal+e_tidal_sal, CS%diag)
   if (CS%id_e_sal>0) call post_data(CS%id_e_sal, e_sal, CS%diag)
 
 end subroutine PressureForce_FV_nonBouss
@@ -468,6 +469,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     e_sal, &    ! The bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
     e_tidal, &  ! The bottom geopotential anomaly due to tidal forces from astronomical sources
                 ! and harmonic self-attraction and loading specific to tides [Z ~> m].
+    e_tidal_sal, &  ! The bottom geopotential anomaly due to harmonic self-attraction and loading
+                    ! specific to tides [Z ~> m].
     SSH, &      ! The sea surface height anomaly, in depth units [Z ~> m].
     dM          ! The barotropic adjustment to the Montgomery potential to
                 ! account for a reduced gravity model [L2 T-2 ~> m2 s-2].
@@ -572,10 +575,10 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   endif
 
   if (CS%tides) then
-    call calc_tidal_forcing(CS%Time, e_tidal, G, US, CS%tides_CSp)
+    call calc_tidal_forcing(CS%Time, e_tidal, e_tidal_sal, G, US, CS%tides_CSp)
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      e(i,j,nz+1) = -(G%bathyT(i,j) + (e_sal(i,j) + e_tidal(i,j)))
+      e(i,j,nz+1) = -(G%bathyT(i,j) + (e_sal(i,j) + e_tidal(i,j) +  e_tidal_sal(i,j)))
     enddo ; enddo
   else
     !$OMP parallel do default(shared)
@@ -781,7 +784,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     ! what is used for eta in btstep.  See how e was calculated about 200 lines above.
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        eta(i,j) = e(i,j,1)*GV%Z_to_H + (e_sal(i,j) + e_tidal(i,j))*GV%Z_to_H
+        eta(i,j) = e(i,j,1)*GV%Z_to_H + (e_sal(i,j) + e_tidal(i,j) +  e_tidal_sal(i,j))*GV%Z_to_H
       enddo ; enddo
     else
       !$OMP parallel do default(shared)
@@ -808,7 +811,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
    endif
 
   ! To be consistent with old runs, tidal forcing diagnostic also includes SAL.
-  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal, CS%diag)
+  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal+e_tidal_sal, CS%diag)
   if (CS%id_e_sal>0) call post_data(CS%id_e_sal, e_sal, CS%diag)
   if (CS%id_rho_pgf>0) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
   if (CS%id_rho_stanley_pgf>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)

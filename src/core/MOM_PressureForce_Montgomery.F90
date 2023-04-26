@@ -107,8 +107,9 @@ subroutine PressureForce_Mont_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pb
     dp_star, &    ! Layer thickness after compensation for compressibility [R L2 T-2 ~> Pa].
     SSH, &        ! The sea surface height anomaly, in depth units [Z ~> m].
     e_sal, &      ! Bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
-    e_tidal, &    !   Bottom geopotential anomaly due to tidal forces from astronomical sources
-                  ! and harmonic self-attraction and loading specific to tides [Z ~> m].
+    e_tidal, &    !   Bottom geopotential anomaly due to tidal forces from astronomical sources [Z ~> m].
+    e_tidal_sal, &    !   Bottom geopotential anomaly due to harmonic self-attraction and loading
+                      ! specific to tides [Z ~> m].
     geopot_bot    !   Bottom geopotential relative to a temporally fixed reference value,
                   ! including any tidal contributions [L2 T-2 ~> m2 s-2].
   real :: p_ref(SZI_(G))     !   The pressure used to calculate the coordinate
@@ -215,10 +216,10 @@ subroutine PressureForce_Mont_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pb
   endif
 
   if (CS%tides) then
-    call calc_tidal_forcing(CS%Time, e_tidal, G, US, CS%tides_CSp)
+    call calc_tidal_forcing(CS%Time, e_tidal, e_tidal_sal G, US, CS%tides_CSp)
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      geopot_bot(i,j) = -GV%g_Earth*(e_sal(i,j) + e_tidal(i,j) + G%bathyT(i,j))
+      geopot_bot(i,j) = -GV%g_Earth*(e_sal(i,j) + e_tidal(i,j) + e_tidal_sal(i,j) + G%bathyT(i,j))
     enddo ; enddo
   else
     !$OMP parallel do default(shared)
@@ -360,7 +361,7 @@ subroutine PressureForce_Mont_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pb
   if (CS%id_PFu_bc>0) call post_data(CS%id_PFu_bc, CS%PFu_bc, CS%diag)
   if (CS%id_PFv_bc>0) call post_data(CS%id_PFv_bc, CS%PFv_bc, CS%diag)
   ! To be consistent with old runs, tidal forcing diagnostic also includes SAL.
-  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal, CS%diag)
+  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal+e_tidal_sal, CS%diag)
   if (CS%id_e_sal>0) call post_data(CS%id_e_sal, e_sal, CS%diag)
 
 end subroutine PressureForce_Mont_nonBouss
@@ -410,8 +411,9 @@ subroutine PressureForce_Mont_Bouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pbce,
                              ! for compressibility [Z ~> m].
   real :: SSH(SZI_(G),SZJ_(G)) ! The sea surface height anomaly, in depth units [Z ~> m].
   real :: e_sal(SZI_(G),SZJ_(G)) ! The bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
-  real :: e_tidal(SZI_(G),SZJ_(G)) ! Bottom geopotential anomaly due to tidal forces from astronomical sources
-                             ! and harmonic self-attraction and loading specific to tides, in depth units [Z ~> m].
+  real :: e_tidal(SZI_(G),SZJ_(G)) ! Bottom geopotential anomaly due to tidal forces from astronomical sources [Z ~> m].
+  real :: e_tidal_sal(SZI_(G),SZJ_(G)) ! Bottom geopotential anomaly due to harmonic self-attraction and loading
+                                       ! specific to tides, in depth units [Z ~> m].
   real :: p_ref(SZI_(G))     !   The pressure used to calculate the coordinate
                              ! density [R L2 T-2 ~> Pa] (usually 2e7 Pa = 2000 dbar).
   real :: I_Rho0             ! 1/Rho0 [R-1 ~> m3 kg-1].
@@ -474,10 +476,10 @@ subroutine PressureForce_Mont_Bouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pbce,
   endif
 
   if (CS%tides) then
-    call calc_tidal_forcing(CS%Time, e_tidal, G, US, CS%tides_CSp)
+    call calc_tidal_forcing(CS%Time, e_tidal, e_tidal_sal, G, US, CS%tides_CSp)
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      e(i,j,nz+1) = -(G%bathyT(i,j) + (e_sal(i,j) + e_tidal(i,j)))
+      e(i,j,nz+1) = -(G%bathyT(i,j) + (e_sal(i,j) + e_tidal(i,j) + e_tidal_sal(i,j)))
     enddo ; enddo
   else
     !$OMP parallel do default(shared)
@@ -607,7 +609,7 @@ subroutine PressureForce_Mont_Bouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pbce,
     ! about 200 lines above.
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        eta(i,j) = e(i,j,1)*GV%Z_to_H + (e_sal(i,j)+e_tidal(i,j))*GV%Z_to_H
+        eta(i,j) = e(i,j,1)*GV%Z_to_H + (e_sal(i,j)+e_tidal(i,j)+e_tidal_sal(i,j))*GV%Z_to_H
       enddo ; enddo
     else
       !$OMP parallel do default(shared)
@@ -620,7 +622,7 @@ subroutine PressureForce_Mont_Bouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pbce,
   if (CS%id_PFu_bc>0) call post_data(CS%id_PFu_bc, CS%PFu_bc, CS%diag)
   if (CS%id_PFv_bc>0) call post_data(CS%id_PFv_bc, CS%PFv_bc, CS%diag)
   ! To be consistent with old runs, tidal forcing diagnostic also includes SAL.
-  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal, CS%diag)
+  if (CS%id_e_tidal>0) call post_data(CS%id_e_tidal, e_sal+e_tidal+e_tidal_sal, CS%diag)
   if (CS%id_e_sal>0) call post_data(CS%id_e_sal, e_sal, CS%diag)
 
 end subroutine PressureForce_Mont_Bouss

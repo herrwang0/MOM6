@@ -554,10 +554,12 @@ end subroutine find_in_files
 
 !>   This subroutine calculates the geopotential anomalies that drive the tides,
 !! including tidal self-attraction and loading from previous solutions.
-subroutine calc_tidal_forcing(Time, eta_tidal, G, US, CS)
+subroutine calc_tidal_forcing(Time, eta_tidal, eta_tidal_sal, G, US, CS)
   type(ocean_grid_type),            intent(in)  :: G         !< The ocean's grid structure.
   type(time_type),                  intent(in)  :: Time      !< The time for the caluculation.
   real, dimension(SZI_(G),SZJ_(G)), intent(out) :: eta_tidal !< The tidal forcing geopotential height
+                                                             !! anomalies [Z ~> m].
+  real, dimension(SZI_(G),SZJ_(G)), intent(out) :: eta_tidal_sal !< The tidal SAL geopotential height
                                                              !! anomalies [Z ~> m].
   type(unit_scale_type),            intent(in)  :: US        !< A dimensional unit scaling type
   type(tidal_forcing_CS),           intent(in)  :: CS        !< The control structure returned by a
@@ -573,16 +575,17 @@ subroutine calc_tidal_forcing(Time, eta_tidal, G, US, CS)
 
   call cpu_clock_begin(id_clock_tides)
 
+  do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+    eta_tidal(i,j) = 0.0
+    eta_tidal_sal(i,j) = 0.0
+  enddo ; enddo
+
   if (CS%nc == 0) then
-    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ; eta_tidal(i,j) = 0.0 ; enddo ; enddo
     return
   endif
 
   now = US%s_to_T * time_type_to_real(Time - cs%time_ref)
 
-  do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-    eta_tidal(i,j) = 0.0
-  enddo ; enddo
 
   do c=1,CS%nc
     m = CS%struct(c)
@@ -598,7 +601,7 @@ subroutine calc_tidal_forcing(Time, eta_tidal, G, US, CS)
     cosomegat = cos(CS%freq(c)*now)
     sinomegat = sin(CS%freq(c)*now)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      eta_tidal(i,j) = eta_tidal(i,j) + CS%ampsal(i,j,c) * &
+      eta_tidal_sal(i,j) = CS%ampsal(i,j,c) * &
            (cosomegat*CS%cosphasesal(i,j,c) + sinomegat*CS%sinphasesal(i,j,c))
     enddo ; enddo
   enddo ; endif
@@ -607,7 +610,7 @@ subroutine calc_tidal_forcing(Time, eta_tidal, G, US, CS)
     cosomegat = cos(CS%freq(c)*now)
     sinomegat = sin(CS%freq(c)*now)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      eta_tidal(i,j) = eta_tidal(i,j) - CS%SAL_SCALAR*CS%amp_prev(i,j,c) * &
+      eta_tidal_sal(i,j) = -CS%SAL_SCALAR*CS%amp_prev(i,j,c) * &
           (cosomegat*CS%cosphase_prev(i,j,c) + sinomegat*CS%sinphase_prev(i,j,c))
     enddo ; enddo
   enddo ; endif
