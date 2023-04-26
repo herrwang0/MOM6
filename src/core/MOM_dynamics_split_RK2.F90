@@ -1664,31 +1664,39 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
 
   CS%id_u_BT_accel_pf = register_diag_field('ocean_model', 'u_BT_accel_pf', diag%axesCuL, Time, &
     'Barotropic Anomaly Zonal Acceleration PGA', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_u_BT_accel_pf > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_pf,IsdB,IedB,jsd,jed,nz)
+  ! if (CS%id_u_BT_accel_pf > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_pf,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_pf,IsdB,IedB,jsd,jed,nz)
   CS%id_v_BT_accel_pf = register_diag_field('ocean_model', 'v_BT_accel_pf', diag%axesCvL, Time, &
     'Barotropic Anomaly Meridional Acceleration PGA', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_v_BT_accel_pf > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_pf,isd,ied,JsdB,JedB,nz)
+  ! if (CS%id_v_BT_accel_pf > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_pf,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_pf,isd,ied,JsdB,JedB,nz)
 
   CS%id_u_BT_accel_cf = register_diag_field('ocean_model', 'u_BT_accel_cf', diag%axesCuL, Time, &
     'Barotropic Anomaly Zonal Acceleration Cor', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_u_BT_accel_cf > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_cf,IsdB,IedB,jsd,jed,nz)
+  ! if (CS%id_u_BT_accel_cf > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_cf,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_cf,IsdB,IedB,jsd,jed,nz)
   CS%id_v_BT_accel_cf = register_diag_field('ocean_model', 'v_BT_accel_cf', diag%axesCvL, Time, &
     'Barotropic Anomaly Meridional Acceleration Cor', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_v_BT_accel_cf > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_cf,isd,ied,JsdB,JedB,nz)
+  ! if (CS%id_v_BT_accel_cf > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_cf,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_cf,isd,ied,JsdB,JedB,nz)
 
-  CS%id_u_BT_accel_bc = register_diag_field('ocean_model', 'u_BT_accel_cf', diag%axesCuL, Time, &
+  CS%id_u_BT_accel_bc = register_diag_field('ocean_model', 'u_BT_accel_bc', diag%axesCuL, Time, &
     'Barotropic Anomaly Zonal Acceleration BC', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_u_BT_accel_bc > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_bc,IsdB,IedB,jsd,jed,nz)
-  CS%id_v_BT_accel_bc = register_diag_field('ocean_model', 'v_BT_accel_cf', diag%axesCvL, Time, &
+  ! if (CS%id_u_BT_accel_bc > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_bc,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_bc,IsdB,IedB,jsd,jed,nz)
+  CS%id_v_BT_accel_bc = register_diag_field('ocean_model', 'v_BT_accel_bc', diag%axesCvL, Time, &
     'Barotropic Anomaly Meridional Acceleration BC', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_v_BT_accel_bc > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_bc,isd,ied,JsdB,JedB,nz)
+  ! if (CS%id_v_BT_accel_bc > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_bc,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_bc,isd,ied,JsdB,JedB,nz)
 
   CS%id_u_BT_accel_wd = register_diag_field('ocean_model', 'u_BT_accel_wd', diag%axesCuL, Time, &
     'Barotropic Anomaly Zonal Acceleration WD', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_u_BT_accel_wd > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_wd,IsdB,IedB,jsd,jed,nz)
+  ! if (CS%id_u_BT_accel_wd > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_wd,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_wd,IsdB,IedB,jsd,jed,nz)
   CS%id_v_BT_accel_wd = register_diag_field('ocean_model', 'v_BT_accel_wd', diag%axesCvL, Time, &
     'Barotropic Anomaly Meridional Acceleration WD', 'm s-2', conversion=US%L_T2_to_m_s2)
-  if (CS%id_v_BT_accel_wd > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_wd,isd,ied,JsdB,JedB,nz)
+  ! if (CS%id_v_BT_accel_wd > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_wd,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_wd,isd,ied,JsdB,JedB,nz)
 
   !CS%id_hf_u_BT_accel = register_diag_field('ocean_model', 'hf_u_BT_accel', diag%axesCuL, Time, &
   !    'Fractional Thickness-weighted Barotropic Anomaly Zonal Acceleration', &

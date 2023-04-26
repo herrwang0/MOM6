@@ -765,9 +765,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   do_ave = query_averaging_enabled(CS%diag)
   find_etaav = present(etaav)
-  find_PF = (do_ave .and. ((CS%id_PFu_bt > 0) .or. (CS%id_PFv_bt > 0)))
-  find_Cor = (do_ave .and. ((CS%id_Coru_bt > 0) .or. (CS%id_Corv_bt > 0)))
-  find_WDrag = (do_ave .and. ((CS%id_WDragu_bt > 0) .or. (CS%id_WDragv_bt > 0)))
+  find_PF = (do_ave .and. (((CS%id_PFu_bt > 0) .or. (CS%id_PFv_bt > 0)) &
+             .or. (associated(ADp%u_accel_bt_pf) .or. associated(ADp%v_accel_bt_pf))))
+  find_Cor = (do_ave .and. (((CS%id_Coru_bt > 0) .or. (CS%id_Corv_bt > 0)) &
+             .or. (associated(ADp%u_accel_bt_cf) .or. associated(ADp%v_accel_bt_cf))))
+  find_WDrag = (do_ave .and. (((CS%id_WDragu_bt > 0) .or. (CS%id_WDragv_bt > 0)) &
+             .or. (associated(ADp%u_accel_bt_wd) .or. associated(ADp%v_accel_bt_wd))))
 
   add_uh0 = associated(uh0)
   if (add_uh0 .and. .not.(associated(vh0) .and. associated(u_uh0) .and. &
@@ -1564,12 +1567,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     ubt_sum(I,j) = 0.0 ; uhbt_sum(I,j) = 0.0
     PFu_bt_sum(I,j) = 0.0 ; Coru_bt_sum(I,j) = 0.0
     ubt_wtd(I,j) = 0.0 ; ubt_trans(I,j) = 0.0
+    WDragu_bt_sum(I,j) = 0.0
   enddo ; enddo
   !$OMP do
   do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
     vbt_sum(i,J) = 0.0 ; vhbt_sum(i,J) = 0.0
     PFv_bt_sum(i,J) = 0.0 ; Corv_bt_sum(i,J) = 0.0
     vbt_wtd(i,J) = 0.0 ; vbt_trans(i,J) = 0.0
+    WDragv_bt_sum(i,J) = 0.0 ;
   enddo ; enddo
 
   ! Set the mass source, after first initializing the halos to 0.
@@ -2621,7 +2626,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do j=js,je ; do I=is-1,ie
         PFu_bt_sum(I,j) = PFu_bt_sum(I,j) * I_sum_wt_accel
       enddo ; enddo
-      call post_data(CS%id_PFu_bt, PFu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+      if (CS%id_PFu_bt > 0) call post_data(CS%id_PFu_bt, PFu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
       if (associated(ADp%u_accel_bt_pf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
         ADp%u_accel_bt_pf(I,j,k) = PFu_bt_sum(I,j)
         if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_pf(I,j,k) = 0.0
@@ -2631,8 +2636,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         PFv_bt_sum(i,J) = PFv_bt_sum(i,J) * I_sum_wt_accel
       enddo ; enddo
-      call post_data(CS%id_PFv_bt, PFv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
-      if (associated(ADp%v_accel_bt_pf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+      if (CS%id_PFv_bt > 0) call post_data(CS%id_PFv_bt, PFv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+      if (associated(ADp%v_accel_bt_pf)) then ; do k=1,nz ; do J=js-1,je ; do i=is,ie
         ADp%v_accel_bt_pf(i,J,k) = PFv_bt_sum(i,J)
         if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_pf(i,J,k) = 0.0
       enddo ; enddo ; enddo ; endif
@@ -2642,7 +2647,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do j=js,je ; do I=is-1,ie
         Coru_bt_sum(I,j) = Coru_bt_sum(I,j) * I_sum_wt_accel
       enddo ; enddo
-      call post_data(CS%id_Coru_bt, Coru_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+      if (CS%id_Coru_bt > 0) call post_data(CS%id_Coru_bt, Coru_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
       if (associated(ADp%u_accel_bt_cf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
         ADp%u_accel_bt_cf(I,j,k) = Coru_bt_sum(I,j)
         if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_cf(I,j,k) = 0.0
@@ -2652,8 +2657,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=js-1,je ; do i=is,ie
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) * I_sum_wt_accel
       enddo ; enddo
-      call post_data(CS%id_Corv_bt, Corv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
-      if (associated(ADp%v_accel_bt_cf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+      if (CS%id_Corv_bt > 0) call post_data(CS%id_Corv_bt, Corv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+      if (associated(ADp%v_accel_bt_cf)) then ; do k=1,nz ; do J=js-1,je ; do i=is,ie
         ADp%v_accel_bt_cf(i,J,k) = Corv_bt_sum(i,J)
         if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_cf(i,J,k) = 0.0
       enddo ; enddo ; enddo ; endif
@@ -2664,7 +2669,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         do j=js,je ; do I=is-1,ie
           WDragu_bt_sum(I,j) = WDragu_bt_sum(I,j) * I_sum_wt_accel
         enddo ; enddo
-        call post_data(CS%id_WDragu_bt, WDragu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
+        if (CS%id_WDragu_bt > 0) call post_data(CS%id_WDragu_bt, WDragu_bt_sum(IsdB:IedB,jsd:jed), CS%diag)
         if (associated(ADp%u_accel_bt_wd)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
           ADp%u_accel_bt_wd(I,j,k) = WDragu_bt_sum(I,j)
           if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_wd(I,j,k) = 0.0
@@ -2674,8 +2679,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         do J=js-1,je ; do i=is,ie
           WDragv_bt_sum(i,J) = WDragv_bt_sum(i,J) * I_sum_wt_accel
         enddo ; enddo
-        call post_data(CS%id_WDragv_bt, WDragv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
-        if (associated(ADp%v_accel_bt_cf)) then ; do k=1,nz ; do j=js,je ; do I=is-1,ie
+        if (CS%id_WDragv_bt > 0) call post_data(CS%id_WDragv_bt, WDragv_bt_sum(isd:ied,JsdB:JedB), CS%diag)
+        if (associated(ADp%v_accel_bt_wd)) then ; do k=1,nz ; do J=js-1,je ; do i=is,ie
           ADp%v_accel_bt_wd(i,J,k) = WDragv_bt_sum(i,J)
           if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_wd(i,J,k) = 0.0
         enddo ; enddo ; enddo ; endif
@@ -2698,14 +2703,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (associated(ADp%u_accel_bt_bc)) then
       do k=1,nz ; do j=js,je ; do I=is-1,ie
         ADp%u_accel_bt_bc(I,j,k) = &
-          ((pbce(i+1,j,k) - gtot_W(i+1,j)) * e_anom(i+1,j) - (pbce(i,j,k) - gtot_E(i,j)) * e_anom(i,j)) * CS%IdxCu(I,j)
+          -((pbce(i+1,j,k) - gtot_W(i+1,j)) * e_anom(i+1,j) - (pbce(i,j,k) - gtot_E(i,j)) * e_anom(i,j)) * CS%IdxCu(I,j)
         if (abs(accel_layer_u(I,j,k)) < accel_underflow) ADp%u_accel_bt_bc(I,j,k) = 0.0
       enddo ; enddo ; enddo
     endif
     if (associated(ADp%v_accel_bt_bc)) then
       do k=1,nz ; do J=js-1,je ; do i=is,ie
         ADp%v_accel_bt_bc(i,J,k) = &
-          ((pbce(i,j+1,k) - gtot_S(i,j+1)) * e_anom(i,j+1) - (pbce(i,j,k) - gtot_N(i,j)) * e_anom(i,j)) * CS%IdyCv(i,J)
+          -((pbce(i,j+1,k) - gtot_S(i,j+1)) * e_anom(i,j+1) - (pbce(i,j,k) - gtot_N(i,j)) * e_anom(i,j)) * CS%IdyCv(i,J)
         if (abs(accel_layer_v(i,J,k)) < accel_underflow) ADp%v_accel_bt_bc(i,J,k) = 0.0
       enddo ; enddo ; enddo
     endif
