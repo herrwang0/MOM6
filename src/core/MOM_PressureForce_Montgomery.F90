@@ -216,7 +216,7 @@ subroutine PressureForce_Mont_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, p_atm, pb
   endif
 
   if (CS%tides) then
-    call calc_tidal_forcing(CS%Time, e_tidal, e_tidal_sal G, US, CS%tides_CSp)
+    call calc_tidal_forcing(CS%Time, e_tidal, e_tidal_sal, G, US, CS%tides_CSp)
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       geopot_bot(i,j) = -GV%g_Earth*(e_sal(i,j) + e_tidal(i,j) + e_tidal_sal(i,j) + G%bathyT(i,j))
