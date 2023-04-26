@@ -2379,7 +2379,7 @@ subroutine set_dependent_diagnostics(MIS, ADp, CDp, G, GV, CS)
     call safe_alloc_ptr(CDp%diapyc_vel,isd,ied,jsd,jed,nz+1)
   endif
 
-  if (CS%id_KE_tide > 0) then
+  if (CS%id_KE_tides > 0) then
     call safe_alloc_ptr(ADp%PFu_tide,IsdB,IedB,jsd,jed,nz)
     call safe_alloc_ptr(ADp%PFv_tide,isd,ied,JsdB,JedB,nz)
   endif
