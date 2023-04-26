@@ -834,12 +834,12 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     do k=1,nz
       !$OMP parallel do default(shared)
       do j=js,je ; do I=Isq,Ieq
-        PFu_tide(I,j,k) = -((e_sal(i+1,j) - e_sal(i,j)) + (e_tidal_sal(i+1,j) - e_tidal_sal(i,j))) &
+        PFu_sal(I,j,k) = -((e_sal(i+1,j) - e_sal(i,j)) + (e_tidal_sal(i+1,j) - e_tidal_sal(i,j))) &
                            * G%IdxCu(I,j) * GV%g_Earth
       enddo ; enddo
       !$OMP parallel do default(shared)
       do J=Jsq,Jeq ; do i=is,ie
-        PFv_tide(i,J,k) = -((e_sal(i,j+1) - e_sal(i,j)) + (e_tidal_sal(i,j+1) - e_tidal_sal(i,j))) &
+        PFv_sal(i,J,k) = -((e_sal(i,j+1) - e_sal(i,j)) + (e_tidal_sal(i,j+1) - e_tidal_sal(i,j))) &
                            * G%IdyCv(i,J) * GV%g_Earth
       enddo ; enddo
     enddo
