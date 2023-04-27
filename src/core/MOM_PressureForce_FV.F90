@@ -550,6 +550,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   if (present(PFu_tide) .and. present(PFv_tide)) calc_PF_tide = associated(PFu_tide) .and. associated(PFv_tide)
   if (present(PFu_sal) .and. present(PFv_sal)) calc_PF_sal = associated(PFu_sal) .and. associated(PFv_sal)
+  if (present(PFu_eta) .and. present(PFv_eta)) calc_PF_eta = associated(PFu_eta) .and. associated(PFv_eta)
 
   h_neglect = GV%H_subroundoff
   dz_neglect = GV%H_subroundoff * GV%H_to_Z
