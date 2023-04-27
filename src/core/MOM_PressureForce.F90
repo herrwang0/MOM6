@@ -39,7 +39,7 @@ contains
 
 !> A thin layer between the model and the Boussinesq and non-Boussinesq pressure force routines.
 subroutine PressureForce(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta, &
-                         PFu_tide, PFv_tide, PFu_sal, PFv_sal)
+                         PFu_tide, PFv_tide, PFu_sal, PFv_sal, PFu_eta, PFv_eta)
   type(ocean_grid_type),   intent(in)  :: G    !< The ocean's grid structure
   type(verticalGrid_type), intent(in)  :: GV   !< The ocean's vertical grid structure
   type(unit_scale_type),   intent(in)  :: US   !< A dimensional unit scaling type
@@ -60,12 +60,12 @@ subroutine PressureForce(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, e
   real, dimension(SZI_(G),SZJ_(G)), &
                  optional, intent(out) :: eta  !< The bottom mass used to calculate PFu and PFv,
                                                !! [H ~> m or kg m-2], with any tidal contributions.
-  real, dimension(:,:,:), optional, pointer :: PFu_tide, PFu_sal
-  real, dimension(:,:,:), optional, pointer :: PFv_tide, PFv_sal
+  real, dimension(:,:,:), optional, pointer :: PFu_tide, PFu_sal, PFu_eta
+  real, dimension(:,:,:), optional, pointer :: PFv_tide, PFv_sal, PFv_eta
   if (CS%Analytic_FV_PGF) then
     if (GV%Boussinesq) then
       call PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS%PressureForce_FV, &
-                                   ALE_CSp, p_atm, pbce, eta, PFu_tide, PFv_tide, PFu_sal, PFv_sal)
+                                   ALE_CSp, p_atm, pbce, eta, PFu_tide, PFv_tide, PFu_sal, PFv_sal, PFu_eta, PFv_eta)
     else
       call PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS%PressureForce_FV, &
                                       ALE_CSp, p_atm, pbce, eta)

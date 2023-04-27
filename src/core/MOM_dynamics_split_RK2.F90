@@ -185,6 +185,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_PFu    = -1, id_PFv    = -1
   integer :: id_PFu_tide = -1, id_PFv_tide = -1
   integer :: id_PFu_sal  = -1, id_PFv_sal  = -1
+  integer :: id_PFu_eta  = -1, id_PFv_eta  = -1
   integer :: id_CAu    = -1, id_CAv    = -1
   integer :: id_ueffA = -1, id_veffA = -1
   ! integer :: id_hf_PFu    = -1, id_hf_PFv    = -1
@@ -477,7 +478,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
   call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF, CS%ADp%PFu_tide, CS%ADp%PFv_tide, CS%ADp%PFu_sal, CS%ADp%PFv_sal)
+                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF, CS%ADp%PFu_tide, CS%ADp%PFv_tide, CS%ADp%PFu_sal, CS%ADp%PFv_sal, CS%ADp%PFu_eta, CS%ADp%PFv_eta)
   if (dyn_p_surf) then
     pres_to_eta = 1.0 / (GV%g_Earth * GV%H_to_RZ)
     !$OMP parallel do default(shared)
@@ -991,6 +992,8 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   if (CS%id_PFv_tide > 0) call post_data(CS%id_PFv_tide, CS%ADp%PFv_tide, CS%diag)
   if (CS%id_PFu_sal > 0) call post_data(CS%id_PFu_sal, CS%ADp%PFu_sal, CS%diag)
   if (CS%id_PFv_sal > 0) call post_data(CS%id_PFv_sal, CS%ADp%PFv_sal, CS%diag)
+  if (CS%id_PFu_eta > 0) call post_data(CS%id_PFu_eta, CS%ADp%PFu_eta, CS%diag)
+  if (CS%id_PFv_eta > 0) call post_data(CS%id_PFv_eta, CS%ADp%PFv_eta, CS%diag)
 
   ! Here the thickness fluxes are offered for time averaging.
   if (CS%id_uh         > 0) call post_data(CS%id_uh , uh,                   CS%diag)
@@ -1684,11 +1687,18 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   if (CS%calculate_SAL) then
     CS%id_PFu_sal = register_diag_field('ocean_model', 'PFu_sal', diag%axesCuL, Time, &
       'Zonal acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
-    call safe_alloc_ptr(CS%ADp%PFu_tide,IsdB,IedB,jsd,jed,nz)
+    call safe_alloc_ptr(CS%ADp%PFu_sal,IsdB,IedB,jsd,jed,nz)
     CS%id_PFv_sal = register_diag_field('ocean_model', 'PFv_sal', diag%axesCvL, Time, &
       'Meridional acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
-    call safe_alloc_ptr(CS%ADp%PFv_tide,isd,ied,JsdB,JedB,nz)
+    call safe_alloc_ptr(CS%ADp%PFv_sal,isd,ied,JsdB,JedB,nz)
   endif
+
+  CS%id_PFu_eta = register_diag_field('ocean_model', 'PFu_eta', diag%axesCuL, Time, &
+    'Zonal acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
+  call safe_alloc_ptr(CS%ADp%PFu_eta,IsdB,IedB,jsd,jed,nz)
+  CS%id_PFv_eta = register_diag_field('ocean_model', 'PFv_eta', diag%axesCvL, Time, &
+    'Meridional acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
+  call safe_alloc_ptr(CS%ADp%PFv_eta,isd,ied,JsdB,JedB,nz)
 
   CS%id_u_BT_accel = register_diag_field('ocean_model', 'u_BT_accel', diag%axesCuL, Time, &
     'Barotropic Anomaly Zonal Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
