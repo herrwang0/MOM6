@@ -166,6 +166,12 @@ type, public :: accel_diag_ptrs
     CAv => NULL(), &       !< Meridional Coriolis and momentum advection accelerations [L T-2 ~> m s-2]
     PFu => NULL(), &       !< Zonal acceleration due to pressure forces [L T-2 ~> m s-2]
     PFv => NULL(), &       !< Meridional acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFu_tide => NULL(), &  !< Zonal acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFv_tide => NULL(), &  !< Meridional acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFu_sal => NULL(), &   !< Zonal acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFv_sal => NULL(), &   !< Meridional acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFu_eta => NULL(), &   !< Zonal acceleration due to pressure forces [L T-2 ~> m s-2]
+    PFv_eta => NULL(), &   !< Meridional acceleration due to pressure forces [L T-2 ~> m s-2]
     du_dt_visc => NULL(), &!< Zonal acceleration due to vertical viscosity [L T-2 ~> m s-2]
     dv_dt_visc => NULL(), &!< Meridional acceleration due to vertical viscosity [L T-2 ~> m s-2]
     du_dt_visc_gl90 => NULL(), &!< Zonal acceleration due to GL90 vertical viscosity
@@ -179,7 +185,15 @@ type, public :: accel_diag_ptrs
     du_dt_dia => NULL(), & !< Zonal acceleration due to diapycnal  mixing [L T-2 ~> m s-2]
     dv_dt_dia => NULL(), & !< Meridional acceleration due to diapycnal  mixing [L T-2 ~> m s-2]
     u_accel_bt => NULL(), &!< Pointer to the zonal barotropic-solver acceleration [L T-2 ~> m s-2]
-    v_accel_bt => NULL()   !< Pointer to the meridional barotropic-solver acceleration [L T-2 ~> m s-2]
+    v_accel_bt => NULL(), &!< Pointer to the meridional barotropic-solver acceleration [L T-2 ~> m s-2]
+    u_accel_bt_pf => NULL(), &!< Pointer to the zonal barotropic-solver acceleration due to pga [L T-2 ~> m s-2]
+    v_accel_bt_pf => NULL(), &!< Pointer to the meridional barotropic-solver acceleration due to pga [L T-2 ~> m s-2]
+    u_accel_bt_cf => NULL(), &!< Pointer to the zonal barotropic-solver acceleration due to Coriolis [L T-2 ~> m s-2]
+    v_accel_bt_cf => NULL(), &!< Pointer to the meridional barotropic-solver acceleration due to Coriolis [L T-2 ~> m s-2]
+    u_accel_bt_bc => NULL(), &!< Pointer to the zonal barotropic-solver acceleration due to layer pressure anomaly [L T-2 ~> m s-2]
+    v_accel_bt_bc => NULL(), &!< Pointer to the meridional barotropic-solver acceleration due to layer pressure anomaly [L T-2 ~> m s-2]
+    u_accel_bt_wd => NULL(), &!< Pointer to the zonal barotropic-solver acceleration due to linear wave drag [L T-2 ~> m s-2]
+    v_accel_bt_wd => NULL()   !< Pointer to the meridional barotropic-solver acceleration due to linear wave drag [L T-2 ~> m s-2]
   real, pointer, dimension(:,:,:) :: du_other => NULL()
                            !< Zonal velocity changes due to any other processes that are
                            !! not due to any explicit accelerations [L T-1 ~> m s-1].

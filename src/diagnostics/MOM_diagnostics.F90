@@ -81,6 +81,9 @@ type, public :: diagnostics_CS ; private
   integer :: id_col_ht         = -1, id_dh_dt          = -1
   integer :: id_KE             = -1, id_dKEdt          = -1
   integer :: id_PE_to_KE       = -1, id_KE_BT          = -1
+  integer :: id_KE_tides       = -1, id_KE_sal         = -1, id_KE_eta         = -1
+  integer :: id_KE_BT_PF       = -1, id_KE_BT_CF       = -1
+  integer :: id_KE_BT_BC       = -1, id_KE_BT_WD       = -1
   integer :: id_KE_Coradv      = -1, id_KE_adv         = -1
   integer :: id_KE_visc        = -1, id_KE_stress      = -1
   integer :: id_KE_visc_gl90   = -1
@@ -1024,6 +1027,64 @@ subroutine calculate_energy_diagnostics(u, v, h, uh, vh, ADp, CDp, G, GV, US, CS
     if (CS%id_PE_to_KE > 0) call post_data(CS%id_PE_to_KE, KE_term, CS%diag)
   endif
 
+  if (CS%id_KE_tides > 0) then
+    ! Calculate the potential energy to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%PFu_tide(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%PFv_tide(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_tides, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_sal > 0) then
+    ! Calculate the potential energy to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%PFu_sal(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%PFv_sal(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_sal, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_eta > 0) then
+    ! Calculate the potential energy to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%PFu_eta(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%PFv_eta(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_eta, KE_term, CS%diag)
+  endif
+
+
   if (CS%id_KE_BT > 0) then
     ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
     do k=1,nz
@@ -1041,6 +1102,82 @@ subroutine calculate_energy_diagnostics(u, v, h, uh, vh, ADp, CDp, G, GV, US, CS
       enddo ; enddo
     enddo
     call post_data(CS%id_KE_BT, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_BT_PF > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_pf(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_pf(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_PF, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_BT_CF > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_cf(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_cf(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_CF, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_BT_BC > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_bc(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_bc(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_BC, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_BT_WD > 0) then
+    ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%u_accel_bt_wd(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%v_accel_bt_wd(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * (KE_u(I,j) + KE_u(I-1,j) + KE_v(i,J) + KE_v(i,J-1))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_BT_WD, KE_term, CS%diag)
   endif
 
   if (CS%id_KE_Coradv > 0) then
@@ -1804,8 +1941,29 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
   CS%id_PE_to_KE = register_diag_field('ocean_model', 'PE_to_KE', diag%axesTL, Time, &
       'Potential to Kinetic Energy Conversion of Layer', &
       'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+  CS%id_KE_tides = register_diag_field('ocean_model', 'KE_tides', diag%axesTL, Time, &
+      'Kinetic Energy Source from the tides', &
+      'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+  CS%id_KE_sal = register_diag_field('ocean_model', 'KE_sal', diag%axesTL, Time, &
+      'Kinetic Energy Source from self-attraction and loading', &
+      'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+  CS%id_KE_eta = register_diag_field('ocean_model', 'KE_eta', diag%axesTL, Time, &
+      'Kinetic Energy Source from self-attraction and loading', &
+      'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
   if (split) then
     CS%id_KE_BT = register_diag_field('ocean_model', 'KE_BT', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_PF = register_diag_field('ocean_model', 'KE_BT_PF', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_CF = register_diag_field('ocean_model', 'KE_BT_CF', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_BC = register_diag_field('ocean_model', 'KE_BT_BC', diag%axesTL, Time, &
+        'Barotropic contribution to Kinetic Energy', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_BT_WD = register_diag_field('ocean_model', 'KE_BT_WD', diag%axesTL, Time, &
         'Barotropic contribution to Kinetic Energy', &
         'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
   endif
@@ -2260,6 +2418,21 @@ subroutine set_dependent_diagnostics(MIS, ADp, CDp, G, GV, CS)
     call safe_alloc_ptr(ADp%du_dt_dia,IsdB,IedB,jsd,jed,nz)
     call safe_alloc_ptr(ADp%dv_dt_dia,isd,ied,JsdB,JedB,nz)
     call safe_alloc_ptr(CDp%diapyc_vel,isd,ied,jsd,jed,nz+1)
+  endif
+
+  if (CS%id_KE_tides > 0) then
+    call safe_alloc_ptr(ADp%PFu_tide,IsdB,IedB,jsd,jed,nz)
+    call safe_alloc_ptr(ADp%PFv_tide,isd,ied,JsdB,JedB,nz)
+  endif
+
+  if (CS%id_KE_sal > 0) then
+    call safe_alloc_ptr(ADp%PFu_sal,IsdB,IedB,jsd,jed,nz)
+    call safe_alloc_ptr(ADp%PFv_sal,isd,ied,JsdB,JedB,nz)
+  endif
+
+  if (CS%id_KE_eta > 0) then
+    call safe_alloc_ptr(ADp%PFu_eta,IsdB,IedB,jsd,jed,nz)
+    call safe_alloc_ptr(ADp%PFv_eta,isd,ied,JsdB,JedB,nz)
   endif
 
   CS%KE_term_on = ((CS%id_dKEdt > 0) .or. (CS%id_PE_to_KE > 0) .or. (CS%id_KE_BT > 0) .or. &

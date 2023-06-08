@@ -60,6 +60,8 @@ use MOM_PressureForce,         only : PressureForce, PressureForce_CS
 use MOM_PressureForce,         only : PressureForce_init
 use MOM_set_visc,              only : set_viscous_ML, set_visc_CS
 use MOM_thickness_diffuse,     only : thickness_diffuse_CS
+use MOM_self_attr_load,        only : SAL_CS
+use MOM_self_attr_load,        only : SAL_init, SAL_end
 use MOM_tidal_forcing,         only : tidal_forcing_CS
 use MOM_tidal_forcing,         only : tidal_forcing_init, tidal_forcing_end
 use MOM_unit_scaling,          only : unit_scale_type
@@ -159,6 +161,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
                                   !! end of the timestep have been stored for use in the next
                                   !! predictor step.  This is used to accomodate various generations
                                   !! of restart files.
+  logical :: calculate_SAL        !< If true, calculate self-attraction and loading.
   logical :: use_tides            !< If true, tidal forcing is enabled.
   logical :: remap_aux            !< If true, apply ALE remapping to all of the auxiliary 3-D
                                   !! variables that are needed to reproduce across restarts,
@@ -180,6 +183,9 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_umo    = -1, id_vmo    = -1
   integer :: id_umo_2d = -1, id_vmo_2d = -1
   integer :: id_PFu    = -1, id_PFv    = -1
+  integer :: id_PFu_tide = -1, id_PFv_tide = -1
+  integer :: id_PFu_sal  = -1, id_PFv_sal  = -1
+  integer :: id_PFu_eta  = -1, id_PFv_eta  = -1
   integer :: id_CAu    = -1, id_CAv    = -1
   integer :: id_ueffA = -1, id_veffA = -1
   ! integer :: id_hf_PFu    = -1, id_hf_PFv    = -1
@@ -197,6 +203,10 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   ! Split scheme only.
   integer :: id_uav        = -1, id_vav        = -1
   integer :: id_u_BT_accel = -1, id_v_BT_accel = -1
+  integer :: id_u_BT_accel_pf = -1, id_v_BT_accel_pf = -1
+  integer :: id_u_BT_accel_cf = -1, id_v_BT_accel_cf = -1
+  integer :: id_u_BT_accel_bc = -1, id_v_BT_accel_bc = -1
+  integer :: id_u_BT_accel_wd = -1, id_v_BT_accel_wd = -1
   ! integer :: id_hf_u_BT_accel    = -1, id_hf_v_BT_accel    = -1
   integer :: id_h_u_BT_accel    = -1, id_h_v_BT_accel    = -1
   integer :: id_hf_u_BT_accel_2d = -1, id_hf_v_BT_accel_2d = -1
@@ -233,6 +243,8 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   type(set_visc_CS),      pointer :: set_visc_CSp      => NULL()
   !> A pointer to the barotropic stepping control structure
   type(barotropic_CS) :: barotropic_CSp
+  !> A pointer to the SAL control structure
+  type(SAL_CS) :: SAL_CSp
   !> A pointer to the tidal forcing control structure
   type(tidal_forcing_CS) :: tides_CSp
   !> A pointer to the ALE control structure.
@@ -466,7 +478,7 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
   call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF, CS%ADp%PFu_tide, CS%ADp%PFv_tide, CS%ADp%PFu_sal, CS%ADp%PFv_sal, CS%ADp%PFu_eta, CS%ADp%PFv_eta)
   if (dyn_p_surf) then
     pres_to_eta = 1.0 / (GV%g_Earth * GV%H_to_RZ)
     !$OMP parallel do default(shared)
@@ -976,6 +988,13 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   if (CS%id_CAu > 0) call post_data(CS%id_CAu, CS%CAu, CS%diag)
   if (CS%id_CAv > 0) call post_data(CS%id_CAv, CS%CAv, CS%diag)
 
+  if (CS%id_PFu_tide > 0) call post_data(CS%id_PFu_tide, CS%ADp%PFu_tide, CS%diag)
+  if (CS%id_PFv_tide > 0) call post_data(CS%id_PFv_tide, CS%ADp%PFv_tide, CS%diag)
+  if (CS%id_PFu_sal > 0) call post_data(CS%id_PFu_sal, CS%ADp%PFu_sal, CS%diag)
+  if (CS%id_PFv_sal > 0) call post_data(CS%id_PFv_sal, CS%ADp%PFv_sal, CS%diag)
+  if (CS%id_PFu_eta > 0) call post_data(CS%id_PFu_eta, CS%ADp%PFu_eta, CS%diag)
+  if (CS%id_PFv_eta > 0) call post_data(CS%id_PFv_eta, CS%ADp%PFv_eta, CS%diag)
+
   ! Here the thickness fluxes are offered for time averaging.
   if (CS%id_uh         > 0) call post_data(CS%id_uh , uh,                   CS%diag)
   if (CS%id_vh         > 0) call post_data(CS%id_vh , vh,                   CS%diag)
@@ -983,6 +1002,15 @@ subroutine step_MOM_dyn_split_RK2(u, v, h, tv, visc, Time_local, dt, forces, p_s
   if (CS%id_vav        > 0) call post_data(CS%id_vav, v_av,                 CS%diag)
   if (CS%id_u_BT_accel > 0) call post_data(CS%id_u_BT_accel, CS%u_accel_bt, CS%diag)
   if (CS%id_v_BT_accel > 0) call post_data(CS%id_v_BT_accel, CS%v_accel_bt, CS%diag)
+
+  if (CS%id_u_BT_accel_pf > 0) call post_data(CS%id_u_BT_accel_pf, CS%ADp%u_accel_bt_pf, CS%diag)
+  if (CS%id_v_BT_accel_pf > 0) call post_data(CS%id_v_BT_accel_pf, CS%ADp%v_accel_bt_pf, CS%diag)
+  if (CS%id_u_BT_accel_cf > 0) call post_data(CS%id_u_BT_accel_cf, CS%ADp%u_accel_bt_cf, CS%diag)
+  if (CS%id_v_BT_accel_cf > 0) call post_data(CS%id_v_BT_accel_cf, CS%ADp%v_accel_bt_cf, CS%diag)
+  if (CS%id_u_BT_accel_bc > 0) call post_data(CS%id_u_BT_accel_bc, CS%ADp%u_accel_bt_bc, CS%diag)
+  if (CS%id_v_BT_accel_bc > 0) call post_data(CS%id_v_BT_accel_bc, CS%ADp%v_accel_bt_bc, CS%diag)
+  if (CS%id_u_BT_accel_wd > 0) call post_data(CS%id_u_BT_accel_wd, CS%ADp%u_accel_bt_wd, CS%diag)
+  if (CS%id_v_BT_accel_wd > 0) call post_data(CS%id_v_BT_accel_wd, CS%ADp%v_accel_bt_wd, CS%diag)
 
   ! Calculate effective areas and post data
   if (CS%id_ueffA > 0) then
@@ -1270,6 +1298,8 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   call log_version(param_file, mdl, version, "")
   call get_param(param_file, mdl, "TIDES", CS%use_tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
+  call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
+                 "If true, calculate self-attraction and loading.", default=CS%use_tides)
   call get_param(param_file, mdl, "BE", CS%be, &
                  "If SPLIT is true, BE determines the relative weighting "//&
                  "of a  2nd-order Runga-Kutta baroclinic time stepping "//&
@@ -1370,9 +1400,10 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   call continuity_init(Time, G, GV, US, param_file, diag, CS%continuity_CSp)
   cont_stencil = continuity_stencil(CS%continuity_CSp)
   call CoriolisAdv_init(Time, G, GV, US, param_file, diag, CS%ADp, CS%CoriolisAdv)
+  if (CS%calculate_SAL) call SAL_init(G, US, param_file, CS%SAL_CSp)
   if (CS%use_tides) call tidal_forcing_init(Time, G, US, param_file, CS%tides_CSp)
   call PressureForce_init(Time, G, GV, US, param_file, diag, CS%PressureForce_CSp, &
-                          CS%tides_CSp)
+                          CS%SAL_CSp, CS%tides_CSp)
   call hor_visc_init(Time, G, GV, US, param_file, diag, CS%hor_visc, ADp=CS%ADp)
   call vertvisc_init(MIS, Time, G, GV, US, param_file, diag, CS%ADp, dirs, &
                      ntrunc, CS%vertvisc_CSp)
@@ -1408,7 +1439,7 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
 
   call barotropic_init(u, v, h, CS%eta, Time, G, GV, US, param_file, diag, &
                        CS%barotropic_CSp, restart_CS, calc_dtbt, CS%BT_cont, &
-                       CS%tides_CSp)
+                       CS%SAL_CSp)
 
   if (.not. query_initialized(CS%diffu, "diffu", restart_CS) .or. &
       .not. query_initialized(CS%diffv, "diffv", restart_CS)) then
@@ -1608,10 +1639,71 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   CS%id_vav = register_diag_field('ocean_model', 'vav', diag%axesCvL, Time, &
       'Barotropic-step Averaged Meridional Velocity', 'm s-1', conversion=US%L_T_to_m_s)
 
+  if (CS%use_tides) then
+    CS%id_PFu_tide = register_diag_field('ocean_model', 'PFu_tide', diag%axesCuL, Time, &
+      'Zonal acceleration due to tidal forcing', 'm s-2', conversion=US%L_T2_to_m_s2)
+    call safe_alloc_ptr(CS%ADp%PFu_tide,IsdB,IedB,jsd,jed,nz)
+    CS%id_PFv_tide = register_diag_field('ocean_model', 'PFv_tide', diag%axesCvL, Time, &
+      'Meridional acceleration due to tidal forcing', 'm s-2', conversion=US%L_T2_to_m_s2)
+    call safe_alloc_ptr(CS%ADp%PFv_tide,isd,ied,JsdB,JedB,nz)
+  endif
+
+  if (CS%calculate_SAL) then
+    CS%id_PFu_sal = register_diag_field('ocean_model', 'PFu_sal', diag%axesCuL, Time, &
+      'Zonal acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
+    call safe_alloc_ptr(CS%ADp%PFu_sal,IsdB,IedB,jsd,jed,nz)
+    CS%id_PFv_sal = register_diag_field('ocean_model', 'PFv_sal', diag%axesCvL, Time, &
+      'Meridional acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
+    call safe_alloc_ptr(CS%ADp%PFv_sal,isd,ied,JsdB,JedB,nz)
+  endif
+
+  CS%id_PFu_eta = register_diag_field('ocean_model', 'PFu_eta', diag%axesCuL, Time, &
+    'Zonal acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
+  call safe_alloc_ptr(CS%ADp%PFu_eta,IsdB,IedB,jsd,jed,nz)
+  CS%id_PFv_eta = register_diag_field('ocean_model', 'PFv_eta', diag%axesCvL, Time, &
+    'Meridional acceleration due to self-attraction and loading', 'm s-2', conversion=US%L_T2_to_m_s2)
+  call safe_alloc_ptr(CS%ADp%PFv_eta,isd,ied,JsdB,JedB,nz)
+
   CS%id_u_BT_accel = register_diag_field('ocean_model', 'u_BT_accel', diag%axesCuL, Time, &
     'Barotropic Anomaly Zonal Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_v_BT_accel = register_diag_field('ocean_model', 'v_BT_accel', diag%axesCvL, Time, &
     'Barotropic Anomaly Meridional Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+
+  CS%id_u_BT_accel_pf = register_diag_field('ocean_model', 'u_BT_accel_pf', diag%axesCuL, Time, &
+    'Barotropic Anomaly Zonal Acceleration PGA', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_u_BT_accel_pf > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_pf,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_pf,IsdB,IedB,jsd,jed,nz)
+  CS%id_v_BT_accel_pf = register_diag_field('ocean_model', 'v_BT_accel_pf', diag%axesCvL, Time, &
+    'Barotropic Anomaly Meridional Acceleration PGA', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_v_BT_accel_pf > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_pf,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_pf,isd,ied,JsdB,JedB,nz)
+
+  CS%id_u_BT_accel_cf = register_diag_field('ocean_model', 'u_BT_accel_cf', diag%axesCuL, Time, &
+    'Barotropic Anomaly Zonal Acceleration Cor', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_u_BT_accel_cf > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_cf,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_cf,IsdB,IedB,jsd,jed,nz)
+  CS%id_v_BT_accel_cf = register_diag_field('ocean_model', 'v_BT_accel_cf', diag%axesCvL, Time, &
+    'Barotropic Anomaly Meridional Acceleration Cor', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_v_BT_accel_cf > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_cf,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_cf,isd,ied,JsdB,JedB,nz)
+
+  CS%id_u_BT_accel_bc = register_diag_field('ocean_model', 'u_BT_accel_bc', diag%axesCuL, Time, &
+    'Barotropic Anomaly Zonal Acceleration BC', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_u_BT_accel_bc > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_bc,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_bc,IsdB,IedB,jsd,jed,nz)
+  CS%id_v_BT_accel_bc = register_diag_field('ocean_model', 'v_BT_accel_bc', diag%axesCvL, Time, &
+    'Barotropic Anomaly Meridional Acceleration BC', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_v_BT_accel_bc > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_bc,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_bc,isd,ied,JsdB,JedB,nz)
+
+  CS%id_u_BT_accel_wd = register_diag_field('ocean_model', 'u_BT_accel_wd', diag%axesCuL, Time, &
+    'Barotropic Anomaly Zonal Acceleration WD', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_u_BT_accel_wd > 0) call safe_alloc_ptr(CS%ADp%u_accel_bt_wd,IsdB,IedB,jsd,jed,nz)
+  call safe_alloc_ptr(CS%ADp%u_accel_bt_wd,IsdB,IedB,jsd,jed,nz)
+  CS%id_v_BT_accel_wd = register_diag_field('ocean_model', 'v_BT_accel_wd', diag%axesCvL, Time, &
+    'Barotropic Anomaly Meridional Acceleration WD', 'm s-2', conversion=US%L_T2_to_m_s2)
+  ! if (CS%id_v_BT_accel_wd > 0) call safe_alloc_ptr(CS%ADp%v_accel_bt_wd,isd,ied,JsdB,JedB,nz)
+  call safe_alloc_ptr(CS%ADp%v_accel_bt_wd,isd,ied,JsdB,JedB,nz)
 
   !CS%id_hf_u_BT_accel = register_diag_field('ocean_model', 'hf_u_BT_accel', diag%axesCuL, Time, &
   !    'Fractional Thickness-weighted Barotropic Anomaly Zonal Acceleration', &
@@ -1704,6 +1796,7 @@ subroutine end_dyn_split_RK2(CS)
   deallocate(CS%vertvisc_CSp)
 
   call hor_visc_end(CS%hor_visc)
+  if (CS%calculate_SAL) call SAL_end(CS%SAL_CSp)
   if (CS%use_tides) call tidal_forcing_end(CS%tides_CSp)
   call CoriolisAdv_end(CS%CoriolisAdv)
 
