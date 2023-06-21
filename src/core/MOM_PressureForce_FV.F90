@@ -69,6 +69,8 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_p_stanley = -1 !< Diagnostic identifier
   type(SAL_CS), pointer :: SAL_CSp => NULL() !< SAL control structure
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
+  integer :: tides_sal_update_freq
+  integer :: nstep_cnt
 end type PressureForce_FV_CS
 
 contains
@@ -165,6 +167,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer :: i, j, k
+  logical :: pause_cnt_local
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -446,7 +449,8 @@ end subroutine PressureForce_FV_nonBouss
 !! range before this subroutine is called:
 !!   h(isB:ie+1,jsB:je+1), T(isB:ie+1,jsB:je+1), and S(isB:ie+1,jsB:je+1).
 subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta, &
-                                  PFu_tide, PFv_tide, PFu_sal, PFv_sal, PFu_eta, PFv_eta)
+                                  PFu_tide, PFv_tide, PFu_sal, PFv_sal, PFu_eta, PFv_eta, &
+                                  tide_sal, pause_cnt)
   type(ocean_grid_type),                      intent(in)  :: G   !< Ocean grid structure
   type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -454,7 +458,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   type(thermo_var_ptrs),                      intent(in)  :: tv  !< Thermodynamic variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(out) :: PFu !< Zonal acceleration [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(out) :: PFv !< Meridional acceleration [L T-2 ~> m s-2]
-  type(PressureForce_FV_CS),                  intent(in)  :: CS  !< Finite volume PGF control structure
+  type(PressureForce_FV_CS),                  intent(inout)  :: CS  !< Finite volume PGF control structure
   type(ALE_CS),                               pointer     :: ALE_CSp !< ALE control structure
   real, dimension(:,:),                       pointer     :: p_atm !< The pressure at the ice-ocean
                                                          !! or atmosphere-ocean interface [R L2 T-2 ~> Pa].
@@ -466,6 +470,9 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                                                          !! tidal contributions.
   real, dimension(:,:,:), optional, pointer :: PFu_tide, PFu_sal, PFu_eta
   real, dimension(:,:,:), optional, pointer :: PFv_tide, PFv_sal, PFv_eta
+  real, dimension(SZI_(G),SZJ_(G)),          optional, intent(inout) :: tide_sal
+  logical,          optional, intent(in) :: pause_cnt
+
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: e ! Interface height in depth units [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G))  :: &
@@ -533,6 +540,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer :: i, j, k
   logical :: calc_PF_tide, calc_PF_sal, calc_PF_eta
+  logical :: pause_cnt_local
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -541,6 +549,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   if (.not.CS%initialized) call MOM_error(FATAL, &
        "MOM_PressureForce_FV_Bouss: Module must be initialized before it is used.")
+
+  if (CS%tides_sal_update_freq > 0 .and. (.not.present(tide_sal))) call MOM_error(FATAL, &
+       "MOM_PressureForce_FV_Bouss: tide_sal not present")
+  pause_cnt_local = .false.
+  if (present(pause_cnt)) pause_cnt_local = pause_cnt
 
   use_p_atm = associated(p_atm)
   use_EOS = associated(tv%eqn_of_state)
@@ -561,20 +574,30 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   !   The following two if-statements are arranged in a way that answers are not
   ! changed from old versions in which SAL is part of the tidal forcing module.
   if (CS%calculate_SAL) then
-    !   Determine the surface height anomaly for calculating self attraction
-    ! and loading.  This should really be based on bottom pressure anomalies,
-    ! but that is not yet implemented, and the current form is correct for
-    ! barotropic tides.
-    !$OMP parallel do default(shared)
-    do j=Jsq,Jeq+1
-      do i=Isq,Ieq+1
-        SSH(i,j) = -G%bathyT(i,j) - G%Z_ref
-      enddo
-      do k=1,nz ; do i=Isq,Ieq+1
-        SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
-      enddo ; enddo
-    enddo
-    call calc_SAL(SSH, e_sal, G, CS%SAL_CSp)
+    if (CS%tides_sal_update_freq > 0) then
+      if (mod(CS%nstep_cnt, CS%tides_sal_update_freq) == 0) then
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1
+          do i=Isq,Ieq+1
+            SSH(i,j) = min(-G%bathyT(i,j) - G%Z_ref, 0.0)
+          enddo
+          do k=1,nz ; do i=Isq,Ieq+1
+            SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
+          enddo ; enddo
+        enddo
+        call calc_SAL(SSH, e_sal, G, CS%SAL_CSp)
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          tide_sal(i,j) = e_sal(i,j)
+        enddo ; enddo
+      else
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          e_sal(i,j) = tide_sal(i,j)
+        enddo ; enddo
+      endif
+      if (.not. pause_cnt_local) CS%nstep_cnt = CS%nstep_cnt + 1
+    endif
   else
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -901,6 +924,13 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
                  units="kg m-3", default=1035.0, scale=US%kg_m3_to_R)
   call get_param(param_file, mdl, "TIDES", CS%tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
+
+  CS%tides_sal_update_freq = -1; CS%nstep_cnt = -1
+  if (CS%tides) then
+    call get_param(param_file, mdl, "TIDES_SAL_UPDATE_FREQ", CS%tides_sal_update_freq, &
+                  "Tidal SAL update frequency.", default=1)
+    CS%nstep_cnt = 0
+  endif
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%tides)
   call get_param(param_file, "MOM", "USE_REGRIDDING", use_ALE, &
