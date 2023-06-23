@@ -414,7 +414,6 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     visc_bound_rem  ! fraction of overall viscous bounds that remain to be applied (h or q) [nondim]
   logical :: use_cont_huv
 
-  use_cont_huv = CS%use_cont_thick .and. present(hu_cont) .and. present(hv_cont)
   ! Horizontal viscosity kinetic energy terms specifically for decomposition.
   ! KE_TOT is calculated by multiplying diff[uv] by velocity [uv], which is different from
   ! KE_horvisc in MOM_diagnostic ([uv]h). The reason is to make sure the KE terms decomposed
@@ -446,6 +445,8 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     bhfct_xy
   real, dimension(SZI_(G),SZJ_(G)) :: &
     bhfct_xx
+
+  use_cont_huv = CS%use_cont_thick .and. present(hu_cont) .and. present(hv_cont)
 
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
