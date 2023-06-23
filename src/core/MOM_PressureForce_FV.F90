@@ -1008,10 +1008,6 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
     CS%id_e_sal = register_diag_field('ocean_model', 'e_SAL', diag%axesT1, &
         Time, 'Self-attraction and loading height Anomaly', 'meter', conversion=US%Z_to_m)
   endif
-  if (CS%calculate_SAL) then
-    CS%id_e_sal = register_diag_field('ocean_model', 'e_SAL', diag%axesT1, &
-        Time, 'Self-attraction and loading height Anomaly', 'meter', conversion=US%Z_to_m)
-  endif
   if (CS%tides) then
     CS%id_e_tidal = register_diag_field('ocean_model', 'e_tidal', diag%axesT1, &
         Time, 'Tidal Forcing Astronomical and SAL Height Anomaly', 'meter', conversion=US%Z_to_m)
