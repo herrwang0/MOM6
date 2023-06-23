@@ -67,7 +67,7 @@ use MOM_unit_scaling,        only : unit_scale_type
 use MOM_variables,           only : thermo_var_ptrs, vertvisc_type, accel_diag_ptrs
 use MOM_variables,           only : cont_diag_ptrs, MOM_thermovar_chksum, p3d
 use MOM_verticalGrid,        only : verticalGrid_type, get_thickness_units
-use MOM_wave_speed,          only : wave_speeds
+use MOM_wave_speed,          only : wave_speeds, wave_speed_CS, wave_speed_init
 use MOM_wave_interface,      only : wave_parameters_CS
 use MOM_stochastics,         only : stochastic_CS
 
@@ -171,7 +171,7 @@ type, public :: diabatic_CS ; private
   real    :: MLDdensityDifference    !< Density difference used to determine MLD_user [R ~> kg m-3]
   real    :: dz_subML_N2             !< The distance over which to calculate a diagnostic of the
                                      !! average stratification at the base of the mixed layer [Z ~> m].
-  real    :: MLD_EN_VALS(3)          !< Energy values for energy mixed layer diagnostics [R Z L2 T-2 ~> J m-2]
+  real    :: MLD_En_vals(3)          !< Energy values for energy mixed layer diagnostics [R Z3 T-2 ~> J m-2]
 
   !>@{ Diagnostic IDs
   integer :: id_cg1      = -1                 ! diagnostic handle for mode-1 speed
@@ -239,6 +239,7 @@ type, public :: diabatic_CS ; private
   type(int_tide_CS) :: int_tide                     !< Internal tide control structure
   type(opacity_CS) :: opacity                       !< Opacity control structure
   type(regularize_layers_CS) :: regularize_layers   !< Regularize layer control structure
+  type(wave_speed_CS) :: wave_speed                 !< Wave speed control struct
 
   type(group_pass_type) :: pass_hold_eb_ea !< For group halo pass
   type(group_pass_type) :: pass_Kv         !< For group halo pass
@@ -395,7 +396,7 @@ subroutine diabatic(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Time_end, &
     if (CS%uniform_test_cg > 0.0) then
       do m=1,CS%nMode ; cn_IGW(:,:,m) = CS%uniform_test_cg ; enddo
     else
-      call wave_speeds(h, tv, G, GV, US, CS%nMode, cn_IGW, full_halos=.true.)
+      call wave_speeds(h, tv, G, GV, US, CS%nMode, cn_IGW, CS%wave_speed, full_halos=.true.)
     endif
 
     call propagate_int_tide(h, tv, cn_IGW, CS%int_tide_input%TKE_itidal_input, CS%int_tide_input%tideamp, &
@@ -499,7 +500,7 @@ subroutine diabatic(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Time_end, &
   endif
   if ((CS%id_MLD_EN1 > 0) .or. (CS%id_MLD_EN2 > 0) .or. (CS%id_MLD_EN3 > 0)) then
     call diagnoseMLDbyEnergy((/CS%id_MLD_EN1, CS%id_MLD_EN2, CS%id_MLD_EN3/),&
-                             h, tv, G, GV, US, CS%MLD_EN_VALS, CS%diag)
+                             h, tv, G, GV, US, CS%MLD_En_vals, CS%diag)
   endif
   if (CS%use_int_tides) then
     if (CS%id_cg1 > 0) call post_data(CS%id_cg1, cn_IGW(:,:,1),CS%diag)
@@ -711,6 +712,10 @@ subroutine diabatic_ALE_legacy(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Tim
       ! If visc%MLD exists, copy KPP's BLD into it
       if (associated(visc%MLD)) visc%MLD(:,:) = Hml(:,:)
     endif
+    if (associated(visc%sfc_buoy_flx)) then
+      visc%sfc_buoy_flx(:,:) = CS%KPP_buoy_flux(:,:,1)
+      call pass_var(visc%sfc_buoy_flx, G%domain, halo=1)
+    endif
 
     if (.not.CS%KPPisPassive) then
       !$OMP parallel do default(shared)
@@ -852,6 +857,10 @@ subroutine diabatic_ALE_legacy(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Tim
     elseif (associated(visc%MLD)) then
       call energetic_PBL_get_MLD(CS%ePBL, visc%MLD, G, US)
       call pass_var(visc%MLD, G%domain, halo=1)
+    endif
+    if (associated(visc%sfc_buoy_flx)) then
+      visc%sfc_buoy_flx(:,:) = SkinBuoyFlux(:,:)
+      call pass_var(visc%sfc_buoy_flx, G%domain, halo=1)
     endif
 
     ! Augment the diffusivities and viscosity due to those diagnosed in energetic_PBL.
@@ -1305,6 +1314,10 @@ subroutine diabatic_ALE(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Time_end, 
       ! If visc%MLD exists, copy KPP's BLD into it
       if (associated(visc%MLD)) visc%MLD(:,:) = Hml(:,:)
     endif
+    if (associated(visc%sfc_buoy_flx)) then
+      visc%sfc_buoy_flx(:,:) = CS%KPP_buoy_flux(:,:,1)
+      call pass_var(visc%sfc_buoy_flx, G%domain, halo=1)
+    endif
 
     if (showCallTree) call callTree_waypoint("done with KPP_calculate (diabatic)")
     if (CS%debug) then
@@ -1389,6 +1402,10 @@ subroutine diabatic_ALE(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Time_end, 
     elseif (associated(visc%MLD)) then
       call energetic_PBL_get_MLD(CS%ePBL, visc%MLD, G, US)
       call pass_var(visc%MLD, G%domain, halo=1)
+    endif
+    if (associated(visc%sfc_buoy_flx)) then
+      visc%sfc_buoy_flx(:,:) = SkinBuoyFlux(:,:)
+      call pass_var(visc%sfc_buoy_flx, G%domain, halo=1)
     endif
 
     ! Augment the diffusivities and viscosity due to those diagnosed in energetic_PBL.
@@ -1782,6 +1799,7 @@ subroutine layered_diabatic(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Time_e
         call bulkmixedlayer(h, u_h, v_h, tv, fluxes, dt*CS%ML_mix_first, &
                             eaml, ebml, G, GV, US, CS%bulkmixedlayer, CS%optics, &
                             Hml, CS%aggregate_FW_forcing, dt, last_call=.false.)
+      else
         ! Changes: h, tv%T, tv%S, eaml and ebml  (G is also inout???)
         call bulkmixedlayer(h, u_h, v_h, tv, fluxes, dt, eaml, ebml, &
                             G, GV, US, CS%bulkmixedlayer, CS%optics, &
@@ -1897,6 +1915,10 @@ subroutine layered_diabatic(u, v, h, tv, Hml, fluxes, visc, ADp, CDp, dt, Time_e
       call pass_var(Hml, G%domain, halo=1)
       ! If visc%MLD exists, copy KPP's BLD into it
       if (associated(visc%MLD)) visc%MLD(:,:) = Hml(:,:)
+    endif
+    if (associated(visc%sfc_buoy_flx)) then
+      visc%sfc_buoy_flx(:,:) = CS%KPP_buoy_flux(:,:,1)
+      call pass_var(visc%sfc_buoy_flx, G%domain, halo=1)
     endif
 
     if (.not. CS%KPPisPassive) then
@@ -2948,6 +2970,8 @@ subroutine diabatic_driver_init(Time, G, GV, US, param_file, useALEalgorithm, di
 
   ! Local variables
   real    :: Kd  ! A diffusivity used in the default for other tracer diffusivities [Z2 T-1 ~> m2 s-1]
+  real    :: IGW_c1_thresh ! A threshold first mode internal wave speed below which all higher
+                 ! mode speeds are not calculated but simply assigned a speed of 0 [L T-1 ~> m s-1].
   logical :: use_temperature
   character(len=20) :: EN1, EN2, EN3
 
@@ -3045,6 +3069,11 @@ subroutine diabatic_driver_init(Time, G, GV, US, param_file, useALEalgorithm, di
     call get_param(param_file, mdl, "INTERNAL_TIDE_MODES", CS%nMode, &
                  "The number of distinct internal tide modes "//&
                  "that will be calculated.", default=1, do_not_log=.true.)
+    call get_param(param_file, mdl, "INTERNAL_WAVE_CG1_THRESH", IGW_c1_thresh, &
+                 "A minimal value of the first mode internal wave speed below which all higher "//&
+                 "mode speeds are not calculated but are simply reported as 0.  This must be "//&
+                 "non-negative for the wave_speeds routine to be used.", &
+                 units="m s-1", default=0.01, scale=US%m_s_to_L_T)
     call get_param(param_file, mdl, "UNIFORM_TEST_CG", CS%uniform_test_cg, &
                  "If positive, a uniform group velocity of internal tide for test case", &
                  default=-1., units="m s-1", scale=US%m_s_to_L_T)
@@ -3175,22 +3204,22 @@ subroutine diabatic_driver_init(Time, G, GV, US, param_file, useALEalgorithm, di
   if (use_temperature) then
     CS%id_Tdif = register_diag_field('ocean_model',"Tflx_dia_diff", diag%axesTi, &
         Time, "Diffusive diapycnal temperature flux across interfaces", &
-        "degC m s-1", conversion=US%C_to_degC*GV%H_to_m*US%s_to_T)
+        units="degC m s-1", conversion=US%C_to_degC*GV%H_to_m*US%s_to_T)
     if (.not.CS%useALEalgorithm) then
       CS%id_Tadv = register_diag_field('ocean_model',"Tflx_dia_adv", diag%axesTi, &
           Time, "Advective diapycnal temperature flux across interfaces", &
-          "degC m s-1", conversion=US%C_to_degC*GV%H_to_m*US%s_to_T)
+          units="degC m s-1", conversion=US%C_to_degC*GV%H_to_m*US%s_to_T)
     endif
     CS%id_Sdif = register_diag_field('ocean_model',"Sflx_dia_diff", diag%axesTi, &
         Time, "Diffusive diapycnal salnity flux across interfaces", &
-        "psu m s-1", conversion=US%S_to_ppt*GV%H_to_m*US%s_to_T)
+        units="psu m s-1", conversion=US%S_to_ppt*GV%H_to_m*US%s_to_T)
     if (.not.CS%useALEalgorithm) then
       CS%id_Sadv = register_diag_field('ocean_model',"Sflx_dia_adv", diag%axesTi, &
           Time, "Advective diapycnal salnity flux across interfaces", &
-          "psu m s-1", conversion=US%S_to_ppt*GV%H_to_m*US%s_to_T)
+          units="psu m s-1", conversion=US%S_to_ppt*GV%H_to_m*US%s_to_T)
     endif
     CS%id_MLD_003 = register_diag_field('ocean_model', 'MLD_003', diag%axesT1, Time, &
-        'Mixed layer depth (delta rho = 0.03)', 'm', conversion=US%Z_to_m, &
+        'Mixed layer depth (delta rho = 0.03)', units='m', conversion=US%Z_to_m, &
         cmor_field_name='mlotst', cmor_long_name='Ocean Mixed Layer Thickness Defined by Sigma T', &
         cmor_standard_name='ocean_mixed_layer_thickness_defined_by_sigma_t')
     CS%id_mlotstsq = register_diag_field('ocean_model', 'mlotstsq', diag%axesT1, Time, &
@@ -3199,31 +3228,31 @@ subroutine diabatic_driver_init(Time, G, GV, US, param_file, useALEalgorithm, di
         units='m2', conversion=US%Z_to_m**2)
     CS%id_MLD_0125 = register_diag_field('ocean_model', 'MLD_0125', diag%axesT1, Time, &
         'Mixed layer depth (delta rho = 0.125)', 'm', conversion=US%Z_to_m)
-    call get_param(param_file, mdl, "MLD_EN_VALS", CS%MLD_EN_VALS, &
+    call get_param(param_file, mdl, "MLD_EN_VALS", CS%MLD_En_vals, &
          "The energy values used to compute MLDs.  If not set (or all set to 0.), the "//&
-         "default will overwrite to 25., 2500., 250000.",units='J/m2', default=0., &
-         scale=US%kg_m3_to_R*US%m_to_Z**3*US%T_to_s**2)
-    if ((CS%MLD_EN_VALS(1)==0.).and.(CS%MLD_EN_VALS(2)==0.).and.(CS%MLD_EN_VALS(3)==0.)) then
-      CS%MLD_EN_VALS = (/25.*US%kg_m3_to_R*US%m_to_Z*US%m_to_L**2*US%T_to_s**2,&
-           2500.*US%kg_m3_to_R*US%m_to_Z*US%m_to_L**2*US%T_to_s**2,&
-           250000.*US%kg_m3_to_R*US%m_to_Z*US%m_to_L**2*US%T_to_s**2/)
+         "default will overwrite to 25., 2500., 250000.", &
+         units='J/m2', default=0., scale=US%W_m2_to_RZ3_T3*US%s_to_T)
+    if ((CS%MLD_En_vals(1)==0.).and.(CS%MLD_En_vals(2)==0.).and.(CS%MLD_En_vals(3)==0.)) then
+      CS%MLD_En_vals = (/ 25.*US%W_m2_to_RZ3_T3*US%s_to_T, &
+                        2500.*US%W_m2_to_RZ3_T3*US%s_to_T, &
+                      250000.*US%W_m2_to_RZ3_T3*US%s_to_T /)
     endif
-    write(EN1,'(F10.2)') CS%MLD_EN_VALS(1)*US%R_to_kg_m3*US%Z_to_m*US%L_to_m**2*US%s_to_T**2
-    write(EN2,'(F10.2)') CS%MLD_EN_VALS(2)*US%R_to_kg_m3*US%Z_to_m*US%L_to_m**2*US%s_to_T**2
-    write(EN3,'(F10.2)') CS%MLD_EN_VALS(3)*US%R_to_kg_m3*US%Z_to_m*US%L_to_m**2*US%s_to_T**2
+    write(EN1,'(F10.2)') CS%MLD_En_vals(1)*US%RZ3_T3_to_W_m2*US%T_to_s
+    write(EN2,'(F10.2)') CS%MLD_En_vals(2)*US%RZ3_T3_to_W_m2*US%T_to_s
+    write(EN3,'(F10.2)') CS%MLD_En_vals(3)*US%RZ3_T3_to_W_m2*US%T_to_s
     CS%id_MLD_EN1 = register_diag_field('ocean_model', 'MLD_EN1', diag%axesT1, Time, &
          'Mixed layer depth for energy value set to '//trim(EN1)//' J/m2 (Energy set by 1st MLD_EN_VALS)', &
-         'm', conversion=US%Z_to_m)
+         units='m', conversion=US%Z_to_m)
     CS%id_MLD_EN2 = register_diag_field('ocean_model', 'MLD_EN2', diag%axesT1, Time, &
          'Mixed layer depth for energy value set to '//trim(EN2)//' J/m2 (Energy set by 2nd MLD_EN_VALS)', &
-         'm', conversion=US%Z_to_m)
+         units='m', conversion=US%Z_to_m)
     CS%id_MLD_EN3 = register_diag_field('ocean_model', 'MLD_EN3', diag%axesT1, Time, &
          'Mixed layer depth for energy value set to '//trim(EN3)//' J/m2 (Energy set by 3rd MLD_EN_VALS)', &
-         'm', conversion=US%Z_to_m)
+         units='m', conversion=US%Z_to_m)
     CS%id_subMLN2  = register_diag_field('ocean_model', 'subML_N2', diag%axesT1, Time, &
-        'Squared buoyancy frequency below mixed layer', 's-2', conversion=US%s_to_T**2)
+        'Squared buoyancy frequency below mixed layer', units='s-2', conversion=US%s_to_T**2)
     CS%id_MLD_user = register_diag_field('ocean_model', 'MLD_user', diag%axesT1, Time, &
-        'Mixed layer depth (used defined)', 'm', conversion=US%Z_to_m)
+        'Mixed layer depth (used defined)', units='m', conversion=US%Z_to_m)
   endif
   call get_param(param_file, mdl, "DIAG_MLD_DENSITY_DIFF", CS%MLDdensityDifference, &
                  "The density difference used to determine a diagnostic mixed "//&
@@ -3466,6 +3495,7 @@ subroutine diabatic_driver_init(Time, G, GV, US, param_file, useALEalgorithm, di
     call int_tide_input_init(Time, G, GV, US, param_file, diag, CS%int_tide_input_CSp, &
                              CS%int_tide_input)
     call internal_tides_init(Time, G, GV, US, param_file, diag, CS%int_tide)
+    call wave_speed_init(CS%wave_speed, c1_thresh=IGW_c1_thresh)
   endif
 
   physical_OBL_scheme = (CS%use_bulkmixedlayer .or. CS%use_KPP .or. CS%use_energetic_PBL)

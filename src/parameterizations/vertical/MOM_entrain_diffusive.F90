@@ -34,6 +34,9 @@ type, public :: entrain_diffusive_CS ; private
                              !! calculate the diapycnal entrainment.
   real    :: Tolerance_Ent   !< The tolerance with which to solve for entrainment values
                              !! [H ~> m or kg m-2].
+  real    :: max_Ent         !< A large ceiling on the maximum permitted amount of entrainment
+                             !! across each interface between the mixed and buffer layers within
+                             !! a timestep [H ~> m or kg m-2].
   real    :: Rho_sig_off     !< The offset between potential density and a sigma value [R ~> kg m-3]
   type(diag_ctrl), pointer :: diag => NULL() !< A structure that is used to
                              !! regulate the timing of diagnostic output.
@@ -1053,7 +1056,6 @@ subroutine set_Ent_bl(h, dtKd_int, tv, kb, kmb, do_i, G, GV, US, CS, j, Ent_bl, 
   real, dimension(SZI_(G), SZK_(GV)) :: &
     S_est ! An estimate of the coordinate potential density - 1000 after
           ! entrainment for each layer [R ~> kg m-3].
-  real :: max_ent  ! The maximum possible entrainment [H ~> m or kg m-2].
   real :: dh       ! An available thickness [H ~> m or kg m-2].
   real :: Kd_x_dt  ! The diffusion that remains after thin layers are
                    ! entrained [H2 ~> m2 or kg2 m-4].
@@ -1063,8 +1065,6 @@ subroutine set_Ent_bl(h, dtKd_int, tv, kb, kmb, do_i, G, GV, US, CS, j, Ent_bl, 
   integer :: i, k, is, ie, nz
   is = G%isc ; ie = G%iec ; nz = GV%ke
 
-!  max_ent = 1.0e14*GV%Angstrom_H ! This is set to avoid roundoff problems.
-  max_ent = 1.0e4*GV%m_to_H
   h_neglect = GV%H_subroundoff
 
   do i=is,ie ; pres(i) = tv%P_Ref ; enddo
@@ -1084,8 +1084,7 @@ subroutine set_Ent_bl(h, dtKd_int, tv, kb, kmb, do_i, G, GV, US, CS, j, Ent_bl, 
 
   do k=2,kmb ; do i=is,ie
     if (do_i(i)) then
-      Ent_bl(i,K) = min(2.0 * dtKd_int(i,K) / (h(i,j,k-1) + h(i,j,k) + h_neglect), &
-                        max_ent)
+      Ent_bl(i,K) = min(2.0 * dtKd_int(i,K) / (h(i,j,k-1) + h(i,j,k) + h_neglect), CS%max_Ent)
     else ; Ent_bl(i,K) = 0.0 ; endif
   enddo ; enddo
 
@@ -1815,9 +1814,9 @@ subroutine find_maxF_kb(h_bl, Sref, Ent_bl, I_dSkbp1, min_ent_in, max_ent_in, &
                                                       !! limited value at ent=max_ent_in in this
                                                       !! array [H ~> m or kg m-2].
   real, dimension(SZI_(G)), &
-                    optional, intent(in)  :: F_thresh !< If F_thresh is present, return the first
-                                                      !! value found that has F > F_thresh, or
-                                                      !! the maximum.
+                    optional, intent(in)  :: F_thresh !< If F_thresh is present, return the first value
+                                                      !! found that has F > F_thresh [H ~> m or kg m-2], or
+                                                      !! the maximum root if it is absent.
 
 ! Maximize F = ent*ds_kb*I_dSkbp1 in the range min_ent < ent < max_ent.
 ! ds_kb may itself be limited to positive values in determine_dSkb, which gives
@@ -2114,8 +2113,12 @@ subroutine entrain_diffusive_init(Time, G, GV, US, param_file, diag, CS, just_re
                  units="s", scale=US%s_to_T, fail_if_missing=.true., do_not_log=just_read_params)
   call get_param(param_file, mdl, "TOLERANCE_ENT", CS%Tolerance_Ent, &
                  "The tolerance with which to solve for entrainment values.", &
-                 units="m", default=MAX(100.0*GV%Angstrom_m,1.0e-4*sqrt(dt*Kd)*US%Z_to_m), scale=GV%m_to_H, &
+                 units="m", default=US%Z_to_m*MAX(100.0*GV%Angstrom_Z,1.0e-4*sqrt(dt*Kd)), scale=GV%m_to_H, &
                  do_not_log=just_read_params)
+  call get_param(param_file, mdl, "ENTRAIN_DIFFUSIVE_MAX_ENT", CS%max_Ent, &
+                 "A large ceiling on the maximum permitted amount of entrainment across each "//&
+                 "interface between the mixed and buffer layers within a timestep.", &
+                 units="m", default=1.0e4, scale=GV%m_to_H, do_not_log=.not.CS%bulkmixedlayer)
 
   CS%Rho_sig_off = 1000.0*US%kg_m3_to_R
 

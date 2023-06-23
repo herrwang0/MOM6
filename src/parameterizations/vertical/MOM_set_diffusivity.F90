@@ -900,7 +900,7 @@ subroutine find_N2(h, tv, T_f, S_f, fluxes, j, G, GV, US, CS, dRho_int, &
 
   real, dimension(SZI_(G)) :: &
     pres,      &  ! pressure at each interface [R L2 T-2 ~> Pa]
-    Temp_int,  &  ! temperature at each interface [C ~>degC]
+    Temp_int,  &  ! temperature at each interface [C ~> degC]
     Salin_int, &  ! salinity at each interface [S ~> ppt]
     drho_bot,  &  ! A density difference [R ~> kg m-3]
     h_amp,     &  ! The topographic roughness amplitude [Z ~> m].
@@ -1993,7 +1993,7 @@ subroutine set_diffusivity_init(Time, G, GV, US, param_file, diag, CS, int_tide_
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_set_diffusivity"  ! This module's name.
-  real    :: vonKar          ! The von Karman constant as used for mixed layer viscosity [nomdim]
+  real    :: vonKar          ! The von Karman constant as used for mixed layer viscosity [nondim]
   real    :: omega_frac_dflt ! The default value for the fraction of the absolute rotation rate
                              ! that is used in place of the absolute value of the local Coriolis
                              ! parameter in the denominator of some expressions [nondim]
