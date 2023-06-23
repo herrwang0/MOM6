@@ -208,6 +208,7 @@ type, public :: hor_visc_CS ; private
   integer :: id_normstress = -1, id_shearstress = -1
   !>@}
 
+  logical :: use_cont_thick
 end type hor_visc_CS
 
 contains
@@ -225,7 +226,7 @@ contains
 !!   v[is-2:ie+2,js-2:je+2]
 !!   h[is-1:ie+1,js-1:je+1]
 subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, &
-                                CS, OBC, BT, TD, ADp)
+                                CS, OBC, BT, TD, ADp, hu_cont, hv_cont)
   type(ocean_grid_type),         intent(in)  :: G      !< The ocean's grid structure.
   type(verticalGrid_type),       intent(in)  :: GV     !< The ocean's vertical grid structure.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
@@ -249,7 +250,10 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
   type(barotropic_CS), intent(in), optional  :: BT     !< Barotropic control struct
   type(thickness_diffuse_CS), intent(in), optional :: TD  !< Thickness diffusion control struct
   type(accel_diag_ptrs), intent(in), optional :: ADp   !< Acceleration diagnostics
-
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
+                        optional, intent(in) :: hu_cont
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), &
+                        optional, intent(in) :: hv_cont
   ! Local variables
   real, dimension(SZIB_(G),SZJ_(G)) :: &
     Del2u, &      ! The u-component of the Laplacian of velocity [L-1 T-1 ~> m-1 s-1]
@@ -380,7 +384,9 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
     vert_vort_mag, &  ! magnitude of the vertical vorticity gradient (h or q) [L-1 T-1 ~> m-1 s-1]
     hrat_min, &     ! h_min divided by the thickness at the stress point (h or q) [nondim]
     visc_bound_rem  ! fraction of overall viscous bounds that remain to be applied (h or q) [nondim]
+  logical :: use_cont_huv
 
+  use_cont_huv = CS%use_cont_thick .and. present(hu_cont) .and. present(hv_cont)
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
 
@@ -598,6 +604,14 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
       enddo ; enddo
     endif
 
+    if (use_cont_huv) then
+      do j=js-2,je+2 ; do I=Isq-1,Ieq+1
+        h_u(I,j) = hu_cont(I,j,k)
+      enddo ; enddo
+      do J=Jsq-1,Jeq+1 ; do i=is-2,ie+2
+        h_v(i,J) = hv_cont(i,J,k)
+      enddo ; enddo
+    endif
     ! Adjust contributions to shearing strain and interpolated values of
     ! thicknesses on open boundaries.
     if (apply_OBC) then ; do n=1,OBC%number_of_segments
@@ -1775,6 +1789,10 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                  "specified, the latter takes precedence.", default=default_answer_date)
 
   call get_param(param_file, mdl, "DEBUG", CS%debug, default=.false.)
+  call get_param(param_file, mdl, "USE_CONT_THICKNESS", CS%use_cont_thick, &
+                 "If true, use a thickness at velocity points from the cont. solver.", &
+                 default=.false.)
+
   call get_param(param_file, mdl, "LAPLACIAN", CS%Laplacian, &
                  "If true, use a Laplacian horizontal viscosity.", &
                  default=.false.)
