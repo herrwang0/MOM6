@@ -19,7 +19,7 @@ use MOM_debugging,         only : hchksum, uvchksum
 
 implicit none ; private
 
-public porous_widths_layer, porous_widths_interface, porous_barriers_init
+public porous_widths_layer, porous_widths_interface, porous_barriers_init, porbar_cont
 
 #include <MOM_memory.h>
 
@@ -36,6 +36,8 @@ type, public :: porous_barrier_CS; private
   integer :: answer_date            !< The vintage of the porous barrier weight function calculations.
                                     !! Values below 20220806 recover the old answers in which the layer
                                     !! averaged weights are not strictly limited by an upper-bound of 1.0 .
+  logical :: cont_update            !! Flag controlling whether recalcuation occurs in cont solver
+  logical :: use_cont_hvel          !! If true, use continuity solver hu and hv
   !>@{ Diagnostic IDs
   integer :: id_por_layer_widthU = -1, id_por_layer_widthV = -1, &
              id_por_face_areaU = -1, id_por_face_areaV = -1
@@ -285,7 +287,7 @@ subroutine porous_widths_interface(h, tv, G, GV, US, pbv, CS, eta_bt)
   call cpu_clock_end(id_clock_porous_barrier)
 end subroutine porous_widths_interface
 
-subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
+subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt, hu, hv)
   !variables needed to call find_eta
   type(ocean_grid_type),                        intent(in) :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                      intent(in) :: GV  !< The ocean's vertical grid structure.
@@ -296,6 +298,10 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
   real, dimension(SZI_(G),SZJ_(G)), optional,   intent(in) :: eta_bt !< optional barotropic variable
                                                                    !! used to dilate the layer thicknesses
                                                                    !! [H ~> m or kg m-2].
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1), optional, intent(in) :: hu !< optional pre-calculated thickness
+                                                                   !! at U-cells [H ~> m or kg m-2].
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1), optional, intent(in) :: hv !< optional pre-calculated thickness
+                                                                   !! at V-cells [H ~> m or kg m-2].
   real,                                         intent(in) :: dmask !< The depth shallower than which
                                                                     !! porous barrier is not applied [Z ~> m]
   integer,                                      intent(in) :: interp !< eta interpolation method
@@ -306,12 +312,13 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: eta ! Layer interface heights [Z ~> m].
   real :: dz_neglect ! A negligible height difference [Z ~> m]
   integer :: i, j, k, nk, is, ie, js, je, Isq, Ieq, Jsq, Jeq
+  integer :: ks ! The actual starting k where interpolation is applied.
+  logical :: use_cont_huv
 
   is = G%isc; ie = G%iec; js = G%jsc; je = G%jec; nk = GV%ke
   Isq = G%IscB; Ieq = G%IecB; Jsq = G%JscB; Jeq = G%JecB
 
-  ! currently no treatment for using optional find_eta arguments if present
-  call find_eta(h, tv, G, GV, US, eta, halo_size=1)
+  use_cont_huv = CS%use_cont_hvel .and. (present(hu) .and. present(hv))
 
   dz_neglect = GV%dZ_subroundoff
 
@@ -320,9 +327,15 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
     do J=Jsq,Jeq ; do i=is,ie ; eta_v(i,J,K) = dmask ; enddo ; enddo
   enddo
 
+  ! currently no treatment for using optional find_eta arguments if present
+  call find_eta(h, tv, G, GV, US, eta, halo_size=1)
+
+  ks = 1
+  if (CS%use_cont_huv) ks = nk+1
+
   select case (interp)
     case (ETA_INTERP_MAX)   ! The shallower interface height
-      do K=1,nk+1
+      do K=ks,nk+1
         do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
           eta_u(I,j,K) = max(eta(i,j,K), eta(i+1,j,K))
         endif ; enddo ; enddo
@@ -331,7 +344,7 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
         endif ; enddo ; enddo
       enddo
     case (ETA_INTERP_MIN)   ! The deeper interface height
-      do K=1,nk+1
+      do K=ks,nk+1
         do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
           eta_u(I,j,K) = min(eta(i,j,K), eta(i+1,j,K))
         endif ; enddo ; enddo
@@ -340,7 +353,7 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
         endif ; enddo ; enddo
       enddo
     case (ETA_INTERP_ARITH) ! Arithmetic mean
-      do K=1,nk+1
+      do K=ks,nk+1
         do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
           eta_u(I,j,K) = 0.5 * (eta(i,j,K) + eta(i+1,j,K))
         endif ; enddo ; enddo
@@ -349,7 +362,7 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
         endif ; enddo ; enddo
       enddo
     case (ETA_INTERP_HARM)  ! Harmonic mean
-      do K=1,nk+1
+      do K=ks,nk+1
         do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
           eta_u(I,j,K) = 2.0 * (eta(i,j,K) * eta(i+1,j,K)) / (eta(i,j,K) + eta(i+1,j,K) + dz_neglect)
         endif ; enddo ; enddo
@@ -361,6 +374,17 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt)
       call MOM_error(FATAL, "porous_widths::calc_eta_at_uv: "//&
                      "invalid value for eta interpolation method.")
   end select
+
+  if (use_cont_huv) then
+    do K=1,nk
+      do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
+        eta_u(I,j,K) = eta_u(I,j,K+1) + hu(I,j,k)
+      endif ; enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie ; if (G%porous_DavgV(i,J) < dmask) then
+        eta_v(i,J,K) = eta_v(i,J,K+1) + hv(i,J,k)
+      endif ; enddo ; enddo
+    enddo
+  endif
 end subroutine calc_eta_at_uv
 
 !> subroutine to calculate the profile fit (the three parameter fit from Adcroft 2013)
@@ -432,6 +456,13 @@ subroutine calc_por_interface(D_min, D_max, D_avg, eta_layer, w_layer, do_next)
   endif
 end subroutine calc_por_interface
 
+function porbar_cont(CS) result(update_in_cont)
+  type(porous_barrier_CS), intent(in) :: CS !< Module control structure
+  logical :: update_in_cont
+
+  update_in_cont = CS%cont_update
+end function porbar_cont
+
 subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
   type(time_type),         intent(in)    :: Time       !< Current model time
   type(verticalGrid_type), intent(in)    :: GV         !< The ocean's vertical grid structure.
@@ -452,6 +483,10 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
 
   call log_version(param_file, mdl, version, "", log_to_all=.true., layout=.false., &
                    debugging=.false.)
+  call get_param(param_file, mdl, "PORBAR_CONT_UPDATE", CS%cont_update, &
+                 "If true, porous barriers are update in continuity solver, rather than the "//&
+                 "beginning of the dynamic time step.", &
+                 default=.False.)
   call get_param(param_file, mdl, "DEFAULT_ANSWER_DATE", default_answer_date, &
                  "This sets the default value for the various _ANSWER_DATE parameters.", &
                  default=99991231)
@@ -478,6 +513,9 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
                  "\t ARITHMETIC - arithmetic mean of the adjacent cells \n"//&
                  "\t HARMONIC - harmonic mean of the adjacent cells \n", &
                  default=ETA_INTERP_MAX_STRING)
+  call get_param(param_file, mdl, "PORBAR_USE_CONT_HVEL", CS%use_cont_hvel, &
+                 "If true, porous barriers use velocity cell thickness provided by cont solver.", &
+                 default=.False.)
   select case (interp_method)
     case (ETA_INTERP_MAX_STRING) ; CS%eta_interp = ETA_INTERP_MAX
     case (ETA_INTERP_MIN_STRING) ; CS%eta_interp = ETA_INTERP_MIN

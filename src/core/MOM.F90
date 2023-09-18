@@ -116,6 +116,7 @@ use MOM_open_boundary,         only : open_boundary_register_restarts, remap_OBC
 use MOM_open_boundary,         only : rotate_OBC_config, rotate_OBC_init
 use MOM_porous_barriers,       only : porous_widths_layer, porous_widths_interface, porous_barriers_init
 use MOM_porous_barriers,       only : porous_barrier_CS
+use MOM_porous_barriers,       only : porbar_cont
 use MOM_set_visc,              only : set_viscous_BBL, set_viscous_ML, set_visc_CS
 use MOM_set_visc,              only : set_visc_register_restarts, remap_vertvisc_aux_vars
 use MOM_set_visc,              only : set_visc_init, set_visc_end
@@ -1199,7 +1200,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   endif
 
   ! Update porous barrier fractional cell metrics
-  if (CS%use_porbar) then
+  if (CS%use_porbar .and. (.not.porbar_cont(CS%por_bar_CS))) then
     call enable_averages(dt, Time_local, CS%diag)
     call porous_widths_layer(h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS)
     call disable_averaging(CS%diag)
