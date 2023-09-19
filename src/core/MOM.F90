@@ -1206,8 +1206,6 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   ! Update porous barrier fractional cell metrics
   if (CS%use_porbar .and. (.not.porbar_cont(CS%por_bar_CS))) then
-    call create_group_pass(CS%pass_hatvel, CS%hatvel%havg_u, CS%hatvel%havg_v, G%Domain,  To_All+SCALAR_PAIR, CGRID_NE, halo=4)
-    call create_group_pass(CS%pass_hatvel, CS%hatvel%hmarg_u, CS%hatvel%hmarg_v, G%Domain, To_All+SCALAR_PAIR, CGRID_NE, halo=4)
 
     call enable_averages(dt, Time_local, CS%diag)
     if (CS%hatvel%set) then
@@ -1291,7 +1289,10 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_unsplit (step_MOM)")
 
   endif ! -------------------------------------------------- end SPLIT
-  call do_group_pass(CS%pass_hatvel, G%Domain, clock=id_clock_pass)
+  ! call do_group_pass(CS%pass_hatvel, G%Domain, clock=id_clock_pass)
+  call pass_vector(CS%hatvel%hmarg_u,CS%hatvel%hmarg_v,G%Domain)
+  call uvchksum("hmargUV", &
+  CS%hatvel%hmarg_u, CS%hatvel%hmarg_v, G%HI, haloshift=0)
 
   ! Update the model's current to reflect wind-wave growth
   if (Waves%Stokes_DDT .and. (.not.Waves%Passive_Stokes_DDT)) then
