@@ -197,6 +197,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
                          LB, uhbt, visc_rem_u, u_cor, BT_cont, du_cor, hatvel)
     call continuity_zonal_convergence(h, uh, dt, G, GV, LB, hmin=h_min)
   endif
+  if (present(hatvel)) hatvel%set = .True.
 
   if (present(hatvel)) then
     if (CS%id_havg_u > 0) call post_data(CS%id_havg_u, hatvel%havg_u, CS%diag)

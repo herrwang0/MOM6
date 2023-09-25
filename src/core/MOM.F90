@@ -116,7 +116,7 @@ use MOM_open_boundary,         only : open_boundary_register_restarts, remap_OBC
 use MOM_open_boundary,         only : rotate_OBC_config, rotate_OBC_init
 use MOM_porous_barriers,       only : porous_widths_layer, porous_widths_interface, porous_barriers_init
 use MOM_porous_barriers,       only : porous_barrier_CS
-use MOM_porous_barriers,       only : porbar_cont
+use MOM_porous_barriers,       only : porbar_cont, porbar_static
 use MOM_set_visc,              only : set_viscous_BBL, set_viscous_ML, set_visc_CS
 use MOM_set_visc,              only : set_visc_register_restarts, remap_vertvisc_aux_vars
 use MOM_set_visc,              only : set_visc_init, set_visc_end
@@ -1205,8 +1205,8 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   endif
 
   ! Update porous barrier fractional cell metrics
-  if (CS%use_porbar .and. (.not.porbar_cont(CS%por_bar_CS))) then
-
+  if (CS%use_porbar .and. (.not.porbar_static(CS%por_bar_CS)) &
+      .and. (.not.porbar_cont(CS%por_bar_CS))) then
     call enable_averages(dt, Time_local, CS%diag)
     if (CS%hatvel%set) then
       call porous_widths_layer(h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS, &
@@ -1290,9 +1290,10 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   endif ! -------------------------------------------------- end SPLIT
   ! call do_group_pass(CS%pass_hatvel, G%Domain, clock=id_clock_pass)
-  call pass_vector(CS%hatvel%hmarg_u,CS%hatvel%hmarg_v,G%Domain)
-  call uvchksum("hmargUV", &
-  CS%hatvel%hmarg_u, CS%hatvel%hmarg_v, G%HI, haloshift=0)
+  call pass_vector(CS%hatvel%hmarg_u,CS%hatvel%hmarg_v, G%Domain, &
+      direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
+  ! call uvchksum("hmargUV", &
+  ! CS%hatvel%hmarg_u, CS%hatvel%hmarg_v, G%HI, haloshift=0)
 
   ! Update the model's current to reflect wind-wave growth
   if (Waves%Stokes_DDT .and. (.not.Waves%Passive_Stokes_DDT)) then
@@ -3266,8 +3267,16 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     CS%use_stochastic_EOS = .false.
   endif
 
-  if (CS%use_porbar) &
+  if (CS%use_porbar) then
     call porous_barriers_init(Time, GV, US, param_file, diag, CS%por_bar_CS)
+    if (porbar_static(CS%por_bar_CS)) then
+      ! call enable_averages(dt, Time_local, CS%diag)
+      call porous_widths_layer(CS%h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS)
+      ! call disable_averaging(CS%diag)
+      call pass_vector(CS%pbv%por_face_areaU, CS%pbv%por_face_areaV, &
+                       G%Domain, direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
+    endif
+  endif
 
   if (CS%split) then
     allocate(eta(SZI_(G),SZJ_(G)), source=0.0)

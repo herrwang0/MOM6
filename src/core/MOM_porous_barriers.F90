@@ -19,7 +19,7 @@ use MOM_debugging,         only : hchksum, uvchksum
 
 implicit none ; private
 
-public porous_widths_layer, porous_widths_interface, porous_barriers_init, porbar_cont
+public porous_widths_layer, porous_widths_interface, porous_barriers_init, porbar_cont, porbar_static
 
 #include <MOM_memory.h>
 
@@ -38,6 +38,7 @@ type, public :: porous_barrier_CS; private
                                     !! averaged weights are not strictly limited by an upper-bound of 1.0 .
   logical :: cont_update            !! Flag controlling whether recalcuation occurs in cont solver
   logical :: use_cont_hvel          !! If true, use continuity solver hu and hv
+  logical :: use_static             !! If true, use a static coefficient
   !>@{ Diagnostic IDs
   integer :: id_por_layer_widthU = -1, id_por_layer_widthV = -1, &
              id_por_face_areaU = -1, id_por_face_areaV = -1
@@ -383,7 +384,7 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   end select
 
   if (use_cont_huv) then
-    do K=1,nk
+    do K=nk,1,-1
       do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
         eta_u(I,j,K) = eta_u(I,j,K+1) + hu(I,j,k)
       endif ; enddo ; enddo
@@ -470,6 +471,13 @@ function porbar_cont(CS) result(update_in_cont)
   update_in_cont = CS%cont_update
 end function porbar_cont
 
+function porbar_static(CS) result(update_static)
+  type(porous_barrier_CS), intent(in) :: CS !< Module control structure
+  logical :: update_static
+
+  update_static = CS%use_static
+end function porbar_static
+
 subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
   type(time_type),         intent(in)    :: Time       !< Current model time
   type(verticalGrid_type), intent(in)    :: GV         !< The ocean's vertical grid structure.
@@ -490,6 +498,9 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
 
   call log_version(param_file, mdl, version, "", log_to_all=.true., layout=.false., &
                    debugging=.false.)
+  call get_param(param_file, mdl, "PORBAR_STATIC", CS%use_static, &
+                 "If true, do not do update.", &
+                 default=.False.)
   call get_param(param_file, mdl, "PORBAR_CONT_UPDATE", CS%cont_update, &
                  "If true, porous barriers are update in continuity solver, rather than the "//&
                  "beginning of the dynamic time step.", &
