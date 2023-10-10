@@ -12,7 +12,7 @@ use MOM_grid,          only : ocean_grid_type
 use MOM_unit_scaling,  only : unit_scale_type
 use MOM_variables,     only : thermo_var_ptrs
 use MOM_verticalGrid,  only : verticalGrid_type
-
+use MOM_porous_barriers, only : calc_por_layer
 implicit none ; private
 
 #include <MOM_memory.h>
@@ -20,6 +20,8 @@ implicit none ; private
 public find_eta, dz_to_thickness, thickness_to_dz, dz_to_thickness_simple
 public calc_derived_thermo
 public find_rho_bottom
+! public calcuate_dz, calcuate_h
+public calculate_h
 
 !> Calculates the heights of the free surface or all interfaces from layer thicknesses.
 interface find_eta
@@ -734,5 +736,107 @@ subroutine thickness_to_dz_jslice(h, tv, dz, j, G, GV, halo_size)
   endif
 
 end subroutine thickness_to_dz_jslice
+
+subroutine calculate_h(dz, h, G, GV)
+  type(ocean_grid_type),                      intent(in)   :: G   !< Ocean grid structure
+  type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)  :: dz   !< Layer thickness [H ~> m]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(out) :: h   !< Layer thickness [H ~> m]
+
+  logical, dimension(SZI_(G),SZJ_(G)) :: do_I
+  real, dimension(SZI_(G),SZJ_(G)) :: vol_below
+  real, dimension(SZI_(G),SZJ_(G)) :: et
+  real :: vol
+  integer :: is, ie, js, je, nz
+  integer :: i, j, k
+
+  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
+  nz = GV%ke
+
+  do j=js,je ; do i=is,ie
+    et(i,j) = G%depc_low(i,j)
+    vol_below(i,j) = 0.0
+    do_I(i,j) = (G%mask2dT(i,j)==1.0) .and. (G%depc_m(i,j)/=0.0)
+  enddo ; enddo
+
+  do k=nz,1,-1 ; do j=js,je ; do i=is,ie
+    if (do_I(i,j)) then
+      et(i,j) = et(i,j) + dz(i,j,k)
+      call calc_por_layer(G%depc_low(i,j), G%depc_hgh(i,j), G%depc_ave(i,j), et(i,j), vol, do_I(i,j))
+      h(i,j,k) = vol - vol_below(i,j)
+      vol_below(i,j) = vol
+    else
+      h(i,j,k) = dz(i,j,k)
+    endif
+  enddo ; enddo ; enddo
+
+end subroutine calculate_h
+
+! subroutine calcuate_dz(h, dz, G, GV)
+!   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)  :: h   !< Layer thickness [H ~> m]
+!   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(out)  :: dz   !< Layer thickness [H ~> m]
+
+!   type(ocean_grid_type),                      intent(in)  :: G   !< Ocean grid structure
+!   type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
+!   logical, dimension(SZI_(G),SZJ_(G)) :: do_I
+!   real, dimension(SZI_(G),SZJ_(G)) :: vol_below
+!   real, dimension(SZI_(G),SZJ_(G)) :: eb, eb_monomial
+!   integer :: is, ie, js, je, nz
+!   integer :: i, j, k
+
+!   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
+!   nz = GV%ke
+
+!   do j=js,je ; do i=is,ie
+!     vol_below(i,j) = 0.0
+!     eb(i,j) = G%depc_low(i,j)
+!     do_I(i,j) = (G%mask2dT(i,j)==1.0) .and. (G%depc_m(i,j)/=0.0)
+!   enddo ; enddo
+
+!   do K=nz,1,-1
+!     do j=js,je ; do i=is,ie
+!       if (do_I(i,j)) then
+!         vol_below(i,j) = vol_below(i,j) + h(i,j,k)
+!         if (vol_below(i,j) > G%depc_hgh(i,j)-G%depc_ave(i,j)) then
+!           dz(i,j,k) = vol_below(i,j) + G%depc_ave(i,j) - eb(i,j)
+!           do_I(i,j) = .False.
+!         else
+!           dz(i,j,k) = eb(i,j)
+!           call inverse_eta(eb(i,j), eb_monomial(i,j), h(i,j,k), &
+!                            G%depc_low(i,j), G%depc_ave(i,j), G%depc_hgh(i,j), &
+!                            G%depc_m(i,j), G%depc_m1(i,j), G%depc_m2(i,j))
+!           dz(i,j,k) = eb(i,j) - dz(i,j,k)
+!         endif
+!       else
+!         dz(i,j,k) = h(i,j,k)
+!       endif
+!     enddo ; enddo
+!   enddo
+!   call pass_var(dz, G%Domain)
+! end subroutine calcuate_dz
+
+! subroutine inverse_eta(eta, eb_monomial, h, D_lo, D_av, D_hi, m, m1, m2)
+!   real, intent(out)   :: eta
+!   real, intent(inout) :: eb_monomial
+!   real, intent(in)    :: h
+!   real, intent(in)    :: D_lo, D_av, D_hi
+!   real, intent(in)    :: m1, m2
+!   if (m<=0.5) then
+!     eb_monomial = (h*m2 + eb_monomial)
+!     eta = (eb_monomial**m1) * (D_hi - D_lo) + D_lo
+!   else
+!     maxitt = 200
+!     eta = D_hi
+!     it = 1
+!     do while (it<=maxitt)
+!       feta = (eta-D_lo) + (D_av-D_lo) * &
+!         ( ((D_hi-eta)*m2)**(m1) - 1 ) - eb_monomial
+!       if (abs(feta-h) < 1e-10) exit
+!       dfeta = 1 - ( ((D_hi-eta)*m2)**(m1-1) )
+!       eta = eta - (feta-h)/dfet
+!     enddo
+!     eb_monomial = feta
+!   endif
+! end subroutine inverse_eta
 
 end module MOM_interface_heights

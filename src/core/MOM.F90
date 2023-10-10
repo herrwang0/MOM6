@@ -188,6 +188,7 @@ end type MOM_diag_IDs
 type, public :: MOM_control_struct ; private
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_,NKMEM_) :: &
     h, &            !< layer thickness [H ~> m or kg m-2]
+    dz, &           !< Nominal layer thickness [H ~> m or kg m-2]
     T, &            !< potential temperature [C ~> degC]
     S               !< salinity [S ~> ppt]
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_,NKMEM_) :: &
@@ -1988,6 +1989,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   real, allocatable         :: u_in(:,:,:) ! Initial zonal velocities [L T-1 ~> m s-1]
   real, allocatable         :: v_in(:,:,:) ! Initial meridional velocities [L T-1 ~> m s-1]
   real, allocatable         :: h_in(:,:,:) ! Initial layer thicknesses [H ~> m or kg m-2]
+  real, allocatable         :: dz_in(:,:,:) ! Initial layer thicknesses [H ~> m or kg m-2]
   real, allocatable, target :: frac_shelf_in(:,:) ! Initial fraction of the total cell area occupied
                                                   ! by an ice shelf [nondim]
   real, allocatable, target :: mass_shelf_in(:,:) ! Initial mass of ice shelf contained within a grid cell
@@ -2824,6 +2826,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     allocate(u_in(G_in%IsdB:G_in%IedB, G_in%jsd:G_in%jed, nz), source=0.0)
     allocate(v_in(G_in%isd:G_in%ied, G_in%JsdB:G_in%JedB, nz), source=0.0)
     allocate(h_in(G_in%isd:G_in%ied, G_in%jsd:G_in%jed, nz), source=GV%Angstrom_H)
+    allocate(dz_in(G_in%isd:G_in%ied, G_in%jsd:G_in%jed, nz), source=GV%Angstrom_H)
 
     if (use_temperature) then
       allocate(T_in(G_in%isd:G_in%ied, G_in%jsd:G_in%jed, nz), source=0.0)
@@ -2846,12 +2849,12 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       ! MOM_initialize_state is using the  unrotated metric
       call rotate_array(CS%frac_shelf_h, -turns, frac_shelf_in)
       call rotate_array(CS%mass_shelf, -turns, mass_shelf_in)
-      call MOM_initialize_state(u_in, v_in, h_in, CS%tv, Time, G_in, GV, US, &
+      call MOM_initialize_state(u_in, v_in, h_in, dz_in, CS%tv, Time, G_in, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
           sponge_in_CSp, ALE_sponge_in_CSp, oda_incupd_in_CSp, OBC_in, Time_in, &
           frac_shelf_h=frac_shelf_in, mass_shelf = mass_shelf_in)
     else
-      call MOM_initialize_state(u_in, v_in, h_in, CS%tv, Time, G_in, GV, US, &
+      call MOM_initialize_state(u_in, v_in, h_in, dz_in, CS%tv, Time, G_in, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
           sponge_in_CSp, ALE_sponge_in_CSp, oda_incupd_in_CSp, OBC_in, Time_in)
     endif
@@ -2900,12 +2903,12 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       allocate(CS%frac_shelf_h(isd:ied, jsd:jed), source=0.0)
       allocate(CS%mass_shelf(isd:ied, jsd:jed), source=0.0)
       call ice_shelf_query(ice_shelf_CSp,G,CS%frac_shelf_h, CS%mass_shelf)
-      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%tv, Time, G, GV, US, &
+      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%dz, CS%tv, Time, G, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
           CS%sponge_CSp, CS%ALE_sponge_CSp,CS%oda_incupd_CSp, CS%OBC, Time_in, &
           frac_shelf_h=CS%frac_shelf_h, mass_shelf=CS%mass_shelf)
     else
-      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%tv, Time, G, GV, US, &
+      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%dz, CS%tv, Time, G, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
           CS%sponge_CSp, CS%ALE_sponge_CSp, CS%oda_incupd_CSp, CS%OBC, Time_in)
     endif

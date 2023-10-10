@@ -18,6 +18,7 @@ use MOM_file_parser, only : log_version
 use MOM_get_input, only : directories
 use MOM_grid, only : ocean_grid_type, isPointInCell
 use MOM_interface_heights, only : find_eta, dz_to_thickness, dz_to_thickness_simple
+use MOM_interface_heights, only : calculate_h
 use MOM_io, only : file_exists, field_size, MOM_read_data, MOM_read_vector, slasher
 use MOM_open_boundary, only : ocean_OBC_type, open_boundary_init, set_tracer_data
 use MOM_open_boundary, only : OBC_NONE
@@ -114,7 +115,7 @@ contains
 
 !> Initialize temporally evolving fields, either as initial
 !! conditions or by reading them from a restart (or saves) file.
-subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
+subroutine MOM_initialize_state(u, v, h, dz, tv, Time, G, GV, US, PF, dirs, &
                                 restart_CS, ALE_CSp, tracer_Reg, sponge_CSp, &
                                 ALE_sponge_CSp, oda_incupd_CSp, OBC, Time_in, frac_shelf_h, mass_shelf)
   type(ocean_grid_type),      intent(inout) :: G    !< The ocean's grid structure.
@@ -128,6 +129,8 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
                                                     !! initialized [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                               intent(out)   :: h    !< Layer thicknesses [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                              intent(out)   :: dz   !< The layer thicknesses in geopotential (z) units [Z ~> m]
   type(thermo_var_ptrs),      intent(inout) :: tv   !< A structure pointing to various thermodynamic
                                                     !! variables
   type(time_type),            intent(inout) :: Time !< Time at the start of the run segment.
@@ -151,7 +154,6 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
                                                                !! ice shelf [ R Z ~> kg m-2 ]
   ! Local variables
   real :: depth_tot(SZI_(G),SZJ_(G))   ! The nominal total depth of the ocean [Z ~> m]
-  real :: dz(SZI_(G),SZJ_(G),SZK_(GV)) ! The layer thicknesses in geopotential (z) units [Z ~> m]
   character(len=200) :: inputdir   ! The directory where NetCDF input files are.
   character(len=200) :: config, h_config
   real :: H_rescale   ! A rescaling factor for thicknesses from the representation in
@@ -431,7 +433,8 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
     call fill_temp_salt_segments(G, GV, US, OBC, tv)
 
   ! Convert thicknesses from geometric distances in depth units to thickness units or mass-per-unit-area.
-  if (new_sim .and. convert) call dz_to_thickness(dz, tv, h, G, GV, US)
+    ! if (new_sim .and. convert) call dz_to_thickness(dz, tv, h, G, GV, US)
+    if (new_sim .and. convert) call calculate_h(dz, h, G, GV)
 
   ! Handle the initial surface displacement under ice shelf
   call get_param(PF, mdl, "DEPRESS_INITIAL_SURFACE", depress_sfc, &
