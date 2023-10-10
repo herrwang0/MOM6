@@ -677,6 +677,8 @@ subroutine MOM_grid_end(G)
   DEALLOC_(G%dF_dx)  ; DEALLOC_(G%dF_dy)
   DEALLOC_(G%sin_rot) ; DEALLOC_(G%cos_rot)
 
+  DEALLOC_(G%depc_low) ; DEALLOC_(G%depc_ave) ; DEALLOC_(G%depc_hgh)
+  DEALLOC_(G%depc_m) ; DEALLOC_(G%depc_m1) ; DEALLOC_(G%depc_m2)
   DEALLOC_(G%porous_DminU) ; DEALLOC_(G%porous_DmaxU) ; DEALLOC_(G%porous_DavgU)
   DEALLOC_(G%porous_DminV) ; DEALLOC_(G%porous_DmaxV) ; DEALLOC_(G%porous_DavgV)
 

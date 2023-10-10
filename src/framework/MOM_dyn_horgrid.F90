@@ -541,6 +541,9 @@ subroutine destroy_dyn_horgrid(G)
   deallocate(G%porous_DminU) ; deallocate(G%porous_DmaxU) ; deallocate(G%porous_DavgU)
   deallocate(G%porous_DminV) ; deallocate(G%porous_DmaxV) ; deallocate(G%porous_DavgV)
 
+  deallocate(G%depc_low) ; deallocate(G%depc_ave) ; deallocate(G%depc_hgh)
+  deallocate(G%depc_m) ; deallocate(G%depc_m1) ; deallocate(G%depc_m2)
+
   deallocate(G%bathyT)  ; deallocate(G%CoriolisBu)
   deallocate(G%dF_dx)  ; deallocate(G%dF_dy)
   deallocate(G%sin_rot) ; deallocate(G%cos_rot)
