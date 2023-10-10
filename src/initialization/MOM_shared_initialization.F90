@@ -1232,6 +1232,8 @@ subroutine set_subgrid_topo_at_h(G, param_file, US)
   call MOM_read_data(filename, trim(varname_av), G%depc_ave, G%Domain, scale=US%m_to_Z)
   call MOM_read_data(filename, trim(varname_hi), G%depc_hgh, G%Domain, scale=US%m_to_Z)
 
+  G%depc_low = -G%depc_low ; G%depc_ave = -G%depc_ave ; G%depc_hgh = -G%depc_hgh
+
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
 
   ! check params
