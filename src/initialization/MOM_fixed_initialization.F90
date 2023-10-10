@@ -23,7 +23,7 @@ use MOM_shared_initialization, only : initialize_topography_named, limit_topogra
 use MOM_shared_initialization, only : set_rotation_planetary, set_rotation_beta_plane, initialize_grid_rotation_angle
 use MOM_shared_initialization, only : reset_face_lengths_named, reset_face_lengths_file, reset_face_lengths_list
 use MOM_shared_initialization, only : read_face_length_list, set_velocity_depth_max, set_velocity_depth_min
-use MOM_shared_initialization, only : set_subgrid_topo_at_vel_from_file
+use MOM_shared_initialization, only : set_subgrid_topo_at_vel_from_file, set_subgrid_topo_at_h
 use MOM_shared_initialization, only : compute_global_grid_integrals, write_ocean_geometry_file
 use MOM_unit_scaling, only : unit_scale_type
 
@@ -151,7 +151,13 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   if (read_porous_file) &
     call set_subgrid_topo_at_vel_from_file(G, PF, US)
 
-!    Calculate the value of the Coriolis parameter at the latitude   !
+  call get_param(PF, mdl, "SUBGRID_TOPO_AT_H", read_porous_file, &
+                 "If true, use variables from TOPO_AT_VEL_FILE as parameters for porous barrier.", &
+                 default=.False.)
+  if (read_porous_file) &
+    call set_subgrid_topo_at_h(G, PF, US)
+
+    !    Calculate the value of the Coriolis parameter at the latitude   !
 !  of the q grid points [T-1 ~> s-1].
   call MOM_initialize_rotation(G%CoriolisBu, G, PF, US=US)
 !   Calculate the components of grad f (beta)

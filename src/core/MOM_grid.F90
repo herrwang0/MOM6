@@ -114,6 +114,16 @@ type, public :: ocean_grid_type
     IareaCv, &   !< The masked inverse areas of v-grid cells [L-2 ~> m-2].
     areaCv       !< The areas of the v-grid cells [L2 ~> m2].
 
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
+    depc_low, & !< minimum topographic height (deepest) at tracer cells [Z ~> m]
+    depc_hgh, & !< maximum topographic height (shallowest) at tracer cells [Z ~> m]
+    depc_ave    !< average topographic height at tracer cells [Z ~> m]
+
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
+    depc_m,  & !< [Z ~> m]
+    depc_m1, & !< [Z ~> m]
+    depc_m2    !< [Z ~> m]
+
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_) :: &
     porous_DminU, & !< minimum topographic height (deepest) of U-face [Z ~> m]
     porous_DmaxU, & !< maximum topographic height (shallowest) of U-face [Z ~> m]
@@ -595,6 +605,13 @@ subroutine allocate_metrics(G)
 
   ALLOC_(G%dx_Cv(isd:ied,JsdB:JedB))     ; G%dx_Cv(:,:) = 0.0
   ALLOC_(G%dy_Cu(IsdB:IedB,jsd:jed))     ; G%dy_Cu(:,:) = 0.0
+
+  ALLOC_(G%depc_low(isd:ied,jsd:jed)) ; G%depc_low = 0.0
+  ALLOC_(G%depc_ave(isd:ied,jsd:jed)) ; G%depc_ave = 0.0
+  ALLOC_(G%depc_hgh(isd:ied,jsd:jed)) ; G%depc_hgh = 0.0
+  ALLOC_(G%depc_m(isd:ied,jsd:jed)) ; G%depc_m = 0.0
+  ALLOC_(G%depc_m1(isd:ied,jsd:jed)) ; G%depc_m1 = 0.0
+  ALLOC_(G%depc_m2(isd:ied,jsd:jed)) ; G%depc_m2 = 0.0
 
   ALLOC_(G%porous_DminU(IsdB:IedB,jsd:jed)); G%porous_DminU(:,:) = 0.0
   ALLOC_(G%porous_DmaxU(IsdB:IedB,jsd:jed)); G%porous_DmaxU(:,:) = 0.0
