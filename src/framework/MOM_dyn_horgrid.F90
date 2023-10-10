@@ -112,6 +112,16 @@ type, public :: dyn_horgrid_type
     areaCv       !< The areas of the v-grid cells [L2 ~> m2].
 
   real, allocatable, dimension(:,:) :: &
+    depc_low, & !< minimum topographic height (deepest) at tracer cells [Z ~> m]
+    depc_hgh, & !< maximum topographic height (shallowest) at tracer cells [Z ~> m]
+    depc_ave    !< average topographic height at tracer cells [Z ~> m]
+
+  real, allocatable, dimension(:,:) :: &
+    depc_m,  & !< [Z ~> m]
+    depc_m1, & !< [Z ~> m]
+    depc_m2    !< [Z ~> m]
+
+  real, allocatable, dimension(:,:) :: &
     porous_DminU, & !< minimum topographic height (deepest) of U-face [Z ~> m]
     porous_DmaxU, & !< maximum topographic height (shallowest) of U-face [Z ~> m]
     porous_DavgU    !< average topographic height of U-face [Z ~> m]
@@ -278,6 +288,13 @@ subroutine create_dyn_horgrid(G, HI, bathymetry_at_vel)
   allocate(G%areaCv(isd:ied,JsdB:JedB), source=0.0)
   allocate(G%IareaCu(IsdB:IedB,jsd:jed), source=0.0)
   allocate(G%IareaCv(isd:ied,JsdB:JedB), source=0.0)
+
+  allocate(G%depc_low(isd:ied,jsd:jed), source=0.0)
+  allocate(G%depc_ave(isd:ied,jsd:jed), source=0.0)
+  allocate(G%depc_hgh(isd:ied,jsd:jed), source=0.0)
+  allocate(G%depc_m(isd:ied,jsd:jed), source=0.0)
+  allocate(G%depc_m1(isd:ied,jsd:jed), source=0.0)
+  allocate(G%depc_m2(isd:ied,jsd:jed), source=0.0)
 
   allocate(G%porous_DminU(IsdB:IedB,jsd:jed), source=0.0)
   allocate(G%porous_DmaxU(IsdB:IedB,jsd:jed), source=0.0)
@@ -530,6 +547,9 @@ subroutine destroy_dyn_horgrid(G)
 
   deallocate(G%porous_DminU) ; deallocate(G%porous_DmaxU) ; deallocate(G%porous_DavgU)
   deallocate(G%porous_DminV) ; deallocate(G%porous_DmaxV) ; deallocate(G%porous_DavgV)
+
+  deallocate(G%depc_low) ; deallocate(G%depc_ave) ; deallocate(G%depc_hgh)
+  deallocate(G%depc_m) ; deallocate(G%depc_m1) ; deallocate(G%depc_m2)
 
   deallocate(G%bathyT)  ; deallocate(G%CoriolisBu) ; deallocate(G%Coriolis2Bu)
   deallocate(G%dF_dx)   ; deallocate(G%dF_dy)

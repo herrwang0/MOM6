@@ -62,6 +62,13 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
     oG%sin_rot(i,j) = dG%sin_rot(i+ido,j+jdo)
     oG%cos_rot(i,j) = dG%cos_rot(i+ido,j+jdo)
     oG%mask2dT(i,j) = dG%mask2dT(i+ido,j+jdo)
+
+    oG%depc_low(i,j) = dG%depc_low(i+ido,j+jdo) - oG%Z_ref
+    oG%depc_ave(i,j) = dG%depc_ave(i+ido,j+jdo) - oG%Z_ref
+    oG%depc_hgh(i,j) = dG%depc_hgh(i+ido,j+jdo) - oG%Z_ref
+    oG%depc_m(i,j) = dG%depc_m(i+ido,j+jdo)
+    oG%depc_m1(i,j) = dG%depc_m1(i+ido,j+jdo)
+    oG%depc_m2(i,j) = dG%depc_m2(i+ido,j+jdo)
   enddo ; enddo
 
   do I=IsdB,IedB ; do j=jsd,jed
