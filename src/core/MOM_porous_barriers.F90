@@ -19,7 +19,7 @@ use MOM_debugging,         only : hchksum, uvchksum
 
 implicit none ; private
 
-public porous_widths_layer, porous_widths_interface, porous_barriers_init
+public porous_widths_layer, porous_widths_interface, porous_barriers_init, calc_por_layer
 
 #include <MOM_memory.h>
 
