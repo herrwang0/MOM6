@@ -2638,36 +2638,6 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
     deallocate(lin_drag_h)
   endif
 
-  if (CS%Bottom_wave_drag) then
-    allocate(visc%Ray_lin_u(IsdB:IedB,jsd:jed,nz)) ; visc%Ray_lin_u(:,:,:) = 0.0
-    allocate(visc%Ray_lin_v(isd:ied,JsdB:JedB,nz)) ; visc%Ray_lin_v(:,:,:) = 0.0
-
-    allocate(CS%lin_drag_u(IsdB:IedB,jsd:jed)) ; CS%lin_drag_u(:,:) = 0.0
-    allocate(CS%lin_drag_v(isd:ied,JsdB:JedB)) ; CS%lin_drag_v(:,:) = 0.0
-
-    allocate(lin_drag_h(isd:ied,jsd:jed)) ; lin_drag_h(:,:) = 0.0
-
-    CS%id_Ray_lin_u = register_diag_field('ocean_model', 'Rayleigh_lin_u', diag%axesCuL, &
-       Time, 'Rayleigh drag velocity at u points', 'm s-1', conversion=US%Z_to_m*US%s_to_T)
-    CS%id_Ray_lin_v = register_diag_field('ocean_model', 'Rayleigh_lin_v', diag%axesCvL, &
-       Time, 'Rayleigh drag velocity at v points', 'm s-1', conversion=US%Z_to_m*US%s_to_T)
-
-    filename = trim(CS%inputdir) // trim(wave_drag_file)
-    call log_param(param_file, mdl, "INPUTDIR/BOTTOM_WAVE_DRAG_FILE", filename)
-    call MOM_read_data(filename, wave_drag_var, lin_drag_h, G%domain, timelevel=1, scale=US%m_to_Z*US%T_to_s)
-    call pass_var(lin_drag_h,G%domain)
-
-    do j=jsd,jed ; do I=IsdB,IedB
-      CS%lin_drag_u(I,j) = (US%L_to_Z * wave_drag_scale) * &
-         0.5 * (lin_drag_h(i,j) + lin_drag_h(i+1,j))
-    enddo ; enddo
-    do J=JsdB,JedB ; do i=isd,ied
-      CS%lin_drag_v(i,J) = (US%L_to_Z * wave_drag_scale) * &
-         0.5 * (lin_drag_h(i,j) + lin_drag_h(i,j+1))
-    enddo ; enddo
-    deallocate(lin_drag_h)
-  endif
-
   call register_restart_field_as_obsolete('Kd_turb','Kd_shear', restart_CS)
   call register_restart_field_as_obsolete('Kv_turb','Kv_shear', restart_CS)
 
