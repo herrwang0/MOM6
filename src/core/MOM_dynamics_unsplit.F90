@@ -80,6 +80,7 @@ use MOM_grid, only : ocean_grid_type
 use MOM_hor_index, only : hor_index_type
 use MOM_hor_visc, only : horizontal_viscosity, hor_visc_init, hor_visc_CS
 use MOM_interface_heights, only : find_eta, thickness_to_dz
+use MOM_interface_heights,     only : calculate_dz
 use MOM_lateral_mixing_coeffs, only : VarMix_CS
 use MOM_MEKE_types, only : MEKE_type
 use MOM_open_boundary, only : ocean_OBC_type
@@ -187,7 +188,7 @@ contains
 
 !> Step the MOM6 dynamics using an unsplit mixed 2nd order (for continuity) and
 !! 3rd order (for the inviscid momentum equations) order scheme
-subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
+subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, G, GV, US, CS, &
                   VarMix, MEKE, pbv, Waves)
   type(ocean_grid_type),   intent(inout) :: G      !< The ocean's grid structure.
@@ -196,6 +197,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(inout) :: u !< The zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(inout) :: v !< The meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: h !< Layer thicknesses [H ~> m or kg m-2].
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: dz !< Layer thicknesses [H ~> m or kg m-2].
   type(thermo_var_ptrs),   intent(in)    :: tv     !< A structure pointing to various
                                                    !! thermodynamic variables.
   type(vertvisc_type),     intent(inout) :: visc   !< A structure containing vertical
@@ -228,7 +230,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: h_av, hp ! Predicted or averaged layer thicknesses [H ~> m or kg m-2]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: dz       ! Distance between the interfaces around a layer [Z ~> m]
+  ! real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: dz       ! Distance between the interfaces around a layer [Z ~> m]
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: up, upp ! Predicted zonal velocities [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: vp, vpp ! Predicted meridional velocities [L T-1 ~> m s-1]
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: ueffA   ! Effective Area of U-Faces [H L ~> m2]
@@ -304,7 +306,10 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   call cpu_clock_end(id_clock_mom_update)
   call pass_vector(u, v, G%Domain, clock=id_clock_pass)
 
-! CAu = -(f+zeta)/h_av vh + d/dx KE
+  call calculate_dz(h_av, dz, G, GV)
+  call pass_var(dz, G%Domain)
+
+  ! CAu = -(f+zeta)/h_av vh + d/dx KE
   call cpu_clock_begin(id_clock_Cor)
   call CorAdCalc(u, v, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
                  G, GV, US, CS%CoriolisAdv, pbv)
@@ -370,6 +375,8 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
     h_av(i,j,k) = (hp(i,j,k) + h_av(i,j,k)) * 0.5
   enddo ; enddo ; enddo
+  call calculate_dz(h_av, dz, G, GV)
+  call pass_var(dz, G%Domain)
 
 ! CAu = -(f+zeta(up))/h_av vh + d/dx KE(up)
   call cpu_clock_begin(id_clock_Cor)
@@ -382,7 +389,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   if (dyn_p_surf) then ; do j=js-2,je+2 ; do i=is-2,ie+2
     p_surf(i,j) = 0.25*p_surf_begin(i,j) + 0.75*p_surf_end(i,j)
   enddo ; enddo ; endif
-  call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
+  call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
 
@@ -412,7 +419,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
 ! upp <- upp + dt/2 d/dz visc d/dz upp
   call cpu_clock_begin(id_clock_vertvisc)
-  call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
+  ! call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(upp, vpp, hp, dz, forces, visc, tv, dt*0.5, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(upp, vpp, hp, forces, visc, dt*0.5, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -466,6 +473,8 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
       vhtr(i,j,k) = vhtr(i,j,k) + 0.5*dt*vh(i,j,k)
     enddo ; enddo
   enddo
+  call calculate_dz(h_av, dz, G, GV)
+  call pass_var(dz, G%Domain)
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)
   call cpu_clock_begin(id_clock_Cor)
@@ -475,7 +484,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
 ! PFu = d/dx M(h_av,T,S)
   call cpu_clock_begin(id_clock_pres)
-  call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
+  call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
 
