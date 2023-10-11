@@ -868,6 +868,7 @@ subroutine inverse_eta(eta, eb_monomial, h, D_lo, D_av, D_hi, m, m1, m2)
       if (abs(feta-h) < 1e-10) exit
       dfeta = 1 - ( ((D_hi-eta)*m2)**(m1-1) )
       eta = eta - (feta-h)/dfeta
+      it = it + 1
     enddo
     eb_monomial = feta
   endif

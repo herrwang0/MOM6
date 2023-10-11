@@ -320,7 +320,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   if (dyn_p_surf) then ; do j=js-2,je+2 ; do i=is-2,ie+2
     p_surf(i,j) = 0.75*p_surf_begin(i,j) + 0.25*p_surf_end(i,j)
   enddo ; enddo ; endif
-  call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
+  call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
 
@@ -356,7 +356,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   call disable_averaging(CS%diag)
 
   dt_visc = 0.5*dt ; if (CS%use_correct_dt_visc) dt_visc = dt_pred
-  call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  ! call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h_av, dz, forces, visc, tv, dt_visc, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(up, vp, h_av, forces, visc, dt_visc, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -506,7 +506,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
 
 ! u <- u + dt d/dz visc d/dz u
   call cpu_clock_begin(id_clock_vertvisc)
-  call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  ! call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(u, v, h_av, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(u, v, h_av, forces, visc, dt, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot, Waves=Waves)
