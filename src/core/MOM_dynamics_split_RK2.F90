@@ -52,7 +52,7 @@ use MOM_hor_index,             only : hor_index_type
 use MOM_hor_visc,              only : horizontal_viscosity, hor_visc_CS
 use MOM_hor_visc,              only : hor_visc_init, hor_visc_end
 use MOM_interface_heights,     only : thickness_to_dz, find_col_avg_SpV
-! use MOM_interface_heights,     only : calcuate_dz
+use MOM_interface_heights,     only : calculate_dz
 use MOM_lateral_mixing_coeffs, only : VarMix_CS
 use MOM_MEKE_types,            only : MEKE_type
 use MOM_open_boundary,         only : ocean_OBC_type, radiation_open_bdry_conds
@@ -285,7 +285,7 @@ integer :: id_clock_pass, id_clock_pass_init
 contains
 
 !> RK2 splitting for time stepping MOM adiabatic dynamics
-subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, forces, &
+subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, dz, tv, visc, Time_local, dt, forces, &
                                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, G, GV, US, CS, &
                                   calc_dtbt, VarMix, MEKE, thickness_diffuse_CSp, pbv, Waves)
   type(ocean_grid_type),             intent(inout) :: G            !< Ocean grid structure
@@ -297,6 +297,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
                              target, intent(inout) :: v_inst       !< Instantaneous meridional velocity [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                                      intent(inout) :: h            !< Layer thickness [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                                     intent(inout) :: dz            !< Layer thickness [H ~> m or kg m-2]
   type(thermo_var_ptrs),             intent(in)    :: tv           !< Thermodynamic type
   type(vertvisc_type),               intent(inout) :: visc         !< Vertical visc, bottom drag, and related
   type(time_type),                   intent(in)    :: Time_local   !< Model time at end of time step
@@ -334,8 +336,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: up  ! Predicted zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: vp  ! Predicted meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV))  :: hp  ! Predicted thickness [H ~> m or kg m-2].
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV))  :: dz  ! Distance between the interfaces around a layer [Z ~> m]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV))  :: dz_pm  ! Distance between the interfaces around a layer [Z ~> m]
+  ! real, dimension(SZI_(G),SZJ_(G),SZK_(GV))  :: dz  ! Distance between the interfaces around a layer [Z ~> m]
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: ueffA   ! Effective Area of U-Faces [H L ~> m2]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: veffA   ! Effective Area of V-Faces [H L ~> m2]
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: u_bc_accel ! The summed zonal baroclinic accelerations
@@ -492,7 +493,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
 ! pbce = dM/deta
   if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
-  call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
+  call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
                      CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
   if (dyn_p_surf) then
     pres_to_eta = 1.0 / (GV%g_Earth * GV%H_to_RZ)
@@ -507,7 +508,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     Use_Stokes_PGF = associated(Waves)
     if (Use_Stokes_PGF) Use_Stokes_PGF = Waves%Stokes_PGF
     if (Use_Stokes_PGF) then
-      call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+      ! call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
       call Stokes_PGF(G, GV, US, dz, u_inst, v_inst, CS%PFu_Stokes, CS%PFv_Stokes, Waves)
 
       ! We are adding Stokes_PGF to hydrostatic PGF here.  The diag PFu/PFv
@@ -597,7 +598,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%debug) then
     call uvchksum("before vertvisc: up", up, vp, G%HI, haloshift=0, symmetric=sym, unscale=US%L_T_to_m_s)
   endif
-  call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt, G, GV, US, CS%vertvisc_CSp)
   call cpu_clock_end(id_clock_vertvisc)
@@ -718,7 +719,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     enddo
   endif
 
-  call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt_pred, G, GV, US, CS%vertvisc_CSp, &
                      CS%OBC, VarMix)
   call vertvisc(up, vp, h, forces, visc, dt_pred, CS%OBC, CS%AD_pred, CS%CDp, G, &
@@ -759,7 +760,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call continuity(up, vp, h, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
                   u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont)
-  ! call calcuate_dz(hp, dz_pm, G, GV)
+  call calculate_dz(hp, dz, G, GV)
+  call pass_var(dz, G%Domain)
   call cpu_clock_end(id_clock_continuity)
   if (showCallTree) call callTree_wayPoint("done with continuity (step_MOM_dyn_split_RK2)")
 
@@ -812,7 +814,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     ! PFu = d/dx M(hp,T,S)
     ! pbce = dM/deta
     call cpu_clock_begin(id_clock_pres)
-    call PressureForce(hp, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
+    call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
                        CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
     ! Stokes shear force contribution to pressure gradient
     Use_Stokes_PGF = present(Waves)
@@ -820,7 +822,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
       Use_Stokes_PGF = associated(Waves)
       if (Use_Stokes_PGF) Use_Stokes_PGF = Waves%Stokes_PGF
       if (Use_Stokes_PGF) then
-        call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+        ! call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
         call Stokes_PGF(G, GV, US, dz, u_inst, v_inst, CS%PFu_Stokes, CS%PFv_Stokes, Waves)
         if (.not.Waves%Passive_Stokes_PGF) then
           do k=1,nz
@@ -978,7 +980,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     enddo
   endif
 
-  call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(u_inst, v_inst, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(u_inst, v_inst, h, forces, visc, dt, CS%OBC, CS%ADp, CS%CDp, G, GV, US, &
                 CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot,waves=waves)
@@ -1023,7 +1025,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call do_group_pass(CS%pass_h, G%Domain, clock=id_clock_pass)
   ! Whenever thickness changes let the diag manager know, target grids
   ! for vertical remapping may need to be regenerated.
-  ! call calcuate_dz(h, dz_pm, G, GV)
+  call calculate_dz(h, dz, G, GV)
+  call pass_var(dz, G%Domain)
   call diag_update_remap_grids(CS%diag)
   if (showCallTree) call callTree_wayPoint("done with continuity (step_MOM_dyn_split_RK2)")
 
@@ -1314,7 +1317,7 @@ end subroutine remap_dyn_split_RK2_aux_vars
 
 !> This subroutine initializes all of the variables that are used by this
 !! dynamic core, including diagnostics and the cpu clocks.
-subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, param_file, &
+subroutine initialize_dyn_split_RK2(u, v, h, dz, tv, uh, vh, eta, Time, G, GV, US, param_file, &
                       diag, CS, HA_CSp, restart_CS, dt, Accel_diag, Cont_diag, MIS, &
                       VarMix, MEKE, thickness_diffuse_CSp,                  &
                       OBC, update_OBC_CSp, ALE_CSp, set_visc, &
@@ -1328,6 +1331,8 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
                                     intent(inout) :: v          !< merid velocity [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),  &
                                     intent(inout) :: h          !< layer thickness [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) , &
+                                    intent(inout) :: dz          !< layer thickness [H ~> m or kg m-2]
   type(thermo_var_ptrs),            intent(in)    :: tv         !< Thermodynamic type
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
                             target, intent(inout) :: uh    !< zonal volume/mass transport [H L2 T-1 ~> m3 s-1 or kg s-1]
@@ -1542,7 +1547,7 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
       do j=js,je ; do i=is,ie ; CS%eta(i,j) = -GV%Z_to_H * G%bathyT(i,j) ; enddo ; enddo
     endif
     do k=1,nz ; do j=js,je ; do i=is,ie
-      CS%eta(i,j) = CS%eta(i,j) + h(i,j,k)
+      CS%eta(i,j) = CS%eta(i,j) + dz(i,j,k)
     enddo ; enddo ; enddo
     call set_initialized(CS%eta, trim(eta_rest_name), restart_CS)
   endif
