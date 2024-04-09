@@ -282,6 +282,7 @@ type, public :: barotropic_CS ; private
   logical :: tidal_sal_flather !< Apply adjustment to external gravity wave speed
                              !! consistent with tidal self-attraction and loading
                              !! used within the barotropic solver
+  logical :: hydraulic_control !< Hydraulic control
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -307,6 +308,9 @@ type, public :: barotropic_CS ; private
   type(group_pass_type) :: pass_ubta_uhbta !< Handle for a group halo pass
   type(group_pass_type) :: pass_e_anom !< Handle for a group halo pass
   type(group_pass_type) :: pass_SpV_avg !< Handle for a group halo pass
+
+  real :: hc_coef !< Constant coefficient for hydraulic control critical velocity
+                  !! [sqrt(L) T-1 ~> sqrt(m) s-1]
 
   !>@{ Diagnostic IDs
   integer :: id_PFu_bt = -1, id_PFv_bt = -1, id_Coru_bt = -1, id_Corv_bt = -1
@@ -1835,6 +1839,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         elseif ((vbt(i,J) * (dt * G%dx_Cv(i,J))) * G%IareaT(i,j) > CS%CFL_trunc) then
           ! Add some error reporting later.
           vbt(i,J) = (0.9*CS%CFL_trunc) * (G%areaT(i,j) / (dt * G%dx_Cv(i,J)))
+        endif
+      enddo ; enddo
+    endif
+
+    if (CS%hydraulic_control) then
+      do j=jsv,jev ; do I=isv-1,iev
+        if (ubt(I,j)>=0.0) then
+          ubt(I,j) = min(ubt(I,j), CS%hc_coef * (eta(i,j)-G%bathyT(i,j))**0.5)
+        else
+          ubt(I,j) = max(ubt(I,j), -CS%hc_coef * (eta(i+1,j)-G%bathyT(i+1,j))**0.5)
+        endif
+      enddo ; enddo
+
+      do J=jsv-1,jev ; do i=isv,iev
+        if (vbt(i,J)>=0.0) then
+          vbt(i,J) = min(vbt(i,J), CS%hc_coef * (eta(i,j)-G%bathyT(i,j))**0.5)
+        else
+          vbt(i,J) = max(vbt(i,J), -CS%hc_coef * (eta(i,j+1)-G%bathyT(i,j+1))**0.5)
         endif
       enddo ; enddo
     endif
@@ -4683,6 +4705,11 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "components are set to 0.  A reasonable value might be "//&
                  "1e-30 m/s, which is less than an Angstrom divided by "//&
                  "the age of the universe.", units="m s-1", default=0.0, scale=US%m_s_to_L_T)
+
+  call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL", CS%hydraulic_control, &
+                 "If true, use hydraulic control to curb barotropic velocity", default=.false.)
+  if (CS%hydraulic_control) &
+    CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
 
   call get_param(param_file, mdl, "DT_BT_FILTER", CS%dt_bt_filter, &
                  "A time-scale over which the barotropic mode solutions "//&
