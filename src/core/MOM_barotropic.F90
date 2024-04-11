@@ -1846,17 +1846,17 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (CS%hydraulic_control) then
       do j=jsv,jev ; do I=isv-1,iev
         if (ubt(I,j)>=0.0) then
-          ubt(I,j) = min(ubt(I,j), CS%hc_coef * (eta(i,j)-G%bathyT(i,j))**0.5)
+          ubt(I,j) = min(ubt(I,j), CS%hc_coef * (eta(i,j)+G%bathyT(i,j))**0.5)
         else
-          ubt(I,j) = max(ubt(I,j), -CS%hc_coef * (eta(i+1,j)-G%bathyT(i+1,j))**0.5)
+          ubt(I,j) = max(ubt(I,j), -CS%hc_coef * (eta(i+1,j)+G%bathyT(i+1,j))**0.5)
         endif
       enddo ; enddo
 
       do J=jsv-1,jev ; do i=isv,iev
         if (vbt(i,J)>=0.0) then
-          vbt(i,J) = min(vbt(i,J), CS%hc_coef * (eta(i,j)-G%bathyT(i,j))**0.5)
+          vbt(i,J) = min(vbt(i,J), CS%hc_coef * (eta(i,j)+G%bathyT(i,j))**0.5)
         else
-          vbt(i,J) = max(vbt(i,J), -CS%hc_coef * (eta(i,j+1)-G%bathyT(i,j+1))**0.5)
+          vbt(i,J) = max(vbt(i,J), -CS%hc_coef * (eta(i,j+1)+G%bathyT(i,j+1))**0.5)
         endif
       enddo ; enddo
     endif
