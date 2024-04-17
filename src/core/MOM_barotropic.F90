@@ -282,7 +282,8 @@ type, public :: barotropic_CS ; private
   logical :: tidal_sal_flather !< Apply adjustment to external gravity wave speed
                              !! consistent with tidal self-attraction and loading
                              !! used within the barotropic solver
-  logical :: hydraulic_control !< Hydraulic control
+  logical :: hydraulic_control_vel !< Hydraulic control
+  logical :: hydraulic_control_trans !< Hydraulic control
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -320,6 +321,7 @@ type, public :: barotropic_CS ; private
   integer :: id_ubt_st = -1, id_vbt_st = -1, id_eta_st = -1
   integer :: id_ubtdt = -1, id_vbtdt = -1
   integer :: id_ubt_hifreq = -1, id_vbt_hifreq = -1, id_eta_hifreq = -1
+  integer :: id_pfubt_hifreq = -1, id_pfvbt_hifreq = -1, id_cfubt_hifreq = -1, id_cfvbt_hifreq = -1
   integer :: id_uhbt_hifreq = -1, id_vhbt_hifreq = -1, id_eta_pred_hifreq = -1
   integer :: id_gtotn = -1, id_gtots = -1, id_gtote = -1, id_gtotw = -1
   integer :: id_uhbt = -1, id_frhatu = -1, id_vhbt = -1, id_frhatv = -1
@@ -1843,20 +1845,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
     endif
 
-    if (CS%hydraulic_control) then
+    if (CS%hydraulic_control_vel) then
       do j=jsv,jev ; do I=isv-1,iev
         if (ubt(I,j)>=0.0) then
-          ubt(I,j) = min(ubt(I,j), CS%hc_coef * (eta(i,j)+G%bathyT(i,j))**0.5)
+          ubt(I,j) = min(ubt(I,j), CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5)
         else
-          ubt(I,j) = max(ubt(I,j), -CS%hc_coef * (eta(i+1,j)+G%bathyT(i+1,j))**0.5)
+          ubt(I,j) = max(ubt(I,j), -CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**0.5)
         endif
       enddo ; enddo
 
       do J=jsv-1,jev ; do i=isv,iev
         if (vbt(i,J)>=0.0) then
-          vbt(i,J) = min(vbt(i,J), CS%hc_coef * (eta(i,j)+G%bathyT(i,j))**0.5)
+          vbt(i,J) = min(vbt(i,J), CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5)
         else
-          vbt(i,J) = max(vbt(i,J), -CS%hc_coef * (eta(i,j+1)+G%bathyT(i,j+1))**0.5)
+          vbt(i,J) = max(vbt(i,J), -CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**0.5)
         endif
       enddo ; enddo
     endif
@@ -2068,6 +2070,17 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           vbt(i,J) = vbt_prev(i,J) ; vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
       endif
+
+      if (CS%hydraulic_control_trans) then
+        do J=jsv-1,jev ; do i=isv,iev
+          if (vhbt(i,J)>=0.0) then
+            vhbt(i,J) = min(vhbt(i,J), G%dx_Cv(i,J)*CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**1.5)
+          else
+            vhbt(i,J) = max(vhbt(i,J), -G%dx_Cv(i,J)*CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**1.5)
+          endif
+        enddo ; enddo
+      endif
+
       ! Now update the zonal velocity.
       !$OMP do schedule(static)
       do j=jsv,jev ; do I=isv-1,iev
@@ -2146,6 +2159,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           ubt(I,j) = ubt_prev(I,j) ; uhbt(I,j) = uhbt_prev(I,j)
         endif ; enddo ; enddo
       endif
+      if (CS%hydraulic_control_trans) then
+        do j=jsv,jev ; do I=isv-1,iev
+          if (uhbt(I,j)>=0.0) then
+            uhbt(I,j) = min(uhbt(I,j), G%dy_Cu(I,j)*CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**1.5)
+          else
+            uhbt(I,j) = max(uhbt(I,j), -G%dy_Cu(I,j)*CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**1.5)
+          endif
+        enddo ; enddo
+      endif
     else
       ! On even steps, update u first.
       !$OMP do schedule(static)
@@ -2223,7 +2245,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           ubt(I,j) = ubt_prev(I,j) ; uhbt(I,j) = uhbt_prev(I,j)
         endif ; enddo ; enddo
       endif
-
+      if (CS%hydraulic_control_trans) then
+        do j=jsv,jev ; do I=isv-1,iev
+          if (uhbt(I,j)>=0.0) then
+            uhbt(I,j) = min(uhbt(I,j), G%dy_Cu(I,j)*CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**1.5)
+          else
+            uhbt(I,j) = max(uhbt(I,j), -G%dy_Cu(I,j)*CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**1.5)
+          endif
+        enddo ; enddo
+      endif
       ! Now update the meridional velocity.
       if (CS%use_old_coriolis_bracket_bug) then
         !$OMP do schedule(static)
@@ -2311,6 +2341,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         do J=jsv-1,jev ; do i=isv,iev ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
           vbt(i,J) = vbt_prev(i,J); vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
+      endif
+      if (CS%hydraulic_control_trans) then
+        do J=jsv-1,jev ; do i=isv,iev
+          if (vhbt(i,J)>=0.0) then
+            vhbt(i,J) = min(vhbt(i,J), G%dx_Cv(i,J)*CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**1.5)
+          else
+            vhbt(i,J) = max(vhbt(i,J), -G%dx_Cv(i,J)*CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**1.5)
+          endif
+        enddo ; enddo
       endif
     endif
 
@@ -2451,6 +2490,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (CS%id_eta_hifreq > 0) call post_data(CS%id_eta_hifreq, eta(isd:ied,jsd:jed), CS%diag)
       if (CS%id_uhbt_hifreq > 0) call post_data(CS%id_uhbt_hifreq, uhbt(IsdB:IedB,jsd:jed), CS%diag)
       if (CS%id_vhbt_hifreq > 0) call post_data(CS%id_vhbt_hifreq, vhbt(isd:ied,JsdB:JedB), CS%diag)
+      if (CS%id_pfubt_hifreq > 0) call post_data(CS%id_pfubt_hifreq, PFu(IsdB:IedB,jsd:jed), CS%diag)
+      if (CS%id_pfvbt_hifreq > 0) call post_data(CS%id_pfvbt_hifreq, PFv(isd:ied,JsdB:JedB), CS%diag)
+      if (CS%id_cfubt_hifreq > 0) call post_data(CS%id_cfubt_hifreq, Cor_u(IsdB:IedB,jsd:jed), CS%diag)
+      if (CS%id_cfvbt_hifreq > 0) call post_data(CS%id_cfvbt_hifreq, Cor_v(isd:ied,JsdB:JedB), CS%diag)
       if (CS%id_eta_pred_hifreq > 0) call post_data(CS%id_eta_pred_hifreq, eta_PF_BT(isd:ied,jsd:jed), CS%diag)
     endif
 
@@ -4706,9 +4749,11 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "1e-30 m/s, which is less than an Angstrom divided by "//&
                  "the age of the universe.", units="m s-1", default=0.0, scale=US%m_s_to_L_T)
 
-  call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL", CS%hydraulic_control, &
+  call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL", CS%hydraulic_control_vel, &
                  "If true, use hydraulic control to curb barotropic velocity", default=.false.)
-  if (CS%hydraulic_control) &
+  call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL_TRANS", CS%hydraulic_control_trans, &
+                 "If true, use hydraulic control to curb barotropic velocity", default=.false.)
+  if (CS%hydraulic_control_vel .or. CS%hydraulic_control_trans) &
     CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
 
   call get_param(param_file, mdl, "DT_BT_FILTER", CS%dt_bt_filter, &
@@ -5009,6 +5054,14 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
       'High Frequency Barotropic zonal velocity', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_vbt_hifreq = register_diag_field('ocean_model', 'vbt_hifreq', diag%axesCv1, Time, &
       'High Frequency Barotropic meridional velocity', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_pfubt_hifreq = register_diag_field('ocean_model', 'pfubt_hifreq', diag%axesCu1, Time, &
+      'High Frequency Barotropic zonal PF', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_pfvbt_hifreq = register_diag_field('ocean_model', 'pfvbt_hifreq', diag%axesCv1, Time, &
+      'High Frequency Barotropic meridional PF', 'm s-1', conversion=US%L_T_to_m_s) 
+  CS%id_cfubt_hifreq = register_diag_field('ocean_model', 'cfubt_hifreq', diag%axesCu1, Time, &
+      'High Frequency Barotropic zonal CF', 'm s-1', conversion=US%L_T_to_m_s)
+  CS%id_cfvbt_hifreq = register_diag_field('ocean_model', 'cfvbt_hifreq', diag%axesCv1, Time, &
+      'High Frequency Barotropic meridional CF', 'm s-1', conversion=US%L_T_to_m_s) 
   CS%id_eta_pred_hifreq = register_diag_field('ocean_model', 'eta_pred_hifreq', diag%axesT1, Time, &
       'High Frequency Predictor Barotropic SSH', thickness_units, conversion=GV%H_to_MKS)
   CS%id_uhbt_hifreq = register_diag_field('ocean_model', 'uhbt_hifreq', diag%axesCu1, Time, &
