@@ -284,6 +284,7 @@ type, public :: barotropic_CS ; private
                              !! used within the barotropic solver
   logical :: hydraulic_control_vel !< Hydraulic control
   logical :: hydraulic_control_trans !< Hydraulic control
+  logical :: hydraulic_control_pf !< Hydraulic control
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -559,6 +560,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     Cor_ref_u, &  ! The zonal barotropic Coriolis acceleration due
                   ! to the reference velocities [L T-2 ~> m s-2].
     PFu, &        ! The zonal pressure force acceleration [L T-2 ~> m s-2].
+    PFu_hc, &     ! The zonal pressure force acceleration [L T-2 ~> m s-2].
     Rayleigh_u, & ! A Rayleigh drag timescale operating at u-points [T-1 ~> s-1].
     PFu_bt_sum, & ! The summed zonal barotropic pressure gradient force [L T-2 ~> m s-2].
     Coru_bt_sum, & ! The summed zonal barotropic Coriolis acceleration [L T-2 ~> m s-2].
@@ -590,6 +592,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     Cor_ref_v, &  ! The meridional barotropic Coriolis acceleration due
                   ! to the reference velocities [L T-2 ~> m s-2].
     PFv, &        ! The meridional pressure force acceleration [L T-2 ~> m s-2].
+    PFv_hc, &     ! The meridional pressure force acceleration [L T-2 ~> m s-2].
     Rayleigh_v, & ! A Rayleigh drag timescale operating at v-points [T-1 ~> s-1].
     PFv_bt_sum, & ! The summed meridional barotropic pressure gradient force,
                   ! [L T-2 ~> m s-2].
@@ -1817,6 +1820,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
   ! The following loop contains all of the time steps.
   isv=is ; iev=ie ; jsv=js ; jev=je
+  do J=jsv-1,jev ; do i=isv,iev ; PFv_hc(i,J) = 0.0 ; enddo ; enddo
+  do j=jsv,jev ; do I=isv-1,iev ; PFu_hc(I,j) = 0.0 ; enddo ; enddo
   do n=1,nstep+nfilter
 
     sum_wt_vel = sum_wt_vel + wt_vel(n)
@@ -1997,6 +2002,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (MOD(n+G%first_direction,2)==1) then
       ! On odd-steps, update v first.
       !$OMP do schedule(static)
+      if (CS%hydraulic_control_pf) then
+        do J=jsv-1,jev ; do i=isv,iev
+          if (vbt(i,J)>=0.0) then
+            PFv_hc(i,J) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5 - vbt(i,J))
+          else
+            PFv_hc(i,J) = max(0.0, -CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**0.5 - vbt(i,J))
+          endif
+        enddo ; enddo
+      endif
       do J=jsv-1,jev ; do i=isv-1,iev+1
         Cor_v(i,J) = -1.0*((amer(I-1,j) * ubt(I-1,j) + cmer(I,j+1) * ubt(I,j+1)) + &
                (bmer(I,j) * ubt(I,j) + dmer(I-1,j+1) * ubt(I-1,j+1))) - Cor_ref_v(i,J)
@@ -2025,7 +2039,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=jsv-1,jev ; do i=isv-1,iev+1
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
-             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
+             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J) + PFv_hc(i,J)))
         if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
         vbt_trans(i,J) = trans_wt1*vbt(i,J) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2039,7 +2053,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       else
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv-1,iev+1
-          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
+          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J) + PFv_hc(i,J))
         enddo ; enddo
       endif
 
@@ -2082,6 +2096,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
 
       ! Now update the zonal velocity.
+      if (CS%hydraulic_control_pf) then
+        do j=jsv,jev ; do I=isv-1,iev
+          if (ubt(I,j)>=0.0) then
+            PFu_hc(I,j) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5 - ubt(I,j))
+          else
+            PFu_hc(I,j) = max(0.0, -CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**0.5 + ubt(I,j))
+          endif
+        enddo ; enddo
+      endif
       !$OMP do schedule(static)
       do j=jsv,jev ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
@@ -2113,7 +2136,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do j=jsv,jev ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
-             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
+             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j) + PFu_hc(I,j)))
         if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2129,7 +2152,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       else
         !$OMP do schedule(static)
         do j=jsv,jev ; do I=isv-1,iev
-          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
+          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j) + PFu_hc(I,j))
         enddo ; enddo
         !$OMP end do nowait
       endif
@@ -2171,6 +2194,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     else
       ! On even steps, update u first.
       !$OMP do schedule(static)
+      if (CS%hydraulic_control_pf) then
+        do j=jsv,jev ; do I=isv-1,iev
+          if (ubt(I,j)>=0.0) then
+            PFu_hc(I,j) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5 - ubt(I,j))
+          else
+            PFu_hc(I,j) = max(0.0, -CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**0.5 + ubt(I,j))
+          endif
+        enddo ; enddo
+      endif
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         Cor_u(I,j) = ((azon(I,j) * vbt(i+1,J) + czon(I,j) * vbt(i,J-1)) + &
                       (bzon(I,j) * vbt(i,J) +  dzon(I,j) * vbt(i+1,J-1))) - &
@@ -2200,7 +2232,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
-             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
+             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j) + PFu_hc(I,j)))
         if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2214,7 +2246,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       else
         !$OMP do schedule(static)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
-          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
+          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j) + PFu_hc(I,j))
         enddo ; enddo
       endif
 
@@ -2255,6 +2287,15 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         enddo ; enddo
       endif
       ! Now update the meridional velocity.
+      if (CS%hydraulic_control_pf) then
+        do J=jsv-1,jev ; do i=isv,iev
+          if (vbt(i,J)>=0.0) then
+            PFv_hc(i,J) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5 - vbt(i,J))
+          else
+            PFv_hc(i,J) = max(0.0, -CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**0.5 - vbt(i,J))
+          endif
+        enddo ; enddo
+      endif
       if (CS%use_old_coriolis_bracket_bug) then
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv,iev
@@ -2296,7 +2337,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do J=jsv-1,jev ; do i=isv,iev
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
-             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
+             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J) + PFv_hc(i,J)))
         if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
         vbt_trans(i,J) = trans_wt1*vbt(i,J) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2312,7 +2353,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       else
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv,iev
-          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
+          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J) + PFv_hc(i,J))
         enddo ; enddo
         !$OMP end do nowait
       endif
@@ -4753,7 +4794,9 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "If true, use hydraulic control to curb barotropic velocity", default=.false.)
   call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL_TRANS", CS%hydraulic_control_trans, &
                  "If true, use hydraulic control to curb barotropic velocity", default=.false.)
-  if (CS%hydraulic_control_vel .or. CS%hydraulic_control_trans) &
+  call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL_PRES", CS%hydraulic_control_pf, &
+                 "If true, use hydraulic control to curb barotropic velocity", default=.false.)
+  if (CS%hydraulic_control_vel .or. CS%hydraulic_control_trans .or. CS%hydraulic_control_pf) &
     CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
 
   call get_param(param_file, mdl, "DT_BT_FILTER", CS%dt_bt_filter, &
