@@ -182,6 +182,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   logical :: debug_OBC !< If true, do debugging calls for open boundary conditions.
   logical :: fpmix = .false.                 !< If true, applies profiles of momentum flux magnitude and direction.
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
+  logical :: test_bt_visc_rem, test_pred_dt
 
   !>@{ Diagnostic IDs
   integer :: id_uold   = -1, id_vold   = -1
@@ -190,6 +191,8 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_umo_2d = -1, id_vmo_2d = -1
   integer :: id_PFu    = -1, id_PFv    = -1
   integer :: id_CAu    = -1, id_CAv    = -1
+  integer :: id_vremu    = -1, id_vremv    = -1
+  integer :: id_vremup    = -1, id_vremvp    = -1
   integer :: id_ueffA = -1, id_veffA = -1
   ! integer :: id_hf_PFu    = -1, id_hf_PFv    = -1
   integer :: id_h_PFu    = -1, id_h_PFv    = -1
@@ -400,7 +403,14 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
 
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   integer :: cont_stencil, obc_stencil
+  real :: dt_pred_test
 
+  dt_pred = dt * CS%be
+  if (CS%test_pred_dt) then
+    dt_pred_test = dt_pred
+  else
+    dt_pred_test = dt
+  endif
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
   u_av => CS%u_av ; v_av => CS%v_av ; h_av => CS%h_av ; eta => CS%eta
@@ -576,10 +586,10 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   !$OMP parallel do default(shared)
   do k=1,nz
     do j=js,je ; do I=Isq,Ieq
-      up(I,j,k) = G%mask2dCu(I,j) * (u_inst(I,j,k) + dt * u_bc_accel(I,j,k))
+      up(I,j,k) = G%mask2dCu(I,j) * (u_inst(I,j,k) + dt_pred_test * u_bc_accel(I,j,k))
     enddo ; enddo
     do J=Jsq,Jeq ; do i=is,ie
-      vp(i,J,k) = G%mask2dCv(i,J) * (v_inst(i,J,k) + dt * v_bc_accel(i,J,k))
+      vp(i,J,k) = G%mask2dCv(i,J) * (v_inst(i,J,k) + dt_pred_test * v_bc_accel(i,J,k))
     enddo ; enddo
   enddo
 
@@ -591,8 +601,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     call uvchksum("before vertvisc: up", up, vp, G%HI, haloshift=0, symmetric=sym, scale=US%L_T_to_m_s)
   endif
   call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
-  call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
-  call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt, G, GV, US, CS%vertvisc_CSp)
+  call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt_pred_test, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
+  call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt_pred_test, G, GV, US, CS%vertvisc_CSp)
   call cpu_clock_end(id_clock_vertvisc)
   if (showCallTree) call callTree_wayPoint("done with vertvisc_coef (step_MOM_dyn_split_RK2)")
 
@@ -628,7 +638,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
 ! u_accel_bt = layer accelerations due to barotropic solver
   if (associated(CS%BT_cont) .or. CS%BT_use_layer_fluxes) then
     call cpu_clock_begin(id_clock_continuity)
-    call continuity(u_inst, v_inst, h, hp, uh_in, vh_in, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
+    call continuity(u_inst, v_inst, h, hp, uh_in, vh_in, dt_pred_test, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                     visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, BT_cont=CS%BT_cont)
     call cpu_clock_end(id_clock_continuity)
     if (BT_cont_BT_thick) then
@@ -647,7 +657,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
   ! This is the predictor step call to btstep.
   ! The CS%ADp argument here stores the weights for certain integrated diagnostics.
-  call btstep(u_inst, v_inst, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, CS%eta_PF, u_av, v_av, &
+  call btstep(u_inst, v_inst, eta, dt_pred_test, u_bc_accel, v_bc_accel, forces, CS%pbce, CS%eta_PF, u_av, v_av, &
               CS%u_accel_bt, CS%v_accel_bt, eta_pred, CS%uhbt, CS%vhbt, G, GV, US, &
               CS%barotropic_CSp, CS%visc_rem_u, CS%visc_rem_v, SpV_avg, CS%ADp, CS%OBC, CS%BT_cont, &
               eta_PF_start, taux_bot, tauy_bot, uh_ptr, vh_ptr, u_ptr, v_ptr)
@@ -655,7 +665,6 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call cpu_clock_end(id_clock_btstep)
 
 ! up = u + dt_pred*( u_bc_accel + u_accel_bt )
-  dt_pred = dt * CS%be
   call cpu_clock_begin(id_clock_mom_update)
 
   !$OMP parallel do default(shared)
@@ -745,7 +754,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   ! uh = u_av * h
   ! hp = h + dt * div . uh
   call cpu_clock_begin(id_clock_continuity)
-  call continuity(up, vp, h, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
+  call continuity(up, vp, h, hp, uh, vh, dt_pred_test, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   CS%uhbt, CS%vhbt, CS%visc_rem_u, CS%visc_rem_v, &
                   u_av, v_av, BT_cont=CS%BT_cont)
   call cpu_clock_end(id_clock_continuity)
@@ -897,6 +906,10 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     uh_ptr => uh ; vh_ptr => vh ; u_ptr => u_av ; v_ptr => v_av
   endif
 
+  if (CS%test_bt_visc_rem) then
+    call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt, G, GV, US, CS%vertvisc_CSp)
+  endif
+
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
   ! This is the corrector step call to btstep.
   call btstep(u_inst, v_inst, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, CS%eta_PF, u_av, v_av, &
@@ -914,6 +927,12 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%debug) then
     call check_redundant("u_accel_bt ", CS%u_accel_bt, CS%v_accel_bt, G, unscale=US%L_T2_to_m_s2)
   endif
+
+  ! call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! call vertvisc_coef(u_inst, v_inst, h, dz, forces, visc, tv, dt_pred, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
+  ! call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt_pred, G, GV, US, CS%vertvisc_CSp)
+  ! if (CS%id_vremup > 0) call post_data(CS%id_vremup, CS%visc_rem_u, CS%diag)
+  ! if (CS%id_vremvp > 0) call post_data(CS%id_vremvp, CS%visc_rem_v, CS%diag)
 
   ! u = u + dt*( u_bc_accel + u_accel_bt )
   call cpu_clock_begin(id_clock_mom_update)
@@ -963,6 +982,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   endif
 
   call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! coefficients are not changed by vertvisc_coef ?
   call vertvisc_coef(u_inst, v_inst, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(u_inst, v_inst, h, forces, visc, dt, CS%OBC, CS%ADp, CS%CDp, G, GV, US, &
                 CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot,waves=waves)
@@ -1072,6 +1092,11 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%id_PFv > 0) call post_data(CS%id_PFv, CS%PFv, CS%diag)
   if (CS%id_CAu > 0) call post_data(CS%id_CAu, CS%CAu, CS%diag)
   if (CS%id_CAv > 0) call post_data(CS%id_CAv, CS%CAv, CS%diag)
+
+  if (CS%test_bt_visc_rem) then
+    if (CS%id_vremu > 0) call post_data(CS%id_vremu, CS%visc_rem_u, CS%diag)
+    if (CS%id_vremv > 0) call post_data(CS%id_vremv, CS%visc_rem_v, CS%diag)
+  endif
 
   ! Here the thickness fluxes are offered for time averaging.
   if (CS%id_uh         > 0) call post_data(CS%id_uh,  uh,                   CS%diag)
@@ -1412,6 +1437,10 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
                  "variables that are needed to reproduce across restarts, similarly to "//&
                  "what is already being done with the primary state variables.  "//&
                  "The default should be changed to true.", default=.false., do_not_log=.true.)
+  call get_param(param_file, mdl, "TEST_BT_VISC_REM", CS%test_bt_visc_rem, &
+                 "If true, recalculate visc_rem before corrector btstep. ", default=.false.)
+  call get_param(param_file, mdl, "TEST_PRED_DT", CS%test_pred_dt, &
+                 "If true, use dt_pred for all predictor processes. ", default=.false.)
   if (CS%remap_aux .and. .not.CS%store_CAu) call MOM_error(FATAL, &
       "REMAP_AUXILIARY_VARS requires that STORE_CORIOLIS_ACCEL = True.")
   call get_param(param_file, mdl, "DEBUG", CS%debug, &
@@ -1605,6 +1634,16 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
   CS%id_vh = register_diag_field('ocean_model', 'vh', diag%axesCvL, Time, &
       'Meridional Thickness Flux', flux_units, conversion=GV%H_to_MKS*US%L_to_m**2*US%s_to_T, &
       x_cell_method='sum', v_extensive=.true.)
+
+  CS%id_vremu = register_diag_field('ocean_model', 'visc_rem_u_mom', diag%axesCuL, Time, &
+      'Zonal Coriolis and Advective Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_vremv = register_diag_field('ocean_model', 'visc_rem_v_mom', diag%axesCvL, Time, &
+      'Meridional Coriolis and Advective Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+
+  CS%id_vremup = register_diag_field('ocean_model', 'visc_rem_u_momp', diag%axesCuL, Time, &
+      'Zonal Coriolis and Advective Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  CS%id_vremvp = register_diag_field('ocean_model', 'visc_rem_v_momp', diag%axesCvL, Time, &
+      'Meridional Coriolis and Advective Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
 
   CS%id_CAu = register_diag_field('ocean_model', 'CAu', diag%axesCuL, Time, &
       'Zonal Coriolis and Advective Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
