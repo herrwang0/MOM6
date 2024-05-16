@@ -286,7 +286,7 @@ type, public :: barotropic_CS ; private
   logical :: hydraulic_control_trans !< Hydraulic control
   logical :: hydraulic_control_pf !< Hydraulic control
   logical :: hydraulic_control_pfv2 !< Hydraulic control
-  logical :: test_wtuv
+  logical :: test_wtuv, test_wtuv_v2
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -516,6 +516,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   real :: wt_v(SZI_(G),SZJB_(G),SZK_(GV)) ! normalized weights to
                 ! be used in calculating barotropic velocities, possibly with
                 ! sums less than one due to viscous losses [nondim]
+  real :: wt_u_tot(SZIB_(G),SZJ_(G))
+  real :: wt_v_tot(SZI_(G),SZJB_(G))
+  real :: Iwt_u_tot(SZIB_(G),SZJ_(G))
+  real :: Iwt_v_tot(SZI_(G),SZJB_(G))
   real, dimension(SZIB_(G),SZJ_(G)) :: &
     av_rem_u, &   ! The weighted average of visc_rem_u [nondim]
     tmp_u, &      ! A temporary array at u points [L T-2 ~> m s-2] or [nondim]
@@ -1070,6 +1074,34 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     enddo ; enddo ; enddo
     do k=1,nz ; do J=js-1,je ; do i=is,ie
       wt_v(i,J,k) = 1.0
+    enddo ; enddo ; enddo
+  endif
+
+  if (CS%test_wtuv_v2) then
+    do j=js,je ; do I=is-1,ie
+      wt_u_tot(I,j) = wt_u(I,j,1)
+    enddo ; enddo
+    do k=2,nz ; do j=js,je ; do I=is-1,ie
+      wt_u_tot(I,j) = wt_u_tot(I,j) + wt_u(I,j,k)
+    enddo ; enddo ; enddo
+    do j=js,je ; do I=is-1,ie
+      Iwt_u_tot(I,j) = G%mask2dCu(I,j) / (wt_u_tot(I,j) + h_neglect)
+    enddo ; enddo
+    do k=1,nz ; do j=js,je ; do I=is-1,ie
+      wt_u(I,j,k) = wt_u(I,j,k) * Iwt_u_tot(I,j)
+    enddo ; enddo ; enddo
+
+    do J=js-1,je ; do i=is,ie
+      wt_v_tot(i,J) = wt_v(i,J,1)
+    enddo ; enddo
+    do k=2,nz ; do J=js-1,je ; do i=is,ie
+      wt_v_tot(i,J) = wt_v_tot(i,J) + wt_v(i,J,k)
+    enddo ; enddo ; enddo
+    do J=js-1,je ; do i=is,ie
+      Iwt_v_tot(i,J) = G%mask2dCv(i,J) / (wt_v_tot(i,J) + h_neglect)
+    enddo ; enddo
+    do k=1,nz ; do J=js-1,je ; do i=is,ie
+      wt_v(i,J,k) = wt_v(i,J,k) * Iwt_v_tot(i,J)
     enddo ; enddo ; enddo
   endif
 
@@ -4592,7 +4624,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                       ! This is typically ~0.09 or less.
   real, allocatable :: lin_drag_h(:,:)  ! A spatially varying linear drag coefficient at tracer points
                                         ! that acts on the barotropic flow [H T-1 ~> m s-1 or kg m-2 s-1].
-
+  logical :: hydraulic_control_froude
   type(memory_size_type) :: MS
   type(group_pass_type) :: pass_static_data, pass_q_D_Cor
   type(group_pass_type) :: pass_bt_hbt_btav, pass_a_polarity
@@ -4855,12 +4887,20 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "If true, use hydraulic control to curb barotropic velocity", default=.false.)
   call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL_PRESV2", CS%hydraulic_control_pfv2, &
                  "If true, use hydraulic control to curb barotropic velocity", default=.false.)
-  if (CS%hydraulic_control_vel .or. CS%hydraulic_control_trans .or. CS%hydraulic_control_pf .or. CS%hydraulic_control_pfv2) &
-    CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
+  call get_param(param_file, mdl, "USE_HYDRAULIC_CONTROL_FROUDE", hydraulic_control_froude, &
+                 "If true, use hydraulic control to curb barotropic velocity", default=.false.)
+  if (CS%hydraulic_control_vel .or. CS%hydraulic_control_trans .or. CS%hydraulic_control_pf .or. CS%hydraulic_control_pfv2) then
+    if (hydraulic_control_froude) then
+      CS%hc_coef = (GV%g_Earth**0.5)
+    else
+      CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
+    endif
+  endif
 
   call get_param(param_file, mdl, "TEST_BT_WTUV", CS%test_wtuv, &
                  "If true, wtu and wtv equal 1 in btstep.", default=.false.)
-
+  call get_param(param_file, mdl, "TEST_BT_WTUV_V2", CS%test_wtuv_v2, &
+                 "If true, wtu and wtv are normalized in btstep.", default=.false.)
   call get_param(param_file, mdl, "DT_BT_FILTER", CS%dt_bt_filter, &
                  "A time-scale over which the barotropic mode solutions "//&
                  "are filtered, in seconds if positive, or as a fraction "//&
@@ -5162,15 +5202,15 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   CS%id_pfubt_hifreq = register_diag_field('ocean_model', 'pfubt_hifreq', diag%axesCu1, Time, &
       'High Frequency Barotropic zonal PF', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_pfvbt_hifreq = register_diag_field('ocean_model', 'pfvbt_hifreq', diag%axesCv1, Time, &
-      'High Frequency Barotropic meridional PF', 'm s-1', conversion=US%L_T_to_m_s) 
+      'High Frequency Barotropic meridional PF', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_hcubt_hifreq = register_diag_field('ocean_model', 'hcubt_hifreq', diag%axesCu1, Time, &
       'High Frequency Barotropic zonal PF', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_hcvbt_hifreq = register_diag_field('ocean_model', 'hcvbt_hifreq', diag%axesCv1, Time, &
-      'High Frequency Barotropic meridional PF', 'm s-1', conversion=US%L_T_to_m_s) 
+      'High Frequency Barotropic meridional PF', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_cfubt_hifreq = register_diag_field('ocean_model', 'cfubt_hifreq', diag%axesCu1, Time, &
       'High Frequency Barotropic zonal CF', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_cfvbt_hifreq = register_diag_field('ocean_model', 'cfvbt_hifreq', diag%axesCv1, Time, &
-      'High Frequency Barotropic meridional CF', 'm s-1', conversion=US%L_T_to_m_s) 
+      'High Frequency Barotropic meridional CF', 'm s-1', conversion=US%L_T_to_m_s)
   CS%id_eta_pred_hifreq = register_diag_field('ocean_model', 'eta_pred_hifreq', diag%axesT1, Time, &
       'High Frequency Predictor Barotropic SSH', thickness_units, conversion=GV%H_to_MKS)
   CS%id_uhbt_hifreq = register_diag_field('ocean_model', 'uhbt_hifreq', diag%axesCu1, Time, &

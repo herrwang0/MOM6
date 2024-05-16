@@ -182,7 +182,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   logical :: debug_OBC !< If true, do debugging calls for open boundary conditions.
   logical :: fpmix = .false.                 !< If true, applies profiles of momentum flux magnitude and direction.
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
-  logical :: test_bt_visc_rem, test_pred_dt
+  logical :: test_bt_visc_rem, test_bt_visc_rem_v2, test_pred_dt
 
   !>@{ Diagnostic IDs
   integer :: id_uold   = -1, id_vold   = -1
@@ -741,7 +741,11 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     call start_group_pass(CS%pass_uvp, G%Domain, clock=id_clock_pass)
     call cpu_clock_begin(id_clock_vertvisc)
   endif
-  call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt_pred, G, GV, US, CS%vertvisc_CSp)
+  if (CS%test_bt_visc_rem_v2) then
+    call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt, G, GV, US, CS%vertvisc_CSp)
+  else
+    call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt_pred, G, GV, US, CS%vertvisc_CSp)
+  endif
   call cpu_clock_end(id_clock_vertvisc)
 
   call do_group_pass(CS%pass_visc_rem, G%Domain, clock=id_clock_pass)
@@ -1439,6 +1443,8 @@ subroutine initialize_dyn_split_RK2(u, v, h, uh, vh, eta, Time, G, GV, US, param
                  "The default should be changed to true.", default=.false., do_not_log=.true.)
   call get_param(param_file, mdl, "TEST_BT_VISC_REM", CS%test_bt_visc_rem, &
                  "If true, recalculate visc_rem before corrector btstep. ", default=.false.)
+  call get_param(param_file, mdl, "TEST_BT_VISC_REM_V2", CS%test_bt_visc_rem_v2, &
+                 "If true, use dt for visc_rem calculation in predictor. ", default=.false.)
   call get_param(param_file, mdl, "TEST_PRED_DT", CS%test_pred_dt, &
                  "If true, use dt_pred for all predictor processes. ", default=.false.)
   if (CS%remap_aux .and. .not.CS%store_CAu) call MOM_error(FATAL, &
