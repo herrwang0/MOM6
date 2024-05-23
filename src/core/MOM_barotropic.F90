@@ -30,6 +30,7 @@ use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : BT_cont_type, alloc_bt_cont_type
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_variables, only : accel_diag_ptrs
+use MOM_grid, only : Adcroft_reciprocal
 
 implicit none ; private
 
@@ -2051,10 +2052,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       elseif (CS%hydraulic_control_pfv2) then
         do J=jsv-1,jev ; do i=isv,iev
           if (vbt(i,J)>=0.0) then
-            PFv_hc(i,J) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5/bt_rem_v(i,J) - &
+            PFv_hc(i,J) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5*Adcroft_reciprocal(bt_rem_v(i,J)) - &
                                     (vbt(i,J) + dtbt * (BT_force_v(i,J) + Cor_v(i,J) + PFv(i,J))))/dtbt
           else
-            PFv_hc(i,J) = max(0.0, -CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**0.5/bt_rem_v(i,J) - &
+            PFv_hc(i,J) = max(0.0, -CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**0.5*Adcroft_reciprocal(bt_rem_v(i,J)) - &
                                     (vbt(i,J) + dtbt * (BT_force_v(i,J) + Cor_v(i,J) + PFv(i,J))))/dtbt
           endif
         enddo ; enddo
@@ -2160,10 +2161,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       elseif (CS%hydraulic_control_pfv2) then
         do j=jsv,jev ; do I=isv-1,iev
           if (ubt(I,j)>=0.0) then
-            PFu_hc(I,j) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5/bt_rem_u(I,j) - &
+            PFu_hc(I,j) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5*Adcroft_reciprocal(bt_rem_u(I,j)) - &
                                    (ubt(I,j) + dtbt * (BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j))))/dtbt
           else
-            PFu_hc(I,j) = max(0.0, -CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**0.5/bt_rem_u(I,j) - &
+            PFu_hc(I,j) = max(0.0, -CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**0.5*Adcroft_reciprocal(bt_rem_u(I,j)) - &
                                    (ubt(I,j) + dtbt * (BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j))))/dtbt
           endif
         enddo ; enddo
@@ -2267,10 +2268,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       elseif (CS%hydraulic_control_pfv2) then
         do j=jsv,jev ; do I=isv-1,iev
           if (ubt(I,j)>=0.0) then
-            PFu_hc(I,j) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5/bt_rem_u(I,j) - &
+            PFu_hc(I,j) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5*Adcroft_reciprocal(bt_rem_u(I,j)) - &
                                     (ubt(I,j) + dtbt * (BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j))))/dtbt
           else
-            PFu_hc(I,j) = max(0.0, -CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**0.5/bt_rem_u(I,j) - &
+            PFu_hc(I,j) = max(0.0, -CS%hc_coef * max(eta(i+1,j)+G%bathyT(i+1,j), 0.0)**0.5*Adcroft_reciprocal(bt_rem_u(I,j)) - &
                                     (ubt(I,j) + dtbt * (BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j))))/dtbt
           endif
         enddo ; enddo
@@ -2382,10 +2383,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       elseif (CS%hydraulic_control_pfv2) then
         do J=jsv-1,jev ; do i=isv,iev
           if (vbt(i,J)>=0.0) then
-            PFv_hc(i,J) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5/bt_rem_v(i,J) - &
+            PFv_hc(i,J) = min(0.0, CS%hc_coef * max(eta(i,j)+G%bathyT(i,j), 0.0)**0.5*Adcroft_reciprocal(bt_rem_v(i,J)) - &
                                     (vbt(i,J) + dtbt * (BT_force_v(i,J) + Cor_v(i,J) + PFv(i,J))))/dtbt
           else
-            PFv_hc(i,J) = max(0.0, -CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**0.5/bt_rem_v(i,J) - &
+            PFv_hc(i,J) = max(0.0, -CS%hc_coef * max(eta(i,j+1)+G%bathyT(i,j+1), 0.0)**0.5*Adcroft_reciprocal(bt_rem_v(i,J)) - &
                                     (vbt(i,J) + dtbt * (BT_force_v(i,J) + Cor_v(i,J) + PFv(i,J))))/dtbt
           endif
         enddo ; enddo
