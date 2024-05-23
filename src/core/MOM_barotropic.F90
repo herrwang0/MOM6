@@ -282,11 +282,11 @@ type, public :: barotropic_CS ; private
   logical :: tidal_sal_flather !< Apply adjustment to external gravity wave speed
                              !! consistent with tidal self-attraction and loading
                              !! used within the barotropic solver
+  logical :: wt_uv_fix       !< If true, use a normalized wt_[uv] for vertical averages.
   logical :: hydraulic_control_vel !< Hydraulic control
   logical :: hydraulic_control_trans !< Hydraulic control
   logical :: hydraulic_control_pf !< Hydraulic control
   logical :: hydraulic_control_pfv2 !< Hydraulic control
-  logical :: test_wtuv, test_wtuv_v2
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -516,10 +516,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   real :: wt_v(SZI_(G),SZJB_(G),SZK_(GV)) ! normalized weights to
                 ! be used in calculating barotropic velocities, possibly with
                 ! sums less than one due to viscous losses [nondim]
-  real :: wt_u_tot(SZIB_(G),SZJ_(G))
-  real :: wt_v_tot(SZI_(G),SZJB_(G))
-  real :: Iwt_u_tot(SZIB_(G),SZJ_(G))
-  real :: Iwt_v_tot(SZI_(G),SZJB_(G))
+  real :: Iwt_u_tot(SZIB_(G),SZJ_(G)) ! Iwt_u_tot and Iwt_v_tot are the
+  real :: Iwt_v_tot(SZI_(G),SZJB_(G)) ! inverses of wt_u and wt_v vertical integrals,
+                ! used to normalize wt_u and wt_v [nondim]
   real, dimension(SZIB_(G),SZJ_(G)) :: &
     av_rem_u, &   ! The weighted average of visc_rem_u [nondim]
     tmp_u, &      ! A temporary array at u points [L T-2 ~> m s-2] or [nondim]
@@ -1068,37 +1067,24 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     wt_v(i,J,k) = CS%frhatv(i,J,k) * visc_rem
   enddo ; enddo ; enddo
 
-  if (CS%test_wtuv) then
-    do k=1,nz ; do j=js,je ; do I=is-1,ie
-      wt_u(I,j,k) = 1.0
-    enddo ; enddo ; enddo
-    do k=1,nz ; do J=js-1,je ; do i=is,ie
-      wt_v(i,J,k) = 1.0
-    enddo ; enddo ; enddo
-  endif
-
-  if (CS%test_wtuv_v2) then
-    do j=js,je ; do I=is-1,ie
-      wt_u_tot(I,j) = wt_u(I,j,1)
-    enddo ; enddo
+  if (CS%wt_uv_fix) then
+    do j=js,je ; do I=is-1,ie ; Iwt_u_tot(I,j) = wt_u(I,j,1) ; enddo ; enddo
     do k=2,nz ; do j=js,je ; do I=is-1,ie
-      wt_u_tot(I,j) = wt_u_tot(I,j) + wt_u(I,j,k)
+      Iwt_u_tot(I,j) = Iwt_u_tot(I,j) + wt_u(I,j,k)
     enddo ; enddo ; enddo
     do j=js,je ; do I=is-1,ie
-      Iwt_u_tot(I,j) = G%mask2dCu(I,j) / (wt_u_tot(I,j) + h_neglect)
+      Iwt_u_tot(I,j) = G%mask2dCu(I,j) / (Iwt_u_tot(I,j) + h_neglect)
     enddo ; enddo
     do k=1,nz ; do j=js,je ; do I=is-1,ie
       wt_u(I,j,k) = wt_u(I,j,k) * Iwt_u_tot(I,j)
     enddo ; enddo ; enddo
 
-    do J=js-1,je ; do i=is,ie
-      wt_v_tot(i,J) = wt_v(i,J,1)
-    enddo ; enddo
+    do J=js-1,je ; do i=is,ie ; Iwt_v_tot(i,J) = wt_v(i,J,1) ; enddo ; enddo
     do k=2,nz ; do J=js-1,je ; do i=is,ie
-      wt_v_tot(i,J) = wt_v_tot(i,J) + wt_v(i,J,k)
+      Iwt_v_tot(i,J) = Iwt_v_tot(i,J) + wt_v(i,J,k)
     enddo ; enddo ; enddo
     do J=js-1,je ; do i=is,ie
-      Iwt_v_tot(i,J) = G%mask2dCv(i,J) / (wt_v_tot(i,J) + h_neglect)
+      Iwt_v_tot(i,J) = G%mask2dCv(i,J) / (Iwt_v_tot(i,J) + h_neglect)
     enddo ; enddo
     do k=1,nz ; do J=js-1,je ; do i=is,ie
       wt_v(i,J,k) = wt_v(i,J,k) * Iwt_v_tot(i,J)
@@ -2638,7 +2624,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do j=js,je ; do i=is,ie
         if ((eta(i,j) < -GV%Z_to_H*G%bathyT(i,j)) .and. (G%mask2dT(i,j) > 0.0)) then
           write(mesg,'(ES24.16," vs. ",ES24.16, " at ", ES12.4, ES12.4, i7, i7)') GV%H_to_m*eta(i,j), &
-               -US%Z_to_m*G%bathyT(i,j), G%geoLonT(i,j), G%geoLatT(i,j), i + G%isd_global, j + G%jsd_global
+               -US%Z_to_m*G%bathyT(i,j), G%geoLonT(i,j), G%geoLatT(i,j), i + G%HI%idg_offset, j + G%HI%jdg_offset
           if (err_count < 2) &
             call MOM_error(WARNING, "btstep: eta has dropped below bathyT: "//trim(mesg), all_print=.true.)
           err_count = err_count + 1
@@ -4775,10 +4761,14 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   call get_param(param_file, mdl, "BAROTROPIC_ANSWER_DATE", CS%answer_date, &
                  "The vintage of the expressions in the barotropic solver. "//&
                  "Values below 20190101 recover the answers from the end of 2018, "//&
-                 "while higher values uuse more efficient or general expressions.", &
+                 "while higher values use more efficient or general expressions.", &
                  default=default_answer_date, do_not_log=.not.GV%Boussinesq)
   if (.not.GV%Boussinesq) CS%answer_date = max(CS%answer_date, 20230701)
 
+  call get_param(param_file, mdl, "VISC_REM_BT_WEIGHT_FIX", CS%wt_uv_fix, &
+                 "If true, use a normalized weight function for vertical averages of "//&
+                 "baroclinic velocity and forcing. This flag should be used with "//&
+                 "VISC_REM_TIMESTEP_FIX.", default=.false.)
   call get_param(param_file, mdl, "TIDES", use_tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
@@ -4897,10 +4887,6 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     endif
   endif
 
-  call get_param(param_file, mdl, "TEST_BT_WTUV", CS%test_wtuv, &
-                 "If true, wtu and wtv equal 1 in btstep.", default=.false.)
-  call get_param(param_file, mdl, "TEST_BT_WTUV_V2", CS%test_wtuv_v2, &
-                 "If true, wtu and wtv are normalized in btstep.", default=.false.)
   call get_param(param_file, mdl, "DT_BT_FILTER", CS%dt_bt_filter, &
                  "A time-scale over which the barotropic mode solutions "//&
                  "are filtered, in seconds if positive, or as a fraction "//&
