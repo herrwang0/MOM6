@@ -2470,6 +2470,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     ! This might need to be moved outside of the OMP do loop directives.
     if (CS%debug_bt) then
       write(mesg,'("BT vel update ",I4)') n
+      call uvchksum(trim(mesg)//" PF_hc[uv]", PFu_hc, PFv_hc, CS%debug_BT_HI, haloshift=iev-ie, &
+                    scale=US%L_T_to_m_s*US%s_to_T)
       call uvchksum(trim(mesg)//" PF[uv]", PFu, PFv, CS%debug_BT_HI, haloshift=iev-ie, &
                     scale=US%L_T_to_m_s*US%s_to_T)
       call uvchksum(trim(mesg)//" Cor_[uv]", Cor_u, Cor_v, CS%debug_BT_HI, haloshift=iev-ie, &
