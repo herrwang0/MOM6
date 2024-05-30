@@ -30,7 +30,7 @@ use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : BT_cont_type, alloc_bt_cont_type
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_variables, only : accel_diag_ptrs
-use MOM_grid, only : Adcroft_reciprocal
+use MOM_grid_initialize, only : Adcroft_reciprocal
 
 implicit none ; private
 
