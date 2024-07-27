@@ -39,6 +39,7 @@ public PressureForce_FV_Bouss, PressureForce_FV_nonBouss
 type, public :: PressureForce_FV_CS ; private
   logical :: initialized = .false. !< True if this control structure has been initialized.
   logical :: calculate_SAL  !< If true, calculate self-attraction and loading.
+  logical :: SAL_use_SSH    !< If true, use SSH to calculate self-attraction and loading.
   logical :: tides          !< If true, apply tidal momentum forcing.
   real    :: Rho0           !< The density used in the Boussinesq
                             !! approximation [R ~> kg m-3].
@@ -329,18 +330,32 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
   ! Calculate and add the self-attraction and loading geopotential anomaly.
   if (CS%calculate_SAL) then
-    !$OMP parallel do default(shared)
-    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref &
-                 - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
-    enddo ; enddo
+    if (CS%SAL_use_SSH) then
+      !$OMP parallel do default(shared)
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref &
+                  - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
+      enddo ; enddo
+    else
+      !$OMP parallel do default(shared)
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        SSH(i,j) = p(i,j,nz+1)
+      enddo ; enddo
+    endif
     call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
 
     if ((CS%tides_answer_date>20230630) .or. (.not.GV%semi_Boussinesq) .or. (.not.CS%tides)) then
-      !$OMP parallel do default(shared)
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        za(i,j,1) = za(i,j,1) - GV%g_Earth * e_sal(i,j)
-      enddo ; enddo
+      if (CS%SAL_use_SSH) then
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          za(i,j,1) = za(i,j,1) - GV%g_Earth * e_sal(i,j)
+        enddo ; enddo
+      else
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          za(i,j) = za(i,j) - e_sal(i,j)
+        enddo ; enddo
+      endif
     endif
   endif
 
@@ -1010,6 +1025,13 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
   endif
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%tides)
+  if (CS%calculate_SAL) then
+    call get_param(param_file, mdl, "SAL_USE_SSH", CS%SAL_use_SSH, "If true, use SSH to "//&
+                   "calculate self-attraction and loading.", default=.true., do_not_log=.true.)
+    ! if (CS%tides_answer_date<=20230630 .and. (.not.CS%SAL_use_SSH)) &
+    !   call MOM_error(FATAL, trim(mdl) // "PressureForce_FV_init: SAL_USE_SSH needs to be TRUE "//
+    !                  "to recover tides answers before 20230630")
+  endif
   call get_param(param_file, "MOM", "USE_REGRIDDING", use_ALE, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
                  "If False, use the layered isopycnal algorithm.", default=.false. )

@@ -1,16 +1,17 @@
 module MOM_self_attr_load
 
-use MOM_cpu_clock,       only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_MODULE
-use MOM_domains,         only : pass_var
-use MOM_error_handler,   only : MOM_error, FATAL, WARNING
-use MOM_file_parser,     only : read_param, get_param, log_version, param_file_type
+use MOM_cpu_clock, only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_MODULE
+use MOM_domains, only : pass_var
+use MOM_error_handler, only : MOM_error, FATAL, WARNING
+use MOM_file_parser, only : get_param, log_param, log_version, param_file_type
+use MOM_grid, only : ocean_grid_type
+use MOM_io, only : slasher, MOM_read_data
+use MOM_load_love_numbers, only : Love_Data
 use MOM_obsolete_params, only : obsolete_logical, obsolete_int
-use MOM_grid,            only : ocean_grid_type
-use MOM_unit_scaling,    only : unit_scale_type
 use MOM_spherical_harmonics, only : spherical_harmonics_init, spherical_harmonics_end
 use MOM_spherical_harmonics, only : spherical_harmonics_forward, spherical_harmonics_inverse
 use MOM_spherical_harmonics, only : sht_CS, order2index, calc_lmax
-use MOM_load_love_numbers,   only : Love_Data
+use MOM_unit_scaling, only : unit_scale_type
 
 implicit none ; private
 
@@ -20,6 +21,8 @@ public calc_SAL, scalar_SAL_sensitivity, SAL_init, SAL_end
 
 !> The control structure for the MOM_self_attr_load module
 type, public :: SAL_CS ; private
+  logical :: use_ssh = .True.
+    !< If true, use SSH instead of bottom pressure anomaly to calculate SAL.
   logical :: use_sal_scalar = .false.
     !< If true, use the scalar approximation to calculate SAL.
   logical :: use_sal_sht = .false.
@@ -32,6 +35,7 @@ type, public :: SAL_CS ; private
                                 !! geopotential anomalies [nondim].
   type(sht_CS), allocatable :: sht  !< Spherical harmonic transforms (SHT) control structure
   integer :: sal_sht_Nd         !< Maximum degree for SHT [nodim]
+  real, allocatable :: pbot_ref(:,:)   !< Reference bottom pressure [R L2 T-2 ~> Pa]
   real, allocatable :: Love_Scaling(:) !< Love number for each SHT mode [nodim]
   real, allocatable :: Snm_Re(:), &    !< Real SHT coefficient for SHT SAL [Z ~> m]
                        Snm_Im(:)       !< Imaginary SHT coefficient for SHT SAL [Z ~> m]
@@ -45,6 +49,8 @@ contains
 !! be changed into bottom pressure anomaly in the future. Note that the SAL calculation applies to all motions
 !! across the spectrum. Tidal-specific methods that assume periodicity, i.e. iterative and read-in SAL, are
 !! stored in MOM_tidal_forcing module.
+!! 1) input a interface height anomaly (e.g. SSH, ~>m) and returns e_sal
+!! 2) input a pressure field (bottom pressure, ~>Pa) and returns a geopotential phi_sal
 subroutine calc_SAL(eta, eta_sal, G, CS, tmp_scale)
   type(ocean_grid_type), intent(in)  :: G  !< The ocean's grid structure.
   real, dimension(SZI_(G),SZJ_(G)), intent(in)  :: eta     !< The sea surface height anomaly from
@@ -57,6 +63,7 @@ subroutine calc_SAL(eta, eta_sal, G, CS, tmp_scale)
 
   ! Local variables
   integer :: n, m, l
+  real, dimension(SZI_(G),SZJ_(G)) :: bpa
   integer :: Isq, Ieq, Jsq, Jeq
   integer :: i, j
   real :: eta_prop ! The scalar constant of proportionality between eta and eta_sal [nondim]
@@ -65,16 +72,22 @@ subroutine calc_SAL(eta, eta_sal, G, CS, tmp_scale)
 
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
 
+  if (CS%use_ssh) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+    bpa(i,j) = eta(i,j)
+  enddo ; enddo ; else ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+    bpa(i,j) = eta(i,j) - CS%pbot_ref(i,j)
+  enddo ; enddo ; endif
+
   ! use the scalar approximation and/or iterative tidal SAL
   if (CS%use_sal_scalar .or. CS%use_tidal_sal_prev) then
     call scalar_SAL_sensitivity(CS, eta_prop)
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      eta_sal(i,j) = eta_prop*eta(i,j)
+      eta_sal(i,j) = eta_prop * bpa(i,j)
     enddo ; enddo
 
   ! use the spherical harmonics method
   elseif (CS%use_sal_sht) then
-    call spherical_harmonics_forward(G, CS%sht, eta, CS%Snm_Re, CS%Snm_Im, CS%sal_sht_Nd, tmp_scale=tmp_scale)
+    call spherical_harmonics_forward(G, CS%sht, bpa, CS%Snm_Re, CS%Snm_Im, CS%sal_sht_Nd, tmp_scale=tmp_scale)
 
     ! Multiply scaling factors to each mode
     do m = 0,CS%sal_sht_Nd
@@ -117,17 +130,23 @@ end subroutine scalar_SAL_sensitivity
 !> This subroutine calculates coefficients of the spherical harmonic modes for self-attraction and loading.
 !! The algorithm is based on the SAL implementation in MPAS-ocean, which was modified by Kristin Barton from
 !! routine written by K. Quinn (March 2010) and modified by M. Schindelegger (May 2017).
-subroutine calc_love_scaling(nlm, rhoW, rhoE, Love_Scaling)
+subroutine calc_love_scaling(nlm, rhoW, rhoE, Love_Scaling, use_ssh)
   integer, intent(in) :: nlm  !< Maximum spherical harmonics degree [nondim]
   real,    intent(in) :: rhoW !< The average density of sea water [R ~> kg m-3]
   real,    intent(in) :: rhoE !< The average density of Earth [R ~> kg m-3]
-  real, dimension(:), intent(out) :: Love_Scaling !< Scaling factors for inverse SHT [nondim]
+  real, dimension(:), intent(out) :: Love_Scaling !< Scaling factors for inverse spherical harmonic
+                                                  !! transforms [Z L-1 R-1 ~> m3 kg-1 or nondim]
+  logical, optional, intent(in) :: use_ssh !< If true, the output coefficients are multiplied by a
+                                           !! reference seawater density, making it dimensionless.
 
   ! Local variables
   real, dimension(:), allocatable :: HDat, LDat, KDat ! Love numbers converted in CF reference frames [nondim]
   real :: H1, L1, K1 ! Temporary variables to store degree 1 Love numbers [nondim]
   integer :: n_tot ! Size of the stored Love numbers
   integer :: n, m, l
+  logical :: nondim
+
+  nondim = .true. ; if (present(use_ssh)) nondim = use_ssh
 
   n_tot = size(Love_Data, dim=2)
 
@@ -148,7 +167,11 @@ subroutine calc_love_scaling(nlm, rhoW, rhoE, Love_Scaling)
 
   do m=0,nlm ; do n=m,nlm
     l = order2index(m,nlm)
-    Love_Scaling(l+n-m) = (3.0 / real(2*n+1)) * (rhoW / rhoE) * (1.0 + KDat(n+1) - HDat(n+1))
+    if (nondim) then
+      Love_Scaling(l+n-m) = (3.0 / real(2*n+1)) * (rhoW / rhoE) * (1.0 + KDat(n+1) - HDat(n+1))
+    else
+      Love_Scaling(l+n-m) = (3.0 / real(2*n+1)) / rhoE * (1.0 + KDat(n+1) - HDat(n+1))
+    endif
   enddo ; enddo
 end subroutine calc_love_scaling
 
@@ -165,10 +188,16 @@ subroutine SAL_init(G, US, param_file, CS)
   integer :: lmax ! Total modes of the real spherical harmonics [nondim]
   real :: rhoW    ! The average density of sea water [R ~> kg m-3].
   real :: rhoE    ! The average density of Earth [R ~> kg m-3].
+  character(len=200) :: filename, pbot_ref_file, inputdir ! Strings for file/path
+  character(len=200) :: pbot_ref_varname                  ! Variable name in file
 
   logical :: calculate_sal
   logical :: tides, use_tidal_sal_file
   real :: tide_sal_scalar_value ! Scaling SAL factor [nondim]
+
+  integer :: Isq, Ieq, Jsq, Jeq
+  integer :: i, j
+  Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
 
   ! Read all relevant parameters and write them to the model log.
   call log_version(param_file, mdl, version, "")
@@ -185,6 +214,26 @@ subroutine SAL_init(G, US, param_file, CS)
                    default=.false., do_not_log=.True.)
   endif
 
+  call get_param(param_file, mdl, "SAL_USE_SSH", CS%use_ssh, &
+                 "If true, use SSH to calculate self-attraction and loading (SAL), which is "//&
+                 "only correct for homogenous flow. Otherwise, bottom pressure anomaly is used.", &
+                 default=.True.)
+  if (.not.CS%use_ssh) then
+    call get_param(param_file, mdl, "INPUTDIR", inputdir, default=".")
+    inputdir = slasher(inputdir)
+    call get_param(param_file, mdl, "REF_BOT_PRES_FILE", pbot_ref_file, &
+                   "Reference bottom pressure file used by self-attraction and loading (SAL).", &
+                   default="pbot.nc")
+    call get_param(param_file, mdl, "REF_BOT_PRES_VARNAME", pbot_ref_varname, &
+                   "The name of the variable in REF_BOT_PRES_FILE with reference bottom pressure.", &
+                   default="pbot")
+    filename = trim(inputdir)//trim(pbot_ref_file)
+    call log_param(param_file, mdl, "INPUTDIR/REF_BOT_PRES_FILE", filename)
+
+    allocate(CS%pbot_ref(Isq:Ieq, Jsq:Jeq)); CS%pbot_ref = 0.0
+    call MOM_read_data(filename, trim(pbot_ref_varname), CS%pbot_ref, G%Domain, scale=US%Pa_to_RL2_T2)
+    call pass_var(CS%pbot_ref, G%Domain)
+  endif
   call get_param(param_file, mdl, "SAL_SCALAR_APPROX", CS%use_sal_scalar, &
                  "If true, use the scalar approximation to calculate self-attraction and "//&
                  "loading.", default=tides .and. (.not. use_tidal_sal_file))
@@ -220,7 +269,7 @@ subroutine SAL_init(G, US, param_file, CS)
     allocate(CS%Snm_Im(lmax)); CS%Snm_Im(:) = 0.0
 
     allocate(CS%Love_Scaling(lmax)); CS%Love_Scaling(:) = 0.0
-    call calc_love_scaling(CS%sal_sht_Nd, rhoW, rhoE, CS%Love_Scaling)
+    call calc_love_scaling(CS%sal_sht_Nd, rhoW, rhoE, CS%Love_Scaling, CS%use_ssh)
 
     allocate(CS%sht)
     call spherical_harmonics_init(G, param_file, CS%sht)
