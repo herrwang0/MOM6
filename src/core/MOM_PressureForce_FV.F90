@@ -65,7 +65,7 @@ type, public :: PressureForce_FV_CS ; private
                             !! By the default (1) is for a piecewise linear method
 
   logical :: use_stanley_pgf  !< If true, turn on Stanley parameterization in the PGF
-  integer :: tides_answer_date !< Recover old answers with tides in Boussinesq mode
+  integer :: tides_answer_date !< Recover old answers with tides
   integer :: id_e_tide = -1 !< Diagnostic identifier
   integer :: id_e_tide_eq = -1 !< Diagnostic identifier
   integer :: id_e_tide_sal = -1 !< Diagnostic identifier
