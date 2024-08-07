@@ -353,7 +353,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
       else
         !$OMP parallel do default(shared)
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-          za(i,j) = za(i,j) - e_sal(i,j)
+          za(i,j,1) = za(i,j,1) - e_sal(i,j)
         enddo ; enddo
       endif
     endif
