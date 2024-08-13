@@ -659,15 +659,18 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     endif
   endif
 
-  ! Calculate and add the tidal geopotential anomaly.
-  if (CS%tides) then
+  ! Tidal forcing (old answers)
+  ! Tidal geopotential anomaly is calculated and added as a correction to interface heights. This method may adversely
+  ! affect pressure calculation later on, which uses interface height. See the code after the PF[uv] calculation loop
+  ! for the preferred way to include tidal forcing. The code below is only for recovering old answers.
+  if (CS%tides .and. CS%tides_answer_date<=20240831) then ! 
     if (CS%tides_answer_date>20230630) then
       call calc_tidal_forcing(CS%Time, e_tide_eq, e_tide_sal, G, US, CS%tides_CSp)
-     !$OMP parallel do default(shared)
+      !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         e(i,j,nz+1) = e(i,j,nz+1) - (e_tide_eq(i,j) + e_tide_sal(i,j))
       enddo ; enddo
-    else  ! Old answers
+    else  ! Old answers (with a different order of summation)
       if (.not.CS%calculate_SAL) e_sal(:,:) = 0.0
       call calc_tidal_forcing_legacy(CS%Time, e_sal, e_sal_tide, e_tide_eq, e_tide_sal, &
                                      G, US, CS%tides_CSp)
@@ -888,6 +891,23 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     enddo
   endif
 
+  ! Tidal forcing (new answers)
+  ! Calculate tidal geopotential anomaly and add its gradient to pressure gradient force
+  if (CS%tides .and. CS%tides_answer_date>20240831) then
+    call calc_tidal_forcing(CS%Time, e_tide_eq, e_tide_sal, G, US, CS%tides_CSp)
+    !$OMP parallel do default(shared)
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        PFu(I,j,k) = PFu(I,j,k) + ((e_tide_eq(i+1,j) + e_tide_sal(i+1,j)) &
+          - (e_tide_eq(i,j) + e_tide_sal(i,j))) * GV%g_Earth * G%IdxCu(I,j)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        PFv(i,J,k) = PFv(i,J,k) + ((e_tide_eq(i,j+1) + e_tide_sal(i,j+1)) & 
+          - (e_tide_eq(i,j) + e_tide_sal(i,j))) * GV%g_Earth * G%IdyCv(i,J)
+      enddo ; enddo
+    enddo
+  endif
+
   if (present(pbce)) then
     call set_pbce_Bouss(e, tv_tmp, G, GV, US, CS%Rho0, CS%GFS_scale, pbce)
   endif
@@ -899,7 +919,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       eta(i,j) = e(i,j,1)*GV%Z_to_H
     enddo ; enddo
-    if (CS%tides) then
+    if (CS%tides .and. CS%tides_answer_date<=20240831) then
       if (CS%tides_answer_date>20230630) then
         !$OMP parallel do default(shared)
         do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1018,10 +1038,13 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
       "This sets the default value for the various _ANSWER_DATE parameters.", &
       default=99991231)
     call get_param(param_file, mdl, "TIDES_ANSWER_DATE", CS%tides_answer_date, &
-      "The vintage of self-attraction and loading (SAL) and tidal forcing calculations in "//&
-      "Boussinesq mode. Values below 20230701 recover the old answers in which the SAL is "//&
-      "part of the tidal forcing calculation.  The change is due to a reordered summation "//&
-      "and the difference is only at bit level.", default=20230630)
+      "The vintage of self-attraction and loading (SAL) and tidal forcing calculations.  "//&
+      "In Boussinesq mode, values below 20240814 recover old answers in wihch tidal "//&
+      "geopotential is added as a correction to interface height, which affect pressure "//&
+      "calculation.  Otherwise, tidal geopotential gradient is added to pressure forcings.  "//&
+      "In both Boussinesq and non-Boussinesq modes, values below 20230701 recover the old "//&
+      "answers in which the SAL is part of the tidal forcing calculation.  The change is due "//&
+      "to a reordered summation and the difference is only at bit level.", default=20230630)
   endif
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%tides)
