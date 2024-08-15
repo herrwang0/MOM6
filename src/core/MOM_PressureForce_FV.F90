@@ -972,7 +972,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         enddo ; enddo
       endif
     endif
-    if (CS%calculate_SAL .and. CS%bq_sal_tides_bug) then
+    if (CS%calculate_SAL .and. (CS%tides_answer_date>20230630) .and. CS%bq_sal_tides_bug) then
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         eta(i,j) = eta(i,j) + e_sal(i,j)*GV%Z_to_H
@@ -1089,10 +1089,10 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
                  default=(GV%Boussinesq .and. (CS%tides .or. CS%calculate_SAL) .and. &
                  (CS%tides_answer_date<=20230630)))
   if (CS%tides .and. CS%tides_answer_date<=20230630 .and. (.not.CS%bq_sal_tides_bug)) &
-    call MOM_error(FATAL, trim(mdl) // "PressureForce_FV_init: BQ_SAL_TIDES_BUG needs to be "//&
+    call MOM_error(FATAL, trim(mdl) // ", PressureForce_FV_init: BQ_SAL_TIDES_BUG needs to be "//&
                    "TRUE to recover tide answers before 20230630.")
   if ((.not.CS%sal_use_ssh) .and. CS%bq_sal_tides_bug) &
-    call MOM_error(WARNING, trim(mdl) // "PressureForce_FV_init: BQ_SAL_TIDES_BUG=True is "//&
+    call MOM_error(WARNING, trim(mdl) // ", PressureForce_FV_init: BQ_SAL_TIDES_BUG=True is "//&
                    "not compatible to sal_use_ssh=False.")
   call get_param(param_file, "MOM", "USE_REGRIDDING", use_ALE, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
