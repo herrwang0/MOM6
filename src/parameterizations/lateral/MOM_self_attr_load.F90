@@ -193,9 +193,9 @@ subroutine SAL_init(G, GV, US, param_file, CS)
   character(len=200) :: filename, pbot_ref_file, inputdir ! Strings for file/path
   character(len=200) :: pbot_ref_varname                  ! Variable name in file
 
-  logical :: calculate_sal
-  logical :: tides, use_tidal_sal_file
-  integer :: tides_answer_date ! Recover old answers with tides
+  logical :: calculate_sal=.false.
+  logical :: tides=.false., use_tidal_sal_file=.false., bq_sal_tides_bug=.false.
+  integer :: tides_answer_date=99991203 ! Recover old answers with tides
   real :: sal_scalar_value, tide_sal_scalar_value ! Scaling SAL factors [nondim]
 
   integer :: isd, ied, jsd, jed
@@ -206,8 +206,7 @@ subroutine SAL_init(G, GV, US, param_file, CS)
   call log_version(param_file, mdl, version, "")
 
   call get_param(param_file, '', "TIDES", tides, default=.false., do_not_log=.True.)
-  call get_param(param_file, mdl, "CALCULATE_SAL", calculate_sal, "If true, calculate "//&
-                 " self-attraction and loading.", default=tides, do_not_log=.True.)
+  call get_param(param_file, '', "CALCULATE_SAL", calculate_sal, default=tides, do_not_log=.True.)
   if (.not. calculate_sal) return
 
   if (tides) then
@@ -230,16 +229,19 @@ subroutine SAL_init(G, GV, US, param_file, CS)
                    "Reference bottom pressure file used by self-attraction and loading (SAL).", &
                    default="pbot.nc")
     call get_param(param_file, mdl, "REF_BOT_PRES_VARNAME", pbot_ref_varname, &
-                   "The name of the variable in REF_BOT_PRES_FILE with reference bottom pressure. "//&
-                   "The variable should have the unit of Pa.", &
+                   "The name of the variable in REF_BOT_PRES_FILE with reference bottom "//&
+                   "pressure.  The variable should have the unit of Pa.", &
                    default="pbot")
     filename = trim(inputdir)//trim(pbot_ref_file)
     call log_param(param_file, mdl, "INPUTDIR/REF_BOT_PRES_FILE", filename)
 
     allocate(CS%pbot_ref(isd:ied, jsd:jed), source=0.0)
-    call MOM_read_data(filename, trim(pbot_ref_varname), CS%pbot_ref, G%Domain, scale=US%Pa_to_RL2_T2)
+    call MOM_read_data(filename, trim(pbot_ref_varname), CS%pbot_ref, G%Domain,&
+                       scale=US%Pa_to_RL2_T2)
     call pass_var(CS%pbot_ref, G%Domain)
   endif
+  if (tides_answer_date<=20230630 .and. (.not.CS%input_ssh)) &
+    call MOM_error(FATAL, "SAL_USE_SSH needs to be TRUE to recover tide answers before 20230630.")
   call get_param(param_file, mdl, "SAL_SCALAR_APPROX", CS%use_sal_scalar, &
                  "If true, use the scalar approximation to calculate self-attraction and "//&
                  "loading.", default=tides .and. (.not. use_tidal_sal_file))
@@ -266,11 +268,14 @@ subroutine SAL_init(G, GV, US, param_file, CS)
                  "The mean solid earth density.  This is used for calculating the "// &
                  "self-attraction and loading term.", units="kg m-3", &
                  default=5517.0, scale=US%kg_m3_to_R, do_not_log=(.not. CS%use_sal_sht))
-
-  ! Boussinesq or old tide answer -> height, non-Boussinesq -> geopotential
-  if (GV%Boussinesq) then ; CS%output_potential = .false.
-  else ; CS%output_potential = .true. ; endif
-  if ((tides_answer_date<=20230630) .and. GV%semi_Boussinesq) CS%output_potential = .false.
+  call get_param(param_file, '', "BQ_SAL_TIDES_BUG", bq_sal_tides_bug, &
+                 default=(GV%Boussinesq .and. (tides_answer_date<=20230630)), do_not_log=.true.)
+  ! ! Boussinesq or old tide answer -> height, non-Boussinesq -> geopotential
+  ! if (GV%Boussinesq) then ; CS%output_potential = .false.
+  ! else ; CS%output_potential = .true. ; endif
+  CS%output_potential = .true. 
+  if ((tides .and. (tides_answer_date<=20230630) .and. (GV%semi_Boussinesq)) &
+      .or. BQ_SAL_TIDES_BUG) CS%output_potential = .false.
 
   ! Unit conversion
   if (CS%input_ssh .and. CS%output_potential) then ; CS%unit_convert = GV%g_Earth 
