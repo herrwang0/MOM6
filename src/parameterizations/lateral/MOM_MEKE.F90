@@ -253,17 +253,17 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
   case(EKE_PROG)
     if (CS%debug) then
       if (allocated(MEKE%mom_src)) &
-        call hchksum(MEKE%mom_src, 'MEKE mom_src', G%HI, scale=US%RZ3_T3_to_W_m2*US%L_to_Z**2)
+        call hchksum(MEKE%mom_src, 'MEKE mom_src', G%HI, unscale=US%RZ3_T3_to_W_m2*US%L_to_Z**2)
       if (allocated(MEKE%GME_snk)) &
-        call hchksum(MEKE%GME_snk, 'MEKE GME_snk', G%HI, scale=US%RZ3_T3_to_W_m2*US%L_to_Z**2)
+        call hchksum(MEKE%GME_snk, 'MEKE GME_snk', G%HI, unscale=US%RZ3_T3_to_W_m2*US%L_to_Z**2)
       if (allocated(MEKE%GM_src)) &
-        call hchksum(MEKE%GM_src, 'MEKE GM_src', G%HI, scale=US%RZ3_T3_to_W_m2*US%L_to_Z**2)
+        call hchksum(MEKE%GM_src, 'MEKE GM_src', G%HI, unscale=US%RZ3_T3_to_W_m2*US%L_to_Z**2)
       if (allocated(MEKE%MEKE)) &
-        call hchksum(MEKE%MEKE, 'MEKE MEKE', G%HI, scale=US%L_T_to_m_s**2)
-      call uvchksum("MEKE SN_[uv]", SN_u, SN_v, G%HI, scale=US%s_to_T, &
+        call hchksum(MEKE%MEKE, 'MEKE MEKE', G%HI, unscale=US%L_T_to_m_s**2)
+      call uvchksum("MEKE SN_[uv]", SN_u, SN_v, G%HI, unscale=US%s_to_T, &
                     scalar_pair=.true.)
       call uvchksum("MEKE h[uv]", hu, hv, G%HI, haloshift=0, symmetric=.true., &
-                    scale=GV%H_to_m*(US%L_to_m**2))
+                    unscale=GV%H_to_m*US%L_to_m**2)
     endif
 
     sdt = dt*CS%MEKE_dtScale ! Scaled dt to use for time-stepping
@@ -375,12 +375,12 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
     if (CS%debug) then
       if (CS%visc_drag) &
         call uvchksum("MEKE drag_vel_[uv]", drag_vel_u, drag_vel_v, G%HI, &
-                      scale=GV%H_to_mks*US%s_to_T, scalar_pair=.true.)
-      call hchksum(mass, 'MEKE mass',G%HI,haloshift=1, scale=US%RZ_to_kg_m2)
-      call hchksum(drag_rate_visc, 'MEKE drag_rate_visc', G%HI, scale=GV%H_to_mks*US%s_to_T)
+                      unscale=GV%H_to_mks*US%s_to_T, scalar_pair=.true.)
+      call hchksum(mass, 'MEKE mass',G%HI,haloshift=1, unscale=US%RZ_to_kg_m2)
+      call hchksum(drag_rate_visc, 'MEKE drag_rate_visc', G%HI, unscale=GV%H_to_mks*US%s_to_T)
       call hchksum(bottomFac2, 'MEKE bottomFac2', G%HI)
       call hchksum(barotrFac2, 'MEKE barotrFac2', G%HI)
-      call hchksum(LmixScale, 'MEKE LmixScale', G%HI,scale=US%L_to_m)
+      call hchksum(LmixScale, 'MEKE LmixScale', G%HI, unscale=US%L_to_m)
     endif
 
     ! Aggregate sources of MEKE (background, frictional and GM)
@@ -427,7 +427,7 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
     endif
 
     if (CS%debug) then
-      call hchksum(src, "MEKE src", G%HI, haloshift=0, scale=US%L_to_m**2*US%s_to_T**3)
+      call hchksum(src, "MEKE src", G%HI, haloshift=0, unscale=US%L_to_m**2*US%s_to_T**3)
     endif
 
     ! Increase EKE by a full time-steps worth of source
@@ -630,7 +630,7 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
     endif ! MEKE_KH>=0
 
     if (CS%debug) then
-      call hchksum(MEKE%MEKE, "MEKE post-update MEKE", G%HI, haloshift=0, scale=US%L_T_to_m_s**2)
+      call hchksum(MEKE%MEKE, "MEKE post-update MEKE", G%HI, haloshift=0, unscale=US%L_T_to_m_s**2)
     endif
 
   case(EKE_FILE)
@@ -643,7 +643,7 @@ subroutine step_forward_MEKE(MEKE, h, SN_u, SN_v, visc, dt, G, GV, US, CS, hu, h
     call pass_vector(u, v, G%Domain)
     call MEKE_lengthScales(CS, MEKE, G, GV, US, SN_u, SN_v, MEKE%MEKE, depth_tot, bottomFac2, barotrFac2, LmixScale)
     call ML_MEKE_calculate_features(G, GV, US, CS, MEKE%Rd_dx_h, u, v, tv, h, dt, features_array)
-    call predict_meke(G, CS, SIZE(h), Time, features_array, MEKE%MEKE)
+    call predict_MEKE(G, CS, SIZE(h), Time, features_array, MEKE%MEKE)
   case default
     call MOM_error(FATAL,"Invalid method specified for calculating EKE")
   end select
@@ -1665,12 +1665,14 @@ subroutine predict_MEKE(G, CS, npts, Time, features_array, MEKE)
   type(time_type),                                       intent(in   ) :: Time !< The current model time
   real(kind=real32), dimension(npts,num_features),       intent(in   ) :: features_array
                                                                           !< The array of features needed for machine
-                                                                          !! learning inference
+                                                                          !! learning inference, with different units
+                                                                          !! for the various subarrays [various]
   real, dimension(SZI_(G),SZJ_(G)),                      intent(  out) :: MEKE !< Eddy kinetic energy [L2 T-2 ~> m2 s-2]
   integer :: db_return_code
   character(len=255), dimension(1) :: model_out, model_in
   character(len=255) :: time_suffix
-  real(kind=real32), dimension(SIZE(MEKE)) :: MEKE_vec
+  real(kind=real32), dimension(SIZE(MEKE)) :: MEKE_vec ! A one-dimensional array of eddy kinetic
+                                                       ! energy [L2 T-2 ~> m2 s-2]
 
   integer :: i, j, is, ie, js, je
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
@@ -1692,6 +1694,8 @@ subroutine predict_MEKE(G, CS, npts, Time, features_array, MEKE)
   db_return_code = CS%client%unpack_tensor( model_out(1), MEKE_vec, shape(MEKE_vec) )
   call cpu_clock_end(CS%id_unpack_tensor)
 
+  !### Does MEKE_vec need to be rescaled from [m2 s-2] to [L2 T-2 ~> m2 s-2] by
+  !    multiplying MEKE_vec by US%m_s_to_L_T**2 here?
   MEKE = reshape(MEKE_vec, shape(MEKE))
   do j=js,je; do i=is,ie
     MEKE(i,j) = MIN(MAX(exp(MEKE(i,j)),0.),CS%eke_max)
@@ -1888,7 +1892,7 @@ end subroutine MEKE_end
 !! \f$ U_b \f$ is a constant background bottom velocity scale and is
 !! typically not used (i.e. set to zero).
 !!
-!! Following Jansen et al., 2015, the projection of eddy energy on to the bottom
+!! Following \cite jansen2015, the projection of eddy energy on to the bottom
 !! is given by the ratio of bottom energy to column mean energy:
 !! \f[
 !! \gamma_b^2  = \frac{E_b}{E} = \gamma_{d0}
@@ -1920,12 +1924,12 @@ end subroutine MEKE_end
 !! \f[  \kappa_M = \gamma_\kappa \sqrt{ \gamma_t^2 U_e^2 A_\Delta } \f]
 !!
 !! where \f$ A_\Delta \f$ is the area of the grid cell.
-!! Following Jansen et al., 2015, we now use
+!! Following \cite jansen2015, we now use
 !!
 !! \f[  \kappa_M = \gamma_\kappa l_M \sqrt{ \gamma_t^2 U_e^2 } \f]
 !!
 !! where \f$ \gamma_\kappa \in [0,1] \f$ is a non-dimensional factor and,
-!! following Jansen et al., 2015, \f$\gamma_t^2\f$ is the ratio of barotropic
+!! following \cite jansen2015, \f$\gamma_t^2\f$ is the ratio of barotropic
 !! eddy energy to column mean eddy energy given by
 !! \f[
 !! \gamma_t^2  = \frac{E_t}{E} = \left( 1 + c_{t} \frac{L_d}{L_f} \right)^{-\frac{1}{4}}

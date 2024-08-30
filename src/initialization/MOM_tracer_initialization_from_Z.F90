@@ -96,6 +96,7 @@ subroutine MOM_initialize_tracer_from_Z(h, tr, G, GV, US, PF, src_file, src_var_
                                   ! remapping cell reconstructions [Z ~> m]
   real :: dz_neglect_edge         ! A negligibly small vertical layer extent used in
                                   ! remapping edge value calculations [Z ~> m]
+  logical :: om4_remap_via_sub_cells ! If true, use the OM4 remapping algorithm
   integer :: nPoints    ! The number of valid input data points in a column
   integer :: id_clock_routine, id_clock_ALE
   integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags.
@@ -137,6 +138,10 @@ subroutine MOM_initialize_tracer_from_Z(h, tr, G, GV, US, PF, src_file, src_var_
                  "that were in use at the end of 2018.  Higher values result in the use of more "//&
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date, do_not_log=.not.GV%Boussinesq)
+    call get_param(PF, mdl, "Z_INIT_REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
+                 "If true, use the OM4 remapping-via-subcells algorithm for initialization. "//&
+                 "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
+                 "We recommend setting this option to false.", default=.true.)
     if (.not.GV%Boussinesq) remap_answer_date = max(remap_answer_date, 20230701)
   endif
   call get_param(PF, mdl, "HOR_REGRID_ANSWER_DATE", hor_regrid_answer_date, &
@@ -174,7 +179,8 @@ subroutine MOM_initialize_tracer_from_Z(h, tr, G, GV, US, PF, src_file, src_var_
     allocate( dzSrc(isd:ied,jsd:jed,kd) )
     allocate( hSrc(isd:ied,jsd:jed,kd) )
     ! Set parameters for reconstructions
-    call initialize_remapping( remapCS, remapScheme, boundary_extrapolation=.false., answer_date=remap_answer_date )
+    call initialize_remapping( remapCS, remapScheme, boundary_extrapolation=.false., &
+                               om4_remap_via_sub_cells=om4_remap_via_sub_cells, answer_date=remap_answer_date )
     ! Next we initialize the regridding package so that it knows about the target grid
 
     do j = js, je ; do i = is, ie
@@ -200,8 +206,10 @@ subroutine MOM_initialize_tracer_from_Z(h, tr, G, GV, US, PF, src_file, src_var_
     enddo ; enddo
 
     if (h_is_in_Z_units) then
+      ! Because h is in units of [Z ~> m], dzSrc is already in the right units, but we need to
+      ! specify negligible thickness values with the right units.
       dz_neglect = set_dz_neglect(GV, US, remap_answer_date, dz_neglect_edge)
-      call ALE_remap_scalar(remapCS, G, GV, kd, hSrc, tr_z, h, tr, all_cells=.false., answer_date=remap_answer_date, &
+      call ALE_remap_scalar(remapCS, G, GV, kd, dzSrc, tr_z, h, tr, all_cells=.false., answer_date=remap_answer_date, &
                             H_neglect=dz_neglect, H_neglect_edge=dz_neglect_edge)
     else
       ! Equation of state data is not available, so a simpler rescaling will have to suffice,

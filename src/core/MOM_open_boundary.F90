@@ -441,6 +441,7 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   real               :: Lscale_in, Lscale_out ! parameters controlling tracer values at the boundaries [L ~> m]
   integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags.
   logical :: check_reconstruction, check_remapping, force_bounds_in_subcell
+  logical :: om4_remap_via_sub_cells ! If true, use the OM4 remapping algorithm
   character(len=64)  :: remappingScheme
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
@@ -695,10 +696,15 @@ subroutine open_boundary_config(G, US, param_file, OBC)
                  "that were in use at the end of 2018.  Higher values result in the use of more "//&
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date)
+    call get_param(param_file, mdl, "OBC_REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
+                 "If true, use the OM4 remapping-via-subcells algorithm for neutral diffusion. "//&
+                 "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
+                 "We recommend setting this option to false.", default=.true.)
 
     allocate(OBC%remap_CS)
     call initialize_remapping(OBC%remap_CS, remappingScheme, boundary_extrapolation = .false., &
                check_reconstruction=check_reconstruction, check_remapping=check_remapping, &
+               om4_remap_via_sub_cells=om4_remap_via_sub_cells, &
                force_bounds_in_subcell=force_bounds_in_subcell, answer_date=OBC%remap_answer_date)
 
   endif ! OBC%number_of_segments > 0
@@ -3312,22 +3318,22 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
     sym = G%Domain%symmetric
     if (OBC%radiation_BCs_exist_globally) then
       call uvchksum("radiation_OBCs: OBC%r[xy]_normal", OBC%rx_normal, OBC%ry_normal, G%HI, &
-                  haloshift=0, symmetric=sym, scale=1.0)
+                  haloshift=0, symmetric=sym, unscale=1.0)
     endif
     if (OBC%oblique_BCs_exist_globally) then
       call uvchksum("radiation_OBCs: OBC%r[xy]_oblique_[uv]", OBC%rx_oblique_u, OBC%ry_oblique_v, G%HI, &
-                  haloshift=0, symmetric=sym, scale=1.0/US%L_T_to_m_s**2)
+                  haloshift=0, symmetric=sym, unscale=1.0/US%L_T_to_m_s**2)
       call uvchksum("radiation_OBCs: OBC%r[yx]_oblique_[uv]", OBC%ry_oblique_u, OBC%rx_oblique_v, G%HI, &
-                  haloshift=0, symmetric=sym, scale=1.0/US%L_T_to_m_s**2)
+                  haloshift=0, symmetric=sym, unscale=1.0/US%L_T_to_m_s**2)
       call uvchksum("radiation_OBCs: OBC%cff_normal_[uv]", OBC%cff_normal_u, OBC%cff_normal_v, G%HI, &
-                  haloshift=0, symmetric=sym, scale=1.0/US%L_T_to_m_s**2)
+                  haloshift=0, symmetric=sym, unscale=1.0/US%L_T_to_m_s**2)
     endif
     if (OBC%ntr == 0) return
     if (.not. allocated (OBC%tres_x) .or. .not. allocated (OBC%tres_y)) return
     do m=1,OBC%ntr
       write(var_num,'(I3.3)') m
       call uvchksum("radiation_OBCs: OBC%tres_[xy]_"//var_num, OBC%tres_x(:,:,:,m), OBC%tres_y(:,:,:,m), G%HI, &
-                    haloshift=0, symmetric=sym, scale=1.0)
+                    haloshift=0, symmetric=sym, unscale=1.0)
     enddo
   endif
 
@@ -5028,7 +5034,7 @@ subroutine mask_outside_OBCs(G, US, param_file, OBC)
   integer, parameter :: cin = 3, cout = 4, cland = -1, cedge = -2
   character(len=256) :: mesg    ! Message for error messages.
   real, allocatable, dimension(:,:) :: color, color2  ! For sorting inside from outside,
-                                                      ! two different ways
+                                                      ! two different ways [nondim]
 
   if (.not. associated(OBC)) return
 
@@ -5136,7 +5142,7 @@ end subroutine mask_outside_OBCs
 !> flood the cin, cout values
 subroutine flood_fill(G, color, cin, cout, cland)
   type(dyn_horgrid_type), intent(inout) :: G      !< Ocean grid structure
-  real, dimension(:,:),   intent(inout) :: color  !< For sorting inside from outside
+  real, dimension(:,:),   intent(inout) :: color  !< For sorting inside from outside [nondim]
   integer, intent(in) :: cin    !< color for inside the domain
   integer, intent(in) :: cout   !< color for outside the domain
   integer, intent(in) :: cland  !< color for inside the land mask
@@ -5196,7 +5202,7 @@ end subroutine flood_fill
 !> flood the cin, cout values
 subroutine flood_fill2(G, color, cin, cout, cland)
   type(dyn_horgrid_type), intent(inout) :: G       !< Ocean grid structure
-  real, dimension(:,:),   intent(inout) :: color   !< For sorting inside from outside
+  real, dimension(:,:),   intent(inout) :: color   !< For sorting inside from outside [nondim]
   integer, intent(in) :: cin    !< color for inside the domain
   integer, intent(in) :: cout   !< color for outside the domain
   integer, intent(in) :: cland  !< color for inside the land mask
@@ -5394,7 +5400,10 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, dt, Reg)
                           ! For salinity the units would be [ppt S-1 ~> 1]
   integer :: i, j, k, m, n, ntr, nz, ntr_id, fd_id
   integer :: ishift, idir, jshift, jdir
-  real :: resrv_lfac_out, resrv_lfac_in
+  real :: resrv_lfac_out  ! The reservoir inverse length scale scaling factor for the outward
+                          ! direction per field [nondim]
+  real :: resrv_lfac_in   ! The reservoir inverse length scale scaling factor for the inward
+                          ! direction per field [nondim]
   real :: b_in, b_out     ! The 0 and 1 switch for tracer reservoirs
                           ! 1 if the length scale of reservoir is zero [nondim]
   real :: a_in, a_out     ! The 0 and 1(-1) switch for reservoir source weights

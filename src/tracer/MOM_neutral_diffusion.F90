@@ -20,6 +20,7 @@ use MOM_remapping,             only : extract_member_remapping_CS, build_reconst
 use MOM_remapping,             only : average_value_ppoly, remappingSchemesDoc, remappingDefaultScheme
 use MOM_tracer_registry,       only : tracer_registry_type, tracer_type
 use MOM_unit_scaling,          only : unit_scale_type
+use MOM_variables,             only : vertvisc_type
 use MOM_verticalGrid,          only : verticalGrid_type
 use polynomial_functions,      only : evaluation_polynomial, first_derivative_polynomial
 use PPM_functions,             only : PPM_reconstruction, PPM_boundary_extrapolation
@@ -142,7 +143,7 @@ logical function neutral_diffusion_init(Time, G, GV, US, param_file, diag, EOS, 
   type(diag_ctrl), target,    intent(inout) :: diag       !< Diagnostics control structure
   type(param_file_type),      intent(in)    :: param_file !< Parameter file structure
   type(EOS_type),  target,    intent(in)    :: EOS        !< Equation of state
-  type(diabatic_CS),          pointer       :: diabatic_CSp!< KPP control structure needed to get BLD
+  type(diabatic_CS),          pointer       :: diabatic_CSp!< diabatic control structure needed to get BLD
   type(neutral_diffusion_CS), pointer       :: CS         !< Neutral diffusion control structure
 
   ! Local variables
@@ -151,6 +152,7 @@ logical function neutral_diffusion_init(Time, G, GV, US, param_file, diag, EOS, 
   logical :: debug                ! If true, write verbose checksums for debugging purposes.
   logical :: boundary_extrap      ! Indicate whether high-order boundary
                                   !! extrapolation should be used within boundary cells.
+  logical :: om4_remap_via_sub_cells ! If true, use the OM4 remapping algorithm
 
   if (associated(CS)) then
     call MOM_error(FATAL, "neutral_diffusion_init called with associated control structure.")
@@ -231,8 +233,13 @@ logical function neutral_diffusion_init(Time, G, GV, US, param_file, diag, EOS, 
                  "that were in use at the end of 2018.  Higher values result in the use of more "//&
                  "robust and accurate forms of mathematically equivalent expressions.", &
                  default=default_answer_date, do_not_log=.not.GV%Boussinesq)
+    call get_param(param_file, mdl, "NDIFF_REMAPPING_USE_OM4_SUBCELLS", om4_remap_via_sub_cells, &
+                 "If true, use the OM4 remapping-via-subcells algorithm for neutral diffusion. "//&
+                 "See REMAPPING_USE_OM4_SUBCELLS for more details. "//&
+                 "We recommend setting this option to false.", default=.true.)
     if (.not.GV%Boussinesq) CS%remap_answer_date = max(CS%remap_answer_date, 20230701)
     call initialize_remapping( CS%remap_CS, string, boundary_extrapolation=boundary_extrap, &
+                               om4_remap_via_sub_cells=om4_remap_via_sub_cells, &
                                answer_date=CS%remap_answer_date )
     call extract_member_remapping_CS(CS%remap_CS, degree=CS%deg)
     call get_param(param_file, mdl, "NEUTRAL_POS_METHOD", CS%neutral_pos_method,   &
@@ -333,13 +340,15 @@ end function neutral_diffusion_init
 
 !> Calculate remapping factors for u/v columns used to map adjoining columns to
 !! a shared coordinate space.
-subroutine neutral_diffusion_calc_coeffs(G, GV, US, h, T, S, CS, p_surf)
+subroutine neutral_diffusion_calc_coeffs(G, GV, US, h, T, S, visc, CS, p_surf)
   type(ocean_grid_type),                     intent(in) :: G   !< Ocean grid structure
   type(verticalGrid_type),                   intent(in) :: GV  !< ocean vertical grid structure
   type(unit_scale_type),                     intent(in) :: US  !< A dimensional unit scaling type
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in) :: h   !< Layer thickness [H ~> m or kg m-2]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in) :: T   !< Potential temperature [C ~> degC]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in) :: S   !< Salinity [S ~> ppt]
+  type(vertvisc_type),                       intent(in) :: visc !< Structure with vertical viscosities,
+                                                               !! boundary layer properties and related fields
   type(neutral_diffusion_CS),                pointer    :: CS  !< Neutral diffusion control structure
   real, dimension(SZI_(G),SZJ_(G)), optional, intent(in) :: p_surf !< Surface pressure to include in pressures used
                                                               !! for equation of state calculations [R L2 T-2 ~> Pa]
@@ -369,10 +378,13 @@ subroutine neutral_diffusion_calc_coeffs(G, GV, US, h, T, S, CS, p_surf)
 
   ! Check if hbl needs to be extracted
   if (CS%interior_only) then
-    if (ASSOCIATED(CS%KPP_CSp)) call KPP_get_BLD(CS%KPP_CSp, CS%hbl, G, US, m_to_BLD_units=GV%m_to_H)
-    if (ASSOCIATED(CS%energetic_PBL_CSp)) call energetic_PBL_get_MLD(CS%energetic_PBL_CSp, CS%hbl, G, US, &
-                                                                     m_to_MLD_units=GV%m_to_H)
-    call pass_var(CS%hbl,G%Domain)
+    if (associated(visc%h_ML)) then
+      CS%hbl(:,:) = visc%h_ML(:,:)
+    else
+      call MOM_error(FATAL, "hor_bnd_diffusion requires that visc%h_ML is associated.")
+    endif
+    call pass_var(CS%hbl, G%Domain, halo=1)
+
     ! get k-indices and zeta
     do j=G%jsc-1, G%jec+1 ; do i=G%isc-1,G%iec+1
       if (G%mask2dT(i,j) > 0.0) then
@@ -1023,7 +1035,8 @@ subroutine compute_tapering_coeffs(ne, bld_l, bld_r, coeff_l, coeff_r, h_l, h_r)
   real, dimension(ne),   intent(inout) :: coeff_r  !< Tapering coefficient, right column           [nondim]
 
   ! Local variables
-  real :: min_bld, max_bld                       ! Min/Max boundary layer depth in two adjacent columns
+  real :: min_bld         ! Minimum of the boundary layer depth in two adjacent columns [H ~> m or kg m-2]
+  real :: max_bld         ! Maximum of the boundary layer depth in two adjacent columns [H ~> m or kg m-2]
   integer :: dummy1                              ! dummy integer
   real    :: dummy2                              ! dummy real [nondim]
   integer :: k_min_l, k_min_r, k_max_l, k_max_r  ! Min/max vertical indices in two adjacent columns
@@ -1561,34 +1574,39 @@ real function interpolate_for_nondim_position(dRhoNeg, Pneg, dRhoPos, Ppos)
 
   character(len=120) :: mesg
 
-  if (Ppos < Pneg) then
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! Ppos<Pneg')
-  elseif (dRhoNeg>dRhoPos) then
-    write(stderr,*) 'dRhoNeg, Pneg, dRhoPos, Ppos=',dRhoNeg, Pneg, dRhoPos, Ppos
-    write(mesg,*) 'dRhoNeg, Pneg, dRhoPos, Ppos=', dRhoNeg, Pneg, dRhoPos, Ppos
-    call MOM_error(WARNING, 'interpolate_for_nondim_position: '//trim(mesg))
-  elseif (dRhoNeg>dRhoPos) then !### Does this duplicated test belong here?
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! dRhoNeg>dRhoPos')
-  endif
-  if (Ppos<=Pneg) then ! Handle vanished or inverted layers
-    interpolate_for_nondim_position = 0.5
-  elseif ( dRhoPos - dRhoNeg > 0. ) then
-    interpolate_for_nondim_position = min( 1., max( 0., -dRhoNeg / ( dRhoPos - dRhoNeg ) ) )
-  elseif ( dRhoPos - dRhoNeg == 0) then
-    if (dRhoNeg>0.) then
-      interpolate_for_nondim_position = 0.
-    elseif (dRhoNeg<0.) then
-      interpolate_for_nondim_position = 1.
-    else ! dRhoPos = dRhoNeg = 0
+  if ((Ppos > Pneg) .and. (dRhoPos - dRhoNeg >= 0. )) then
+    if ( dRhoPos - dRhoNeg > 0. ) then
+      interpolate_for_nondim_position = min( 1., max( 0., -dRhoNeg / ( dRhoPos - dRhoNeg ) ) )
+    elseif (dRhoPos - dRhoNeg == 0) then
+      if (dRhoNeg > 0.) then
+        interpolate_for_nondim_position = 0.
+      elseif (dRhoNeg < 0.) then
+        interpolate_for_nondim_position = 1.
+      else ! dRhoPos = dRhoNeg = 0
+        interpolate_for_nondim_position = 0.5
+      endif
+    else ! dRhoPos - dRhoNeg < 0
       interpolate_for_nondim_position = 0.5
     endif
-  else ! dRhoPos - dRhoNeg < 0
+  elseif (Ppos == Pneg) then ! Handle vanished or inverted layers
     interpolate_for_nondim_position = 0.5
+  else ! ((Ppos < Pneg) .or. (dRhoNeg > dRhoPos) )
+    ! Error handling for problematic cases.  It is expected that this should never occur.
+    write(mesg,*) 'dRhoNeg, Pneg, dRhoPos, Ppos', dRhoNeg, Pneg, dRhoPos, Ppos
+    call MOM_error(WARNING, 'interpolate_for_nondim_position: '//trim(mesg))
+    !  write(stderr,*) trim(mesg)
+    if ((Ppos < Pneg) .and. (dRhoNeg > dRhoPos)) then
+      mesg = '(Ppos < Pneg) and (dRhoNeg > dRhoPos)'
+    elseif (Ppos < Pneg) then
+      mesg = 'Ppos < Pneg'
+    elseif (dRhoNeg > dRhoPos) then
+      mesg = trim(mesg)//'; dRhoNeg > dRhoPos'
+    else  ! This should never happen.
+      mesg = 'Unexpected failure.'
+    endif
+    call MOM_error(FATAL, 'interpolate_for_nondim_position: '//trim(mesg))
   endif
-  if ( interpolate_for_nondim_position < 0. ) &
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! Pint < Pneg')
-  if ( interpolate_for_nondim_position > 1. ) &
-    call MOM_error(FATAL, 'interpolate_for_nondim_position: Houston, we have a problem! Pint > Ppos')
+
 end function interpolate_for_nondim_position
 
 !> Higher order version of find_neutral_surface_positions. Returns positions within left/right columns

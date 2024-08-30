@@ -19,6 +19,7 @@ implicit none ; private
 
 public find_eta, dz_to_thickness, thickness_to_dz, dz_to_thickness_simple
 public calc_derived_thermo
+public convert_MLD_to_ML_thickness
 public find_rho_bottom, find_col_avg_SpV
 
 !> Calculates the heights of the free surface or all interfaces from layer thicknesses.
@@ -306,11 +307,11 @@ subroutine calc_derived_thermo(tv, h, G, GV, US, halo, debug)
     tv%valid_SpV_halo = halos
 
     if (do_debug) then
-      call hchksum(h, "derived_thermo h", G%HI, haloshift=halos, scale=GV%H_to_MKS)
+      call hchksum(h, "derived_thermo h", G%HI, haloshift=halos, unscale=GV%H_to_MKS)
       if (associated(tv%p_surf)) call hchksum(tv%p_surf, "derived_thermo p_surf", G%HI, &
-                                              haloshift=halos, scale=US%RL2_T2_to_Pa)
-      call hchksum(tv%T, "derived_thermo T", G%HI, haloshift=halos, scale=US%C_to_degC)
-      call hchksum(tv%S, "derived_thermo S", G%HI, haloshift=halos, scale=US%S_to_ppt)
+                                              haloshift=halos, unscale=US%RL2_T2_to_Pa)
+      call hchksum(tv%T, "derived_thermo T", G%HI, haloshift=halos, unscale=US%C_to_degC)
+      call hchksum(tv%S, "derived_thermo S", G%HI, haloshift=halos, unscale=US%S_to_ppt)
     endif
   elseif (allocated(tv%Spv_avg)) then
     do k=1,nz ; SpV_lay(k) = 1.0 / GV%Rlay(k) ; enddo
@@ -823,5 +824,70 @@ subroutine thickness_to_dz_jslice(h, tv, dz, j, G, GV, halo_size)
   endif
 
 end subroutine thickness_to_dz_jslice
+
+
+!> Convert mixed layer depths in height units into the thickness of water in the mixed
+!! in thickness units.
+subroutine convert_MLD_to_ML_thickness(MLD_in, h, h_MLD, tv, G, GV, halo)
+  type(ocean_grid_type),   intent(in)    :: G  !< The ocean's grid structure
+  type(verticalGrid_type), intent(in)    :: GV !< The ocean's vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G)), &
+                           intent(in)    :: MLD_in !< Input mixed layer depth [Z ~> m].
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                           intent(in)    :: h  !< Layer thicknesses [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G)), &
+                           intent(out)   :: h_MLD !< Thickness of water in the mixed layer [H ~> m or kg m-2]
+  type(thermo_var_ptrs),   intent(in)    :: tv !< Structure containing pointers to any available
+                                               !! thermodynamic fields.
+  integer,       optional, intent(in)    :: halo !< Halo width over which to calculate frazil
+
+  ! Local variables
+  real :: MLD_rem(SZI_(G)) ! The vertical extent of the MLD_in that has not yet been accounted for [Z ~> m]
+  character(len=128) :: mesg    ! A string for error messages
+  logical :: keep_going
+  integer :: i, j, k, is, ie, js, je, nz, halos
+
+  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
+
+  halos = 0 ; if (present(halo)) halos = halo
+  if (present(halo)) then
+    is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo
+  endif
+
+  if (GV%Boussinesq .or. (.not.allocated(tv%SpV_avg))) then
+    do j=js,je ; do i=is,ie
+      h_MLD(i,j) = GV%Z_to_H * MLD_in(i,j)
+    enddo ; enddo
+  else  ! The fully non-Boussinesq conversion between height in MLD_in and thickness.
+    if ((allocated(tv%SpV_avg)) .and. (tv%valid_SpV_halo < halos)) then
+      if (tv%valid_SpV_halo < 0) then
+        mesg = "invalid values of SpV_avg."
+      else
+        write(mesg, '("insufficiently large SpV_avg halos of width ", i2, " but ", i2," is needed.")') &
+                     tv%valid_SpV_halo, halos
+      endif
+      call MOM_error(FATAL, "convert_MLD_to_ML_thickness called in fully non-Boussinesq mode with "//trim(mesg))
+    endif
+
+    do j=js,je
+      do i=is,ie ; MLD_rem(i) = MLD_in(i,j) ; h_MLD(i,j) = 0.0 ; enddo
+      do k=1,nz
+        keep_going = .false.
+        do i=is,ie ; if (MLD_rem(i) > 0.0) then
+          if (MLD_rem(i) > GV%H_to_RZ * h(i,j,k) * tv%SpV_avg(i,j,k)) then
+            h_MLD(i,j) = h_MLD(i,j) + h(i,j,k)
+            MLD_rem(i) = MLD_rem(i) - GV%H_to_RZ * h(i,j,k) * tv%SpV_avg(i,j,k)
+            keep_going = .true.
+          else
+            h_MLD(i,j) = h_MLD(i,j) + GV%RZ_to_H * MLD_rem(i) / tv%SpV_avg(i,j,k)
+            MLD_rem(i) = 0.0
+          endif
+        endif ; enddo
+        if (.not.keep_going) exit
+      enddo
+    enddo
+  endif
+
+end subroutine convert_MLD_to_ML_thickness
 
 end module MOM_interface_heights
