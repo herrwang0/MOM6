@@ -1709,7 +1709,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   ! To be consistent with old runs, tidal forcing diagnostic also includes total SAL.
   ! New diagnostics are given for each individual field.
-  if (CS%id_e_tide>0) call post_data(CS%id_e_tide, e_sal_and_tide, CS%diag)
+  if (CS%id_e_tide>0) call post_data(CS%id_e_tide, e_sal+e_tidal_eq+e_tidal_sal, CS%diag)
   if (CS%id_e_sal>0) call post_data(CS%id_e_sal, e_sal, CS%diag)
   if (CS%id_e_tidal_eq>0) call post_data(CS%id_e_tidal_eq, e_tidal_eq, CS%diag)
   if (CS%id_e_tidal_sal>0) call post_data(CS%id_e_tidal_sal, e_tidal_sal, CS%diag)
@@ -1796,7 +1796,7 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
                  default=.false., do_not_log=.not.GV%Boussinesq)
   if (CS%tides .and. CS%tides_answer_date<=20230630 .and. CS%use_SSH_in_Z0p) &
     call MOM_error(FATAL, trim(mdl) // ", PressureForce_FV_init: SSH_IN_EOS_PRESSURE_FOR_PGF "//&
-                   "needs to be FALSE to recover tide answers before 20230630.")
+                   "needs to be FALSE to recover tide answers before 20230701.")
 
   call get_param(param_file, "MOM", "USE_REGRIDDING", use_ALE, &
                  "If True, use the ALE algorithm (regridding/remapping). "//&
