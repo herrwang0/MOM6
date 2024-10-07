@@ -338,6 +338,8 @@ type, public :: cont_ppm_hatvel
   real, allocatable :: havg_v(:,:,:)
   real, allocatable :: hmarg_u(:,:,:)
   real, allocatable :: hmarg_v(:,:,:)
+  real, allocatable :: hedge_u(:,:,:)
+  real, allocatable :: hedge_v(:,:,:)
 end type cont_ppm_hatvel
 
 contains

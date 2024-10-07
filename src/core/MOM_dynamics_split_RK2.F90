@@ -755,11 +755,9 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   ! uh = u_av * h
   ! hp = h + dt * div . uh
   call cpu_clock_begin(id_clock_continuity)
-  call enable_averages(dt, Time_local, CS%diag)
   call continuity(up, vp, h, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
                   u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont, hatvel=hatvel)
-  call disable_averaging(CS%diag)
   call cpu_clock_end(id_clock_continuity)
   if (showCallTree) call callTree_wayPoint("done with continuity (step_MOM_dyn_split_RK2)")
 
@@ -1016,9 +1014,11 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   ! h  = h + dt * div . uh
   ! u_av and v_av adjusted so their mass transports match uhbt and vhbt.
   call cpu_clock_begin(id_clock_continuity)
+  call enable_averages(dt, Time_local, CS%diag)
   call continuity(u_inst, v_inst, h, h, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
                   u_cor=u_av, v_cor=v_av)
+  call disable_averaging(CS%diag)
   call cpu_clock_end(id_clock_continuity)
   call do_group_pass(CS%pass_h, G%Domain, clock=id_clock_pass)
   ! Whenever thickness changes let the diag manager know, target grids

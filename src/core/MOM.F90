@@ -1210,7 +1210,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     call enable_averages(dt, Time_local, CS%diag)
     if (CS%hatvel%set) then
       call porous_widths_layer(h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS, &
-                               hu=CS%hatvel%hmarg_u, hv=CS%hatvel%hmarg_v)
+                               hatvel=CS%hatvel)
     else
       call porous_widths_layer(h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS)
     endif
@@ -2821,10 +2821,12 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   allocate(CS%pbv%por_layer_widthU(IsdB:IedB,jsd:jed,nz+1), source=1.0)
   allocate(CS%pbv%por_layer_widthV(isd:ied,JsdB:JedB,nz+1), source=1.0)
 
-  allocate(CS%hatvel%havg_u(IsdB:IedB,jsd:jed,nz), source=1.0)
-  allocate(CS%hatvel%havg_v(isd:ied,JsdB:JedB,nz), source=1.0)
-  allocate(CS%hatvel%hmarg_u(IsdB:IedB,jsd:jed,nz), source=1.0)
-  allocate(CS%hatvel%hmarg_v(isd:ied,JsdB:JedB,nz), source=1.0)
+  allocate(CS%hatvel%havg_u(IsdB:IedB,jsd:jed,nz), source=0.0)
+  allocate(CS%hatvel%havg_v(isd:ied,JsdB:JedB,nz), source=0.0)
+  allocate(CS%hatvel%hedge_u(IsdB:IedB,jsd:jed,nz), source=0.0)
+  allocate(CS%hatvel%hedge_v(isd:ied,JsdB:JedB,nz), source=0.0)
+  allocate(CS%hatvel%hmarg_u(IsdB:IedB,jsd:jed,nz), source=0.0)
+  allocate(CS%hatvel%hmarg_v(isd:ied,JsdB:JedB,nz), source=0.0)
 
   ! Use the Wright equation of state by default, unless otherwise specified
   ! Note: this line and the following block ought to be in a separate
