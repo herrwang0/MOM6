@@ -757,7 +757,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call cpu_clock_begin(id_clock_continuity)
   call continuity(up, vp, h, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
-                  u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont, hatvel=hatvel)
+                  u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont)
   call cpu_clock_end(id_clock_continuity)
   if (showCallTree) call callTree_wayPoint("done with continuity (step_MOM_dyn_split_RK2)")
 
@@ -1017,7 +1017,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call enable_averages(dt, Time_local, CS%diag)
   call continuity(u_inst, v_inst, h, h, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
-                  u_cor=u_av, v_cor=v_av)
+                  u_cor=u_av, v_cor=v_av, hatvel=hatvel)
   call disable_averaging(CS%diag)
   call cpu_clock_end(id_clock_continuity)
   call do_group_pass(CS%pass_h, G%Domain, clock=id_clock_pass)
