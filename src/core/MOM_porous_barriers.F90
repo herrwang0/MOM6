@@ -55,10 +55,12 @@ integer, parameter :: ETA_INTERP_MAX   = 1
 integer, parameter :: ETA_INTERP_MIN   = 2
 integer, parameter :: ETA_INTERP_ARITH = 3
 integer, parameter :: ETA_INTERP_HARM  = 4
+integer, parameter :: ETA_INTERP_UPWND = 5
 character(len=20), parameter :: ETA_INTERP_MAX_STRING = "MAX"
 character(len=20), parameter :: ETA_INTERP_MIN_STRING = "MIN"
 character(len=20), parameter :: ETA_INTERP_ARITH_STRING = "ARITHMETIC"
 character(len=20), parameter :: ETA_INTERP_HARM_STRING = "HARMONIC"
+character(len=20), parameter :: ETA_INTERP_UPWND_STRING = "UPWIND"
 integer, parameter :: ETA_CONT_MAR = 1
 integer, parameter :: ETA_CONT_AVG = 2
 integer, parameter :: ETA_CONT_EDG = 3
@@ -70,7 +72,7 @@ character(len=20), parameter :: ETA_CONT_EDG_STRING = "EDGE"
 contains
 
 !> subroutine to assign porous barrier widths averaged over a layer
-subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt, hatvel)
+subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt, hatvel, u, v)
   ! Note: eta_bt is not currently used
   type(ocean_grid_type),                      intent(in) :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                    intent(in) :: GV  !< The ocean's vertical grid structure.
@@ -84,6 +86,9 @@ subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt, hatvel)
   type(porous_barrier_type),                  intent(inout) :: pbv !< porous barrier fractional cell metrics
   type(porous_barrier_CS),                    intent(in) :: CS     !< Control structure for porous barrier
   type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), optional, intent(in) :: u ! Layer interface heights at u points [Z ~> m]
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), optional, intent(in) :: v ! Layer interface heights at v points [Z ~> m]
+
   !local variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1) :: eta_u ! Layer interface heights at u points [Z ~> m]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1) :: eta_v ! Layer interface heights at v points [Z ~> m]
@@ -111,9 +116,10 @@ subroutine porous_widths_layer(h, tv, G, GV, US, pbv, CS, eta_bt, hatvel)
   endif
 
   if (CS%use_cont_hvel) then
-    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US, hatvel=hatvel, hvel_scheme=CS%cont_hvel_opt)
+    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US, &
+                        hatvel=hatvel, hvel_scheme=CS%cont_hvel_opt, u=u, v=v)
   else
-    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US)
+    call calc_eta_at_uv(eta_u, eta_v, CS%eta_interp, dmask, h, tv, G, GV, US, u=u, v=v)
   endif
 
   dz_min = GV%Angstrom_Z
@@ -301,7 +307,7 @@ subroutine porous_widths_interface(h, tv, G, GV, US, pbv, CS, eta_bt)
   call cpu_clock_end(id_clock_porous_barrier)
 end subroutine porous_widths_interface
 
-subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt, hatvel, hvel_scheme)
+subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt, hatvel, hvel_scheme, u, v)
   !variables needed to call find_eta
   type(ocean_grid_type),                        intent(in) :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                      intent(in) :: GV  !< The ocean's vertical grid structure.
@@ -319,6 +325,8 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
   integer, optional,                            intent(in) :: hvel_scheme !< eta interpolation method
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)+1), intent(out) :: eta_u !< Layer interface heights at u points [Z ~> m]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)+1), intent(out) :: eta_v !< Layer interface heights at v points [Z ~> m]
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), optional, intent(in) :: u
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), optional, intent(in) :: V
 
   ! local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: eta ! Layer interface heights [Z ~> m].
@@ -381,6 +389,27 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
         endif ; enddo ; enddo
         do J=Jsq,Jeq ; do i=is,ie ; if (G%porous_DavgV(i,J) < dmask) then
           eta_v(i,J,K) = 2.0 * (eta(i,j,K) * eta(i,j+1,K)) / (eta(i,j,K) + eta(i,j+1,K) + dz_neglect)
+        endif ; enddo ; enddo
+      enddo
+    case (ETA_INTERP_UPWND)  ! Upwind
+      do K=ks,nk+1
+        do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
+          if (u(I,j,1) > 0.0) then
+            eta_u(I,j,K) = eta(i,j,K)
+          elseif (u(I,j,1) < 0.0) then
+            eta_u(I,j,K) = eta(i+1,j,K)
+          else
+            eta_u(I,j,K) = 0.5 * (eta(i,j,K) + eta(i+1,j,K))
+          endif
+        endif ; enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie ; if (G%porous_DavgV(i,J) < dmask) then
+          if (v(i,J,1) > 0.0) then
+            eta_v(i,J,K) = eta(i,j,K)
+          elseif (v(i,J,1) < 0.0) then
+            eta_v(i,J,K) = eta(i,j+1,K)
+          else
+            eta_v(i,J,K) = 0.5 * (eta(i,j,K) + eta(i,j+1,K))
+          endif
         endif ; enddo ; enddo
       enddo
     case default
@@ -580,6 +609,7 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
     case (ETA_INTERP_MIN_STRING) ; CS%eta_interp = ETA_INTERP_MIN
     case (ETA_INTERP_ARITH_STRING) ; CS%eta_interp = ETA_INTERP_ARITH
     case (ETA_INTERP_HARM_STRING) ; CS%eta_interp = ETA_INTERP_HARM
+    case (ETA_INTERP_UPWND_STRING) ; CS%eta_interp = ETA_INTERP_UPWND
     case default
       call MOM_error(FATAL, "porous_barriers_init: Unrecognized setting "// &
             "#define PORBAR_ETA_INTERP "//trim(interp_method)//" found in input file.")
