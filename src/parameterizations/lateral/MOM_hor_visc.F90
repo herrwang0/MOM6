@@ -1931,7 +1931,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                            +u(I-1,j,k) * diffu(I-1,j,k) * h_u(I-1,j) * G%areaCu(I-1,j))   &
                          +( v(i,J  ,k) * diffv(i,J  ,k) * h_v(i,J  ) * G%areaCv(i,J  )    &
                            +v(i,J-1,k) * diffv(i,J-1,k) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
-                        * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+                        * 0.5 * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
         ke_tot_div(i,j,k) = &
           ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i-1,j)*str_xx(i-1,j)) &
                   -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*str_xx(i,j)+CS%dy2h(i+1,j)*str_xx(i+1,j)) ) &
@@ -1945,7 +1945,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                     +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i+1,J-1,k)*G%IdyCv(i+1,J-1)) * (CS%dy2q(I  ,J-1)*str_xy(I  ,J-1))) ) &
            -0.5 *( v(i,J-1,k)*G%IdxCv(i,J-1) * (CS%dx2h(i,j)*str_xx(i,j)+CS%dx2h(i,j-1)*str_xx(i,j-1)) &
                   -v(i,J  ,k)*G%IdxCv(i,J  ) * (CS%dx2h(i,j)*str_xx(i,j)+CS%dx2h(i,j+1)*str_xx(i,j+1)) ) ) &
-          * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
         ke_tot_sqd(i,j,k) = &
           ( (u(I,j,k)*G%IdyCu(I,j) - u(I-1,j,k)*G%IdyCu(I-1,j)) * CS%dy2h(i,j)*str_xx(i,j) &
            +0.25*( ( (u(I,j+1,k)*G%IdxCu(I,j+1)-u(I  ,j  ,k)*G%IdxCu(I  ,j  )) * CS%dx2q(I  ,J  )*str_xy(I  ,J  ) &
@@ -1957,7 +1957,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                   +( (v(i  ,J  ,k)*G%IdyCv(i  ,J  )-v(i-1,J,k)*G%IdyCv(i-1,J)) * CS%dy2q(I-1,J)*str_xy(I-1,J) &
                     +(v(i+1,J-1,k)*G%IdyCv(i+1,J-1)-v(i,J-1,k)*G%IdyCv(i,J-1)) * CS%dy2q(I,J-1)*str_xy(I,J-1) ) ) &
            -(v(i,J,k)*G%IdxCv(i,J) - v(i,J-1,k)*G%IdxCv(i,J-1)) * CS%dx2h(i,j)*str_xx(i,j) ) &
-          * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+          * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
       enddo ; enddo
       if (CS%Laplacian) then
         do j=js,je ; do I=Isq,Ieq
@@ -1979,7 +1979,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                             + u(I-1,j,k) * lpdiffu(I-1,j) * h_u(I-1,j) * G%areaCu(I-1,j))   &
                           + ( v(i,J  ,k) * lpdiffv(i,J  ) * h_v(i,J  ) * G%areaCv(i,J  )    &
                             + v(i,J-1,k) * lpdiffv(i,J-1) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
-                          * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+                          * 0.5 * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
           ke_lap_div(i,j,k) = &
             ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*lpstr_xx(i,j)+CS%dy2h(i-1,j)*lpstr_xx(i-1,j)) &
                     -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*lpstr_xx(i,j)+CS%dy2h(i+1,j)*lpstr_xx(i+1,j)) ) &
@@ -1993,7 +1993,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                       +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i+1,J-1,k)*G%IdyCv(i+1,J-1)) * (CS%dy2q(I  ,J-1)*lpstr_xy(I  ,J-1))) ) &
              -0.5 *( v(i,J-1,k)*G%IdxCv(i,J-1) * (CS%dx2h(i,j)*lpstr_xx(i,j)+CS%dx2h(i,j-1)*lpstr_xx(i,j-1)) &
                     -v(i,J  ,k)*G%IdxCv(i,J  ) * (CS%dx2h(i,j)*lpstr_xx(i,j)+CS%dx2h(i,j+1)*lpstr_xx(i,j+1)) ) ) &
-            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+            * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
           ke_lap_sqd(i,j,k) = &
             ( (u(I,j,k)*G%IdyCu(I,j) - u(I-1,j,k)*G%IdyCu(I-1,j)) * CS%dy2h(i,j)*lpstr_xx(i,j) &
              +0.25*( ( (u(I,j+1,k)*G%IdxCu(I,j+1)-u(I  ,j  ,k)*G%IdxCu(I  ,j  )) * CS%dx2q(I  ,J  )*lpstr_xy(I  ,J  ) &
@@ -2005,7 +2005,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                     +( (v(i  ,J  ,k)*G%IdyCv(i  ,J  )-v(i-1,J,k)*G%IdyCv(i-1,J)) * CS%dy2q(I-1,J)*lpstr_xy(I-1,J) &
                       +(v(i+1,J-1,k)*G%IdyCv(i+1,J-1)-v(i,J-1,k)*G%IdyCv(i,J-1)) * CS%dy2q(I,J-1)*lpstr_xy(I,J-1) ) ) &
              -(v(i,J,k)*G%IdxCv(i,J) - v(i,J-1,k)*G%IdxCv(i,J-1)) * CS%dx2h(i,j)*lpstr_xx(i,j) ) &
-            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+            * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
         enddo ; enddo
       endif
       if (CS%biharmonic) then
@@ -2029,7 +2029,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                             + u(I-1,j,k) * bhdiffu(I-1,j) * h_u(I-1,j) * G%areaCu(I-1,j))   &
                           + ( v(i,J  ,k) * bhdiffv(i,J  ) * h_v(i,J  ) * G%areaCv(i,J  )    &
                             + v(i,J-1,k) * bhdiffv(i,J-1) * h_v(i,J-1) * G%areaCv(i,J-1)) ) &
-                          * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+                          * 0.5 * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
           ke_bih_div1(i,j,k) = &
             ( 0.5 *( u(I-1,j,k)*G%IdyCu(I-1,j) * (CS%dy2h(i,j)*bhstr_xx(i,j)+CS%dy2h(i-1,j)*bhstr_xx(i-1,j)) &
                     -u(I  ,j,k)*G%IdyCu(I  ,j) * (CS%dy2h(i,j)*bhstr_xx(i,j)+CS%dy2h(i+1,j)*bhstr_xx(i+1,j)) ) &
@@ -2043,7 +2043,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                       +(v(i,J-1,k)*G%IdyCv(i,J-1)+v(i+1,J-1,k)*G%IdyCv(i+1,J-1)) * (CS%dy2q(I  ,J-1)*bhstr_xy(I  ,J-1))) ) &
              -0.5 *( v(i,J-1,k)*G%IdxCv(i,J-1) * (CS%dx2h(i,j)*bhstr_xx(i,j)+CS%dx2h(i,j-1)*bhstr_xx(i,j-1)) &
                     -v(i,J  ,k)*G%IdxCv(i,J  ) * (CS%dx2h(i,j)*bhstr_xx(i,j)+CS%dx2h(i,j+1)*bhstr_xx(i,j+1)) ) ) &
-            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+            * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
           ke_bih_sqd1(i,j,k) = &
             ( (u(I,j,k)*G%IdyCu(I,j) - u(I-1,j,k)*G%IdyCu(I-1,j)) * CS%dy2h(i,j)*bhstr_xx(i,j) &
              +0.25*( ( (u(I,j+1,k)*G%IdxCu(I,j+1)-u(I  ,j  ,k)*G%IdxCu(I  ,j  )) * CS%dx2q(I  ,J  )*bhstr_xy(I  ,J  ) &
@@ -2055,7 +2055,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                     +( (v(i  ,J  ,k)*G%IdyCv(i  ,J  )-v(i-1,J,k)*G%IdyCv(i-1,J)) * CS%dy2q(I-1,J)*bhstr_xy(I-1,J) &
                       +(v(i+1,J-1,k)*G%IdyCv(i+1,J-1)-v(i,J-1,k)*G%IdyCv(i,J-1)) * CS%dy2q(I,J-1)*bhstr_xy(I,J-1) ) ) &
              -(v(i,J,k)*G%IdxCv(i,J) - v(i,J-1,k)*G%IdxCv(i,J-1)) * CS%dx2h(i,j)*bhstr_xx(i,j) ) &
-            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+            * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
 
           ke_bih_div2(i,j,k) = &
             ( 0.5 *( Del2u(I  ,j)*G%IdyCu(I  ,j) &
@@ -2082,7 +2082,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                      * (bhfct_xx(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhfct_xx(i,j+1)*CS%dx2h(i,j+1)*sh_xx(i,j+1)) &
                     -Del2v(i,J-1)*G%IdxCv(i,J-1) &
                      * (bhfct_xx(i,j)*CS%dx2h(i,j)*sh_xx(i,j) + bhfct_xx(i,j-1)*CS%dx2h(i,j-1)*sh_xx(i,j-1)) ) ) &
-            * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+            * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
           ke_bih_sqd2(i,j,k) = &
             ( ( Del2u(I  ,j)*G%IdyCu(I  ,j) &
                 * (bhfct_xx(i,j)*CS%dy2h(i,j)*sh_xx(i,j) - bhfct_xx(i+1,j)*CS%dy2h(i+1,j)*sh_xx(i+1,j)) &
@@ -2100,7 +2100,7 @@ subroutine horizontal_viscosity(u, v, h, diffu, diffv, MEKE, VarMix, G, GV, US, 
                 * (bhfct_xy(I,J-1)*CS%dx2q(I,J-1)*sh_xy(I,J-1) - bhfct_xy(I,J)*CS%dx2q(I,J)*sh_xy(I,J)) &
                +Del2u(I-1,j)*G%IdxCu(I-1,j) &
                 * (bhfct_xy(I-1,J-1)*CS%dx2q(I-1,J-1)*sh_xy(I-1,J-1) - bhfct_xy(I-1,J)*CS%dx2q(I-1,J)*sh_xy(I-1,J)) ) ) &
-            * 0.5 * G%IareaT(i,j) / (h(i,j,k) + h_neglect)
+            * 0.5 * G%IareaT(i,j) !/ (h(i,j,k) + h_neglect)
         enddo ; enddo
       endif
     endif
