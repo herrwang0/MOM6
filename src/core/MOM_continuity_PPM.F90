@@ -830,23 +830,33 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
     enddo
   endif
 
-  if ((set_BT_cont .and. allocated(T_cont%h_u)) .or. present(hatvel)) then
+  if ((set_BT_cont .and. allocated(BT_cont%h_u))) then
     if (CS%visc_rem_hvel_fix) then
       if (present(u_cor)) then
-        call zonal_flux_thickness(u_cor, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, hatvel=hatvel)
+        call zonal_flux_thickness(u_cor, h_in, h_W, h_E, dt, G, GV, US, LB, &
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, h_u=BT_cont%h_u, hatvel=hatvel)
       else
-        call zonal_flux_thickness(u, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, hatvel=hatvel)
+        call zonal_flux_thickness(u, h_in, h_W, h_E, dt, G, GV, US, LB, &
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, h_u=BT_cont%h_u, hatvel=hatvel)
       endif
     else
       if (present(u_cor)) then
-        call zonal_flux_thickness(u_cor, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, hatvel=hatvel)
+        call zonal_flux_thickness(u_cor, h_in, h_W, h_E, dt, G, GV, US, LB, &
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, h_u=BT_cont%h_u, hatvel=hatvel)
       else
-        call zonal_flux_thickness(u, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, hatvel=hatvel)
+        call zonal_flux_thickness(u, h_in, h_W, h_E, dt, G, GV, US, LB, &
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, h_u=BT_cont%h_u, hatvel=hatvel)
       endif
+    endif
+  endif
+
+  if (present(hatvel)) then
+    if (present(u_cor)) then
+      call zonal_flux_thickness(u_cor, h_in, h_W, h_E, dt, G, GV, US, LB, &
+                                CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, hatvel=hatvel)
+    else
+      call zonal_flux_thickness(u, h_in, h_W, h_E, dt, G, GV, US, LB, &
+                                CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, hatvel=hatvel)
     endif
   endif
 
@@ -1021,8 +1031,8 @@ end subroutine zonal_flux_layer
 
 !> Sets the effective interface thickness associated with the fluxes at each zonal velocity point,
 !! optionally scaling back these thicknesses to account for viscosity and fractional open areas.
-subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL, &
-                                marginal, OBC, por_face_areaU, visc_rem_u, hatvel)
+subroutine zonal_flux_thickness(u, h, h_W, h_E, dt, G, GV, US, LB, vol_CFL, &
+                                marginal, OBC, por_face_areaU, visc_rem_u, h_u, hatvel)
   type(ocean_grid_type),                     intent(in)    :: G    !< Ocean's grid structure.
   type(verticalGrid_type),                   intent(in)    :: GV   !< Ocean's vertical grid structure.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(in)   :: u    !< Zonal velocity [L T-1 ~> m s-1].
@@ -1032,10 +1042,6 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
                                                                    !! reconstruction [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)    :: h_E  !< East edge thickness in the
                                                                    !! reconstruction [H ~> m or kg m-2].
-  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(inout) :: h_u !< Effective thickness at zonal faces,
-                                                                   !! scaled down to account for the effects of
-                                                                   !! viscosity and the fractional open area
-                                                                   !! [H ~> m or kg m-2].
   real,                                      intent(in)    :: dt   !< Time increment [T ~> s].
   type(unit_scale_type),                     intent(in)    :: US   !< A dimensional unit scaling type
   type(cont_loop_bounds_type),               intent(in)    :: LB   !< Loop bounds structure.
@@ -1052,6 +1058,10 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
                           !! a time-step of viscosity, and the fraction of a time-step's worth of a
                           !! barotropic acceleration that a layer experiences after viscosity is applied [nondim].
                           !! Visc_rem_u is between 0 (at the bottom) and 1 (far above the bottom).
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), optional, intent(inout) :: h_u !< Effective thickness at zonal faces,
+                                                                   !! scaled down to account for the effects of
+                                                                   !! viscosity and the fractional open area
+                                                                   !! [H ~> m or kg m-2].
   type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
 
   ! Local variables
@@ -1096,9 +1106,12 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
       hatvel%havg_u(I,j,k) = h_avg
       hatvel%hedge_u(I,j,k) = h_edge
     endif
+    if (present(h_u)) then
     if (marginal) then ; h_u(I,j,k) = h_marg
     else ; h_u(I,j,k) = h_avg ; endif
+    endif
   enddo ; enddo ; enddo
+  if (present(h_u)) then
   if (present(visc_rem_u)) then
     ! Scale back the thickness to account for the effects of viscosity and the fractional open
     ! thickness to give an appropriate non-normalized weight for each layer in determining the
@@ -1144,7 +1157,7 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
       endif
     enddo
   endif
-
+  endif
 end subroutine zonal_flux_thickness
 
 !> Returns the barotropic velocity adjustment that gives the
@@ -1762,23 +1775,33 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
     enddo
   endif
 
-  if ((set_BT_cont .and. allocated(BT_cont%h_v)) .or. present(hatvel)) then
+  if ((set_BT_cont .and. allocated(BT_cont%h_v))) then
     if (CS%visc_rem_hvel_fix) then
       if (present(v_cor)) then
-        call meridional_flux_thickness(v_cor, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, hatvel=hatvel)
+        call meridional_flux_thickness(v_cor, h_in, h_S, h_N, dt, G, GV, US, LB, &
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, h_v=BT_cont%h_v, hatvel=hatvel)
       else
-        call meridional_flux_thickness(v, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, hatvel=hatvel)
+        call meridional_flux_thickness(v, h_in, h_S, h_N, dt, G, GV, US, LB, &
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, h_v=BT_cont%h_v, hatvel=hatvel)
       endif
     else
       if (present(v_cor)) then
-        call meridional_flux_thickness(v_cor, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, hatvel=hatvel)
+        call meridional_flux_thickness(v_cor, h_in, h_S, h_N, dt, G, GV, US, LB, &
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, h_v=BT_cont%h_v, hatvel=hatvel)
       else
-        call meridional_flux_thickness(v, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, hatvel=hatvel)
+        call meridional_flux_thickness(v, h_in, h_S, h_N, dt, G, GV, US, LB, &
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, h_v=BT_cont%h_v, hatvel=hatvel)
       endif
+    endif
+  endif
+
+  if (present(hatvel)) then
+    if (present(v_cor)) then
+      call meridional_flux_thickness(v_cor, h_in, h_S, h_N, dt, G, GV, US, LB, &
+                                    CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, hatvel=hatvel)
+    else
+      call meridional_flux_thickness(v, h_in, h_S, h_N, dt, G, GV, US, LB, &
+                                    CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, hatvel=hatvel)
     endif
   endif
 
@@ -1962,8 +1985,8 @@ end subroutine merid_flux_layer
 
 !> Sets the effective interface thickness associated with the fluxes at each meridional velocity point,
 !! optionally scaling back these thicknesses to account for viscosity and fractional open areas.
-subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol_CFL, &
-                                     marginal, OBC, por_face_areaV, visc_rem_v, hatvel)
+subroutine meridional_flux_thickness(v, h, h_S, h_N, dt, G, GV, US, LB, vol_CFL, &
+                                     marginal, OBC, por_face_areaV, visc_rem_v, h_v, hatvel)
   type(ocean_grid_type),                     intent(in)    :: G    !< Ocean's grid structure.
   type(verticalGrid_type),                   intent(in)    :: GV   !< Ocean's vertical grid structure.
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(in)   :: v    !< Meridional velocity [L T-1 ~> m s-1].
@@ -1972,10 +1995,6 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)    :: h_S  !< South edge thickness in the reconstruction,
                                                                    !! [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)    :: h_N  !< North edge thickness in the reconstruction,
-                                                                   !! [H ~> m or kg m-2].
-  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(inout) :: h_v !< Effective thickness at meridional faces,
-                                                                   !! scaled down to account for the effects of
-                                                                   !! viscosity and the fractional open area
                                                                    !! [H ~> m or kg m-2].
   real,                                      intent(in)    :: dt   !< Time increment [T ~> s].
   type(cont_loop_bounds_type),               intent(in)    :: LB   !< Loop bounds structure.
@@ -1992,6 +2011,10 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
                           !! viscosity, and the fraction of a time-step's worth of a barotropic
                           !! acceleration that a layer experiences after viscosity is applied [nondim].
                           !! Visc_rem_v is between 0 (at the bottom) and 1 (far above the bottom).
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), optional, intent(inout) :: h_v !< Effective thickness at meridional faces,
+                                                                   !! scaled down to account for the effects of
+                                                                   !! viscosity and the fractional open area
+                                                                   !! [H ~> m or kg m-2].
   type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
 
   ! Local variables
@@ -2038,10 +2061,13 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
       hatvel%havg_v(i,J,k) = h_avg
       hatvel%hedge_v(i,J,k) = h_edge
     endif
+    if (present(h_v)) then
     if (marginal) then ; h_v(i,J,k) = h_marg
     else ; h_v(i,J,k) = h_avg ; endif
+    endif
   enddo ; enddo ; enddo
 
+  if (present(h_v)) then
   if (present(visc_rem_v)) then
     ! Scale back the thickness to account for the effects of viscosity and the fractional open
     ! thickness to give an appropriate non-normalized weight for each layer in determining the
@@ -2087,7 +2113,7 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
       endif
     enddo
   endif
-
+  endif
 end subroutine meridional_flux_thickness
 
 !> Returns the barotropic velocity adjustment that gives the desired barotropic (layer-summed) transport.
