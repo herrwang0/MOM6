@@ -4236,6 +4236,7 @@ subroutine MOM_end(CS)
 
   DEALLOC_(CS%hatvel%havg_u) ; DEALLOC_(CS%hatvel%havg_v)
   DEALLOC_(CS%hatvel%hmarg_u) ; DEALLOC_(CS%hatvel%hmarg_v)
+  DEALLOC_(CS%hatvel%hedge_u) ; DEALLOC_(CS%hatvel%hedge_v)
 
   ! NOTE: Allocated in PressureForce_FV_Bouss
   if (associated(CS%tv%varT)) deallocate(CS%tv%varT)

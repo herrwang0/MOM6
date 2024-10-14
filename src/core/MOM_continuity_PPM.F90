@@ -830,7 +830,7 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
     enddo
   endif
 
-  if (set_BT_cont .and. allocated(BT_cont%h_u) .or. present(hatvel)) then
+  if ((set_BT_cont .and. allocated(T_cont%h_u)) .or. present(hatvel)) then
     if (CS%visc_rem_hvel_fix) then
       if (present(u_cor)) then
         call zonal_flux_thickness(u_cor, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
