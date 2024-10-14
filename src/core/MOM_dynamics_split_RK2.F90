@@ -276,7 +276,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   type(group_pass_type) :: pass_uv  !< Structure for group halo pass
   type(group_pass_type) :: pass_h  !< Structure for group halo pass
   type(group_pass_type) :: pass_av_uvh  !< Structure for group halo pass
-
+  type(group_pass_type) :: pass_hatvel  !< Structure for group halo pass
 end type MOM_dyn_split_RK2_CS
 
 
@@ -341,7 +341,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
                                                                    !! interface height diffusivities
   type(porous_barrier_type),         intent(in)    :: pbv          !< porous barrier fractional cell metrics
   type(stochastic_CS),     optional, intent(inout) :: STOCH        !< Stochastic control structure
-  type(cont_ppm_hatvel),         intent(inout)    :: hatvel          !< porous barrier fractional cell metrics
+  type(cont_ppm_hatvel),   optional, intent(inout) :: hatvel          !< porous barrier fractional cell metrics
   type(wave_parameters_CS), optional, pointer      :: Waves        !< A pointer to a structure containing
                                                                    !! fields related to the surface wave conditions
 
@@ -504,7 +504,12 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call create_group_pass(CS%pass_av_uvh, u_av, v_av, g%domain, halo=max(cor_stencil,vel_stencil))
   call create_group_pass(CS%pass_av_uvh, uh(:,:,:), vh(:,:,:), G%Domain, halo=max(cor_stencil,vel_stencil))
 
-
+  call create_group_pass(CS%pass_hatvel, hatvel%hmarg_u, hatvel%hmarg_v, G%Domain,  &
+                         To_All+SCALAR_PAIR, CGRID_NE, halo=max(1,cont_stencil))
+  call create_group_pass(CS%pass_hatvel, hatvel%havg_u, hatvel%havg_v, G%Domain,  &
+                         To_All+SCALAR_PAIR, CGRID_NE, halo=max(1,cont_stencil))
+  call create_group_pass(CS%pass_hatvel, hatvel%hedge_u, hatvel%hedge_v, G%Domain,  &
+                         To_All+SCALAR_PAIR, CGRID_NE, halo=max(1,cont_stencil))
   call cpu_clock_end(id_clock_pass)
   !--- end set up for group halo pass
 
@@ -800,6 +805,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (showCallTree) call callTree_wayPoint("done with continuity (step_MOM_dyn_split_RK2)")
 
   call do_group_pass(CS%pass_hp_uv, G%Domain, clock=id_clock_pass)
+  call do_group_pass(CS%pass_hatvel, G%Domain, clock=id_clock_pass)
 
   if (associated(CS%OBC)) then
 
@@ -1059,6 +1065,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call disable_averaging(CS%diag)
   call cpu_clock_end(id_clock_continuity)
   call do_group_pass(CS%pass_h, G%Domain, clock=id_clock_pass)
+  call do_group_pass(CS%pass_hatvel, G%Domain, clock=id_clock_pass)
   ! Whenever thickness changes let the diag manager know, target grids
   ! for vertical remapping may need to be regenerated.
   call diag_update_remap_grids(CS%diag)
