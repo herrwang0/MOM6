@@ -13,7 +13,7 @@ use MOM_open_boundary, only : OBC_DIRECTION_E, OBC_DIRECTION_W, OBC_DIRECTION_N,
 use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : BT_cont_type, porous_barrier_type
 use MOM_verticalGrid, only : verticalGrid_type, get_thickness_units
-use MOM_variables,             only : cont_ppm_hatvel
+use MOM_variables, only : cont_ppm_hatvel
 use MOM_diag_mediator, only : post_data, register_diag_field
 
 implicit none ; private
@@ -640,7 +640,7 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
       if (use_visc_rem) then ; do I=ish-1,ieh
         visc_rem(I,k) = visc_rem_u(I,j,k)
       enddo ; endif
-      if (present(hatvel)) then
+      if (present(hatvel) .and. (.not.present(uhbt))) then
       call zonal_flux_layer(u(:,j,k), h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), &
                             uh(:,j,k), duhdu(:,k), visc_rem(:,k), &
                             dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, &
@@ -830,25 +830,25 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
     enddo
   endif
 
-  if  (set_BT_cont) then ; if (allocated(BT_cont%h_u)) then
+  if (set_BT_cont .and. allocated(BT_cont%h_u) .or. present(hatvel)) then
     if (CS%visc_rem_hvel_fix) then
       if (present(u_cor)) then
         call zonal_flux_thickness(u_cor, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU)
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, hatvel=hatvel)
       else
         call zonal_flux_thickness(u, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU)
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, hatvel=hatvel)
       endif
     else
       if (present(u_cor)) then
         call zonal_flux_thickness(u_cor, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u)
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, hatvel=hatvel)
       else
         call zonal_flux_thickness(u, h_in, h_W, h_E, BT_cont%h_u, dt, G, GV, US, LB, &
-                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u)
+                                  CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, hatvel=hatvel)
       endif
     endif
-  endif ; endif
+  endif
 
   call cpu_clock_end(id_clock_correct)
 
@@ -1022,7 +1022,7 @@ end subroutine zonal_flux_layer
 !> Sets the effective interface thickness associated with the fluxes at each zonal velocity point,
 !! optionally scaling back these thicknesses to account for viscosity and fractional open areas.
 subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL, &
-                                marginal, OBC, por_face_areaU, visc_rem_u)
+                                marginal, OBC, por_face_areaU, visc_rem_u, hatvel)
   type(ocean_grid_type),                     intent(in)    :: G    !< Ocean's grid structure.
   type(verticalGrid_type),                   intent(in)    :: GV   !< Ocean's vertical grid structure.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(in)   :: u    !< Zonal velocity [L T-1 ~> m s-1].
@@ -1052,12 +1052,14 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
                           !! a time-step of viscosity, and the fraction of a time-step's worth of a
                           !! barotropic acceleration that a layer experiences after viscosity is applied [nondim].
                           !! Visc_rem_u is between 0 (at the bottom) and 1 (far above the bottom).
+  type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
 
   ! Local variables
   real :: CFL  ! The CFL number based on the local velocity and grid spacing [nondim]
   real :: curv_3 ! A measure of the thickness curvature over a grid length [H ~> m or kg m-2]
   real :: h_avg  ! The average thickness of a flux [H ~> m or kg m-2].
   real :: h_marg ! The marginal thickness of a flux [H ~> m or kg m-2].
+  real :: h_edge ! The edge thickness of a flux [H ~> m or kg m-2].
   logical :: local_open_BC
   integer :: i, j, k, ish, ieh, jsh, jeh, nz, n
   ish = LB%ish ; ieh = LB%ieh ; jsh = LB%jsh ; jeh = LB%jeh ; nz = GV%ke
@@ -1070,6 +1072,7 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
       curv_3 = (h_W(i,j,k) + h_E(i,j,k)) - 2.0*h(i,j,k)
       h_avg = h_E(i,j,k) + CFL * (0.5*(h_W(i,j,k) - h_E(i,j,k)) + curv_3*(CFL - 1.5))
       h_marg = h_E(i,j,k) + CFL * ((h_W(i,j,k) - h_E(i,j,k)) + 3.0*curv_3*(CFL - 1.0))
+      h_edge = h_E(i,j,k)
     elseif (u(I,j,k) < 0.0) then
       if (vol_CFL) then ; CFL = (-u(I,j,k)*dt) * (G%dy_Cu(I,j) * G%IareaT(i+1,j))
       else ; CFL = -u(I,j,k) * dt * G%IdxT(i+1,j) ; endif
@@ -1077,6 +1080,7 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
       h_avg = h_W(i+1,j,k) + CFL * (0.5*(h_E(i+1,j,k)-h_W(i+1,j,k)) + curv_3*(CFL - 1.5))
       h_marg = h_W(i+1,j,k) + CFL * ((h_E(i+1,j,k)-h_W(i+1,j,k)) + &
                                     3.0*curv_3*(CFL - 1.0))
+      h_edge = h_W(i+1,j,k)
     else
       h_avg = 0.5 * (h_W(i+1,j,k) + h_E(i,j,k))
       !   The choice to use the arithmetic mean here is somewhat arbitrarily, but
@@ -1084,8 +1088,14 @@ subroutine zonal_flux_thickness(u, h, h_W, h_E, h_u, dt, G, GV, US, LB, vol_CFL,
       h_marg = 0.5 * (h_W(i+1,j,k) + h_E(i,j,k))
  !    h_marg = (2.0 * h_W(i+1,j,k) * h_E(i,j,k)) / &
  !             (h_W(i+1,j,k) + h_E(i,j,k) + GV%H_subroundoff)
+      h_edge = 0.5 * (h_W(i+1,j,k) + h_E(i,j,k))
     endif
 
+    if (present(hatvel)) then
+      hatvel%hmarg_u(I,j,k) = h_marg
+      hatvel%havg_u(I,j,k) = h_avg
+      hatvel%hedge_u(I,j,k) = h_edge
+    endif
     if (marginal) then ; h_u(I,j,k) = h_marg
     else ; h_u(I,j,k) = h_avg ; endif
   enddo ; enddo ; enddo
@@ -1566,7 +1576,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
       if (use_visc_rem) then ; do i=ish,ieh
         visc_rem(i,k) = visc_rem_v(i,J,k)
       enddo ; endif
-      if (present(hatvel)) then
+      if (present(hatvel) .and. (.not.present(vhbt))) then
       call merid_flux_layer(v(:,J,k), h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), &
                             vh(:,J,k), dvhdv(:,k), visc_rem(:,k), &
                             dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, &
@@ -1752,25 +1762,25 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
     enddo
   endif
 
-  if (set_BT_cont) then ; if (allocated(BT_cont%h_v)) then
+  if ((set_BT_cont .and. allocated(BT_cont%h_v)) .or. present(hatvel)) then
     if (CS%visc_rem_hvel_fix) then
       if (present(v_cor)) then
         call meridional_flux_thickness(v_cor, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV)
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, hatvel=hatvel)
       else
         call meridional_flux_thickness(v, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV)
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, hatvel=hatvel)
       endif
     else
       if (present(v_cor)) then
         call meridional_flux_thickness(v_cor, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v)
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, hatvel=hatvel)
       else
         call meridional_flux_thickness(v, h_in, h_S, h_N, BT_cont%h_v, dt, G, GV, US, LB, &
-                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v)
+                                      CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, hatvel=hatvel)
       endif
     endif
-  endif ; endif
+  endif
 
   call cpu_clock_end(id_clock_correct)
 
@@ -1953,7 +1963,7 @@ end subroutine merid_flux_layer
 !> Sets the effective interface thickness associated with the fluxes at each meridional velocity point,
 !! optionally scaling back these thicknesses to account for viscosity and fractional open areas.
 subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol_CFL, &
-                                     marginal, OBC, por_face_areaV, visc_rem_v)
+                                     marginal, OBC, por_face_areaV, visc_rem_v, hatvel)
   type(ocean_grid_type),                     intent(in)    :: G    !< Ocean's grid structure.
   type(verticalGrid_type),                   intent(in)    :: GV   !< Ocean's vertical grid structure.
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(in)   :: v    !< Meridional velocity [L T-1 ~> m s-1].
@@ -1982,6 +1992,7 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
                           !! viscosity, and the fraction of a time-step's worth of a barotropic
                           !! acceleration that a layer experiences after viscosity is applied [nondim].
                           !! Visc_rem_v is between 0 (at the bottom) and 1 (far above the bottom).
+  type(cont_ppm_hatvel), optional, intent(inout) :: hatvel
 
   ! Local variables
   real :: CFL ! The CFL number based on the local velocity and grid spacing [nondim]
@@ -1989,6 +2000,7 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
                  ! with the same units as h [H ~> m or kg m-2] .
   real :: h_avg  ! The average thickness of a flux [H ~> m or kg m-2].
   real :: h_marg ! The marginal thickness of a flux [H ~> m or kg m-2].
+  real :: h_edge ! The edge thickness of a flux [H ~> m or kg m-2].
   logical :: local_open_BC
   integer :: i, j, k, ish, ieh, jsh, jeh, n, nz
   ish = LB%ish ; ieh = LB%ieh ; jsh = LB%jsh ; jeh = LB%jeh ; nz = GV%ke
@@ -2002,6 +2014,7 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
       h_avg = h_N(i,j,k) + CFL * (0.5*(h_S(i,j,k) - h_N(i,j,k)) + curv_3*(CFL - 1.5))
       h_marg = h_N(i,j,k) + CFL * ((h_S(i,j,k) - h_N(i,j,k)) + &
                                 3.0*curv_3*(CFL - 1.0))
+      h_edge = h_N(i,j,k)
     elseif (v(i,J,k) < 0.0) then
       if (vol_CFL) then ; CFL = (-v(i,J,k)*dt) * (G%dx_Cv(i,J) * G%IareaT(i,j+1))
       else ; CFL = -v(i,J,k) * dt * G%IdyT(i,j+1) ; endif
@@ -2009,6 +2022,7 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
       h_avg = h_S(i,j+1,k) + CFL * (0.5*(h_N(i,j+1,k)-h_S(i,j+1,k)) + curv_3*(CFL - 1.5))
       h_marg = h_S(i,j+1,k) + CFL * ((h_N(i,j+1,k)-h_S(i,j+1,k)) + &
                                     3.0*curv_3*(CFL - 1.0))
+      h_edge = h_S(i,j+1,k)
     else
       h_avg = 0.5 * (h_S(i,j+1,k) + h_N(i,j,k))
       !   The choice to use the arithmetic mean here is somewhat arbitrarily, but
@@ -2016,8 +2030,14 @@ subroutine meridional_flux_thickness(v, h, h_S, h_N, h_v, dt, G, GV, US, LB, vol
       h_marg = 0.5 * (h_S(i,j+1,k) + h_N(i,j,k))
  !    h_marg = (2.0 * h_S(i,j+1,k) * h_N(i,j,k)) / &
  !             (h_S(i,j+1,k) + h_N(i,j,k) + GV%H_subroundoff)
+      h_edge = 0.5 * (h_S(i,j+1,k) + h_N(i,j,k))
     endif
 
+    if (present(hatvel)) then
+      hatvel%hmarg_v(i,J,k) = h_marg
+      hatvel%havg_v(i,J,k) = h_avg
+      hatvel%hedge_v(i,J,k) = h_edge
+    endif
     if (marginal) then ; h_v(i,J,k) = h_marg
     else ; h_v(i,J,k) = h_avg ; endif
   enddo ; enddo ; enddo
