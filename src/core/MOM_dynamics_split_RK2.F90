@@ -869,7 +869,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call horizontal_viscosity(u_av, v_av, h_av, uh, vh, CS%diffu, CS%diffv, &
                             MEKE, Varmix, G, GV, US, CS%hor_visc, tv, dt, &
                             OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp, &
-                            ADp=CS%ADp, hu_cont=CS%BT_cont%h_u, hv_cont=CS%BT_cont%h_v)
+                            ADp=CS%ADp, hu_cont=CS%BT_cont%h_u, hv_cont=CS%BT_cont%h_v, hatvel=hatvel)
   call cpu_clock_end(id_clock_horvisc)
   if (showCallTree) call callTree_wayPoint("done with horizontal_viscosity (step_MOM_dyn_split_RK2)")
 

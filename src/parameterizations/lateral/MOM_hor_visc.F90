@@ -131,6 +131,8 @@ type, public :: hor_visc_CS ; private
                              !! limit grid Reynolds number [L4 T-1 ~> m4 s-1]
   logical :: use_cont_thick  !< If true, thickness at velocity points adopts h[uv] in BT_cont from continuity solver.
   logical :: use_cont_thick_bug  !< If true, retain an answer-changing bug for thickness at velocity points.
+  logical :: use_cont_hatvel  !< If true, thickness at velocity points adopts h[uv] in BT_cont from continuity solver.
+  integer :: cont_hvel_opt
   type(ZB2020_CS) :: ZB2020  !< Zanna-Bolton 2020 control structure.
   logical :: use_ZB2020      !< If true, use Zanna-Bolton 2020 parameterization.
 
@@ -250,6 +252,13 @@ type, public :: hor_visc_CS ; private
 
 end type hor_visc_CS
 
+integer, parameter :: HATVEL_MAR = 1
+integer, parameter :: HATVEL_AVG = 2
+integer, parameter :: HATVEL_EDG = 3
+character(len=20), parameter :: HATVEL_MAR_STRING = "MARGINAL"
+character(len=20), parameter :: HATVEL_AVG_STRING = "AVERAGE"
+character(len=20), parameter :: HATVEL_EDG_STRING = "EDGE"
+
 contains
 
 !> Calculates the acceleration due to the horizontal viscosity.
@@ -265,7 +274,7 @@ contains
 !!   v(is-2:ie+2,js-2:je+2)
 !!   h(is-1:ie+1,js-1:je+1) or up to h(is-2:ie+2,js-2:je+2) with some Leith options.
 subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, GV, US, &
-                                CS, tv, dt, OBC, BT, TD, ADp, hu_cont, hv_cont)
+                                CS, tv, dt, OBC, BT, TD, ADp, hu_cont, hv_cont, hatvel)
   type(ocean_grid_type),         intent(in)  :: G      !< The ocean's grid structure.
   type(verticalGrid_type),       intent(in)  :: GV     !< The ocean's vertical grid structure.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
@@ -300,6 +309,7 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
                     optional, intent(inout) :: hu_cont !< Layer thickness at u-points [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), &
                     optional, intent(inout) :: hv_cont !< Layer thickness at v-points [H ~> m or kg m-2].
+  type(cont_ppm_hatvel), optional, intent(in) :: hatvel
 
   ! Local variables
   real, dimension(SZIB_(G),SZJ_(G)) :: &
@@ -776,6 +786,34 @@ subroutine horizontal_viscosity(u, v, h, uh, vh, diffu, diffv, MEKE, VarMix, G, 
       enddo ; enddo
     endif
 
+    if (CS%use_cont_hatvel) then
+      select case (CS%cont_hvel_opt)
+        case (HATVEL_MAR)
+          do j=js-2,je+2 ; do I=Isq-1,Ieq+1
+            h_u(I,j) = hatvel%hmarg_u(I,j,k)
+          enddo ; enddo
+          do J=Jsq-1,Jeq+1 ; do i=is-2,ie+2
+            h_v(i,J) = hatvel%hmarg_v(i,J,k)
+          enddo ; enddo
+        case (HATVEL_AVG)
+          do j=js-2,je+2 ; do I=Isq-1,Ieq+1
+            h_u(I,j) = hatvel%havg_u(I,j,k)
+          enddo ; enddo
+          do J=Jsq-1,Jeq+1 ; do i=is-2,ie+2
+            h_v(i,J) = hatvel%havg_v(i,J,k)
+          enddo ; enddo
+        case (HATVEL_EDG)
+          do j=js-2,je+2 ; do I=Isq-1,Ieq+1
+            h_u(I,j) = hatvel%hedge_u(I,j,k)
+          enddo ; enddo
+          do J=Jsq-1,Jeq+1 ; do i=is-2,ie+2
+            h_v(i,J) = hatvel%hedge_v(i,J,k)
+          enddo ; enddo
+        case default
+          call MOM_error(FATAL, "horvisc:: : "//&
+                         "invalid value for eta interpolation method.")
+      end select
+    endif
     ! Adjust contributions to shearing strain and interpolated values of
     ! thicknesses on open boundaries.
     if (apply_OBC) then ; do n=1,OBC%number_of_segments
@@ -2311,6 +2349,7 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: i, j
+  character(len=30) :: con_hvel_scheme
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_hor_visc"  ! module name
@@ -2348,7 +2387,19 @@ subroutine hor_visc_init(Time, G, GV, US, param_file, diag, CS, ADp)
                    "If true, retain an answer-changing halo update bug when "//&
                    "USE_CONT_THICKNESS=True.  This is not recommended.", &
                    default=.false., do_not_log=.not.CS%use_cont_thick)
-
+  call get_param(param_file, mdl, "HORVISC_USE_HATVEL", CS%use_cont_hatvel, &
+                 "If true, use hatvel in horvisc", default=.false.)
+  call get_param(param_file, mdl, "HORVISC_USE_HATVEL_SCHEMES", con_hvel_scheme, &
+                 "schemes", &
+                 default=HATVEL_MAR_STRING)
+  select case (con_hvel_scheme)
+    case (HATVEL_MAR_STRING) ; CS%cont_hvel_opt = HATVEL_MAR
+    case (HATVEL_AVG_STRING) ; CS%cont_hvel_opt = HATVEL_AVG
+    case (HATVEL_EDG_STRING) ; CS%cont_hvel_opt = HATVEL_EDG
+    case default
+      call MOM_error(FATAL, "hor_visc_init: Unrecognized setting "// &
+            "#define HORVISC_USE_HATVEL_SCHEMES "//trim(con_hvel_scheme)//" found in input file.")
+  end select
   call get_param(param_file, mdl, "LAPLACIAN", CS%Laplacian, &
                  "If true, use a Laplacian horizontal viscosity.", &
                  default=.false.)
