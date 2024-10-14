@@ -1290,12 +1290,12 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
 
   endif ! -------------------------------------------------- end SPLIT
   ! call do_group_pass(CS%pass_hatvel, G%Domain, clock=id_clock_pass)
-  call pass_vector(CS%hatvel%hmarg_u,CS%hatvel%hmarg_v, G%Domain, &
-      direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
-  call pass_vector(CS%hatvel%havg_u,CS%hatvel%havg_v, G%Domain, &
-      direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
-  call pass_vector(CS%hatvel%hedge_u,CS%hatvel%hedge_v, G%Domain, &
-      direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
+  ! call pass_vector(CS%hatvel%hmarg_u,CS%hatvel%hmarg_v, G%Domain, &
+  !     direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
+  ! call pass_vector(CS%hatvel%havg_u,CS%hatvel%havg_v, G%Domain, &
+  !     direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
+  ! call pass_vector(CS%hatvel%hedge_u,CS%hatvel%hedge_v, G%Domain, &
+  !     direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
   ! call uvchksum("hmargUV", &
   ! CS%hatvel%hmarg_u, CS%hatvel%hmarg_v, G%HI, haloshift=0)
 
