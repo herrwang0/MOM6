@@ -1210,7 +1210,7 @@ subroutine create_depth_list(G, DL, min_depth_inc)
   integer :: i, j, k, kl
 character(len=240) :: msg
 write(msg, '(a)') 'Enter create_depth'
-call MOM_error(WARNING, trim(msg))
+call MOM_error(WARNING, trim(msg), all_print=.True.)
 mls = G%Domain%niglobal*G%Domain%njglobal
 !write(msg, '(a,  4(a, i4,x))') 'before init dlist', &
 !        'idg_offset: ', G%idg_offset, 'jdg_offset: ', G%jdg_offset, 'isg: ', G%isg, 'isg: ', G%jsg
