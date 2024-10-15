@@ -105,7 +105,7 @@ subroutine DOME_initialize_thickness(h, depth_tot, G, GV, param_file, just_read)
   type(ocean_grid_type),   intent(in)  :: G           !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)  :: GV          !< The ocean's vertical grid structure.
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
-                           intent(out) :: h           !< The thickness that is being initialized [H ~> m or kg m-2].
+                           intent(out) :: h           !< The thickness that is being initialized [Z ~> m]
   real, dimension(SZI_(G),SZJ_(G)), &
                            intent(in)  :: depth_tot   !< The nominal total depth of the ocean [Z ~> m]
   type(param_file_type),   intent(in)  :: param_file  !< A structure indicating the open file
@@ -141,9 +141,9 @@ subroutine DOME_initialize_thickness(h, depth_tot, G, GV, param_file, just_read)
       eta1D(K) = e0(K)
       if (eta1D(K) < (eta1D(K+1) + GV%Angstrom_Z)) then
         eta1D(K) = eta1D(K+1) + GV%Angstrom_Z
-        h(i,j,k) = GV%Angstrom_H
+        h(i,j,k) = GV%Angstrom_Z
       else
-        h(i,j,k) = GV%Z_to_H * (eta1D(K) - eta1D(K+1))
+        h(i,j,k) = eta1D(K) - eta1D(K+1)
       endif
     enddo
   enddo ; enddo
@@ -306,6 +306,8 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   real :: drho_dT(SZK_(GV))  ! Derivative of density with temperature [R C-1 ~> kg m-3 degC-1].
   real :: drho_dS(SZK_(GV))  ! Derivative of density with salinity [R S-1 ~> kg m-3 ppt-1].
   real :: rho_guess(SZK_(GV)) ! Potential density at T0 & S0 [R ~> kg m-3].
+  real :: S_ref             ! A default value for salinities [S ~> ppt]
+  real :: T_light           ! A first guess at the temperature of the lightest layer [C ~> degC]
   ! The following variables are used to set up the transport in the DOME example.
   real :: tr_0              ! The total integrated inflow transport [H L2 T-1 ~> m3 s-1 or kg s-1]
   real :: tr_k              ! The integrated inflow transport of a layer [H L2 T-1 ~> m3 s-1 or kg s-1]
@@ -320,6 +322,7 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   real :: D_edge            ! The thickness [Z ~> m] of the dense fluid at the
                             ! inner edge of the inflow
   real :: RLay_range        ! The range of densities [R ~> kg m-3].
+  real :: Rlay_Ref          ! The surface layer's target density [R ~> kg m-3].
   real :: f_0               ! The reference value of the Coriolis parameter [T-1 ~> s-1]
   real :: f_inflow          ! The value of the Coriolis parameter used to determine DOME inflow
                             ! properties [T-1 ~> s-1]
@@ -331,7 +334,7 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                             ! region of the specified shear profile [nondim]
   character(len=32)  :: name ! The name of a tracer field.
   character(len=40)  :: mdl = "DOME_set_OBC_data" ! This subroutine's name.
-  integer :: i, j, k, itt, is, ie, js, je, isd, ied, jsd, jed, m, nz, ntherm
+  integer :: i, j, k, itt, is, ie, js, je, isd, ied, jsd, jed, m, nz, ntherm, ntr_id
   integer :: IsdB, IedB, JsdB, JedB
   type(OBC_segment_type), pointer :: segment => NULL()
   type(tracer_type), pointer      :: tr_ptr => NULL()
@@ -349,6 +352,9 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   call get_param(PF, mdl, "DENSITY_RANGE", Rlay_range, &
                  "The range of reference potential densities in the layers.", &
                  units="kg m-3", default=2.0, scale=US%kg_m3_to_R)
+  call get_param(PF, mdl, "LIGHTEST_DENSITY", Rlay_Ref, &
+                 "The reference potential density used for layer 1.", &
+                 units="kg m-3", default=US%R_to_kg_m3*GV%Rho0, scale=US%kg_m3_to_R)
   call get_param(PF, mdl, "F_0", f_0, &
                  "The reference value of the Coriolis parameter with the betaplane option.", &
                  units="s-1", default=0.0, scale=US%T_to_s)
@@ -357,12 +363,25 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                  "inflow properties.", units="s-1", default=f_0*US%s_to_T, scale=US%T_to_s)
   call get_param(PF, mdl, "DOME_INFLOW_LON", inflow_lon, &
                  "The edge longitude of the DOME inflow.", units="km", default=1000.0)
+  if (associated(tv%S) .or. associated(tv%T)) then
+    call get_param(PF, mdl, "S_REF", S_ref, &
+                 units="ppt", default=35.0, scale=US%ppt_to_S, do_not_log=.true.)
+    call get_param(PF, mdl, "DOME_T_LIGHT", T_light, &
+                 "A first guess at the temperature of the lightest layer in the DOME test case.", &
+                 units="degC", default=25.0, scale=US%degC_to_C)
+  endif
 
   if (.not.associated(OBC)) return
 
-  g_prime_tot = (GV%g_Earth / GV%Rho0) * Rlay_range
-  Def_Rad = sqrt(D_edge*g_prime_tot) / abs(f_inflow)
-  tr_0 = (-D_edge*sqrt(D_edge*g_prime_tot)*0.5*Def_Rad) * GV%Z_to_H
+  if (GV%Boussinesq) then
+    g_prime_tot = (GV%g_Earth / GV%Rho0) * Rlay_range
+    Def_Rad = sqrt(D_edge*g_prime_tot) / abs(f_inflow)
+    tr_0 = (-D_edge*sqrt(D_edge*g_prime_tot)*0.5*Def_Rad) * GV%Z_to_H
+  else
+    g_prime_tot = (GV%g_Earth / (Rlay_Ref + 0.5*Rlay_range)) * Rlay_range
+    Def_Rad = sqrt(D_edge*g_prime_tot) / abs(f_inflow)
+    tr_0 = (-D_edge*sqrt(D_edge*g_prime_tot)*0.5*Def_Rad) * (Rlay_Ref + 0.5*Rlay_range) * GV%RZ_to_H
+  endif
 
   I_Def_Rad = 1.0 / (1.0e-3*US%L_to_m*Def_Rad)
 
@@ -413,16 +432,16 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   !   The inflow values of temperature and salinity also need to be set here if
   ! these variables are used.  The following code is just a naive example.
   if (associated(tv%S)) then
-    ! In this example, all S inflows have values of 35 psu.
+    ! In this example, all S inflows have values given by S_ref.
     name = 'salt'
-    call tracer_name_lookup(tr_Reg, tr_ptr, name)
-    call register_segment_tracer(tr_ptr, PF, GV, segment, OBC_scalar=35.0*US%ppt_to_S, scale=US%ppt_to_S)
+    call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
+    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, OBC_scalar=S_ref, scale=US%ppt_to_S)
   endif
   if (associated(tv%T)) then
     ! In this example, the T values are set to be consistent with the layer
-    ! target density and a salinity of 35 psu.  This code is taken from
+    ! target density and a salinity of S_ref.  This code is taken from
     ! USER_initialize_temp_sal.
-    pres(:) = tv%P_Ref ; S0(:) = 35.0*US%ppt_to_S ; T0(1) = 25.0*US%degC_to_C
+    pres(:) = tv%P_Ref ; S0(:) = S_ref ; T0(1) = T_light
     call calculate_density(T0(1), S0(1), pres(1), rho_guess(1), tv%eqn_of_state)
     call calculate_density_derivs(T0, S0, pres, drho_dT, drho_dS, tv%eqn_of_state, (/1,1/) )
 
@@ -440,8 +459,8 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
       segment%field(1)%buffer_src(i,j,k) = T0(k)
     enddo ; enddo ; enddo
     name = 'temp'
-    call tracer_name_lookup(tr_Reg, tr_ptr, name)
-    call register_segment_tracer(tr_ptr, PF, GV, segment, OBC_array=.true., scale=US%degC_to_C)
+    call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
+    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, OBC_array=.true., scale=US%degC_to_C)
   endif
 
   ! Set up dye tracers
@@ -453,16 +472,16 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
     else ; segment%field(ntherm+1)%buffer_src(i,j,k) = 1.0 ; endif
   enddo ; enddo ; enddo
   name = 'tr_D1'
-  call tracer_name_lookup(tr_Reg, tr_ptr, name)
-  call register_segment_tracer(tr_ptr, PF, GV, OBC%segment(1), OBC_array=.true.)
+  call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
+  call register_segment_tracer(tr_ptr, ntr_id, PF, GV, OBC%segment(1), OBC_array=.true.)
 
   ! All tracers but the first have 0 concentration in their inflows. As 0 is the
   ! default value for the inflow concentrations, the following calls are unnecessary.
   do m=2,tr_Reg%ntr
     if (m < 10) then ; write(name,'("tr_D",I1.1)') m
     else ; write(name,'("tr_D",I2.2)') m ; endif
-    call tracer_name_lookup(tr_Reg, tr_ptr, name)
-    call register_segment_tracer(tr_ptr, PF, GV, OBC%segment(1), OBC_scalar=0.0)
+    call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
+    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, OBC%segment(1), OBC_scalar=0.0)
   enddo
 
 end subroutine DOME_set_OBC_data

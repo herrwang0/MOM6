@@ -67,12 +67,14 @@ subroutine end_coord_rho(CS)
 end subroutine end_coord_rho
 
 !> This subroutine can be used to set the parameters for the coord_rho module
-subroutine set_rho_params(CS, min_thickness, integrate_downward_for_e, interp_CS)
+subroutine set_rho_params(CS, min_thickness, integrate_downward_for_e, interp_CS, ref_pressure)
   type(rho_CS),      pointer    :: CS !< Coordinate control structure
   real,    optional, intent(in) :: min_thickness !< Minimum allowed thickness [H ~> m or kg m-2]
   logical, optional, intent(in) :: integrate_downward_for_e !< If true, integrate for interface
                                       !! positions from the top downward.  If false, integrate
                                       !! from the bottom upward, as does the rest of the model.
+  real,    optional, intent(in) :: ref_pressure     !< The reference pressure for density-dependent
+                                                    !! coordinates [R L2 T-2 ~> Pa]
 
   type(interp_CS_type), optional, intent(in) :: interp_CS !< Controls for interpolation
 
@@ -81,6 +83,7 @@ subroutine set_rho_params(CS, min_thickness, integrate_downward_for_e, interp_CS
   if (present(min_thickness)) CS%min_thickness = min_thickness
   if (present(integrate_downward_for_e)) CS%integrate_downward_for_e = integrate_downward_for_e
   if (present(interp_CS)) CS%interp_CS = interp_CS
+  if (present(ref_pressure)) CS%ref_pressure = ref_pressure
 end subroutine set_rho_params
 
 !> Build a rho coordinate column
@@ -97,11 +100,11 @@ subroutine build_rho_column(CS, nz, depth, h, T, S, eqn_of_state, z_interface, &
   real, dimension(nz), intent(in)    :: S  !< Salinity for source column [S ~> ppt]
   type(EOS_type),      intent(in)    :: eqn_of_state !< Equation of state structure
   real, dimension(CS%nk+1), &
-                       intent(inout) :: z_interface !< Absolute positions of interfaces
+                       intent(inout) :: z_interface !< Absolute positions of interfaces [H ~> m or kg m-2]
   real, optional,      intent(in)    :: z_rigid_top !< The height of a rigid top (positive upward in the same
-  !! units as depth) [Z ~> m] or [H ~> m or kg m-2]
+                                             !! units as depth) [H ~> m or kg m-2]
   real, optional,      intent(in)    :: eta_orig !< The actual original height of the top in the same
-                                                   !! units as depth) [Z ~> m] or [H ~> m or kg m-2]
+                                                   !! units as depth) [H ~> m or kg m-2]
   real,      optional, intent(in)    :: h_neglect !< A negligibly small width for the purpose
                                              !! of cell reconstructions [H ~> m or kg m-2]
   real,      optional, intent(in)    :: h_neglect_edge !< A negligibly small width for the purpose
@@ -116,21 +119,9 @@ subroutine build_rho_column(CS, nz, depth, h, T, S, eqn_of_state, z_interface, &
   real, dimension(nz+1) :: xTmp   ! Temporary positions [H ~> m or kg m-2]
   real, dimension(CS%nk) :: h_new ! New thicknesses [H ~> m or kg m-2]
   real, dimension(CS%nk+1) :: x1  ! Interface heights [H ~> m or kg m-2]
-  real :: z0_top, eta ! Thicknesses or heights [Z ~> m] or [H ~> m or kg m-2]
 
   ! Construct source column with vanished layers removed (stored in h_nv)
   call copy_finite_thicknesses(nz, h, CS%min_thickness, count_nonzero_layers, h_nv, mapping)
-
-  z0_top = 0.
-  eta=0.0
-  if (present(z_rigid_top)) then
-    z0_top = z_rigid_top
-    eta=z0_top
-    if (present(eta_orig)) then
-      eta=eta_orig
-    endif
-  endif
-
 
   if (count_nonzero_layers > 1) then
     xTmp(1) = 0.0
@@ -209,7 +200,7 @@ subroutine build_rho_column_iteratively(CS, remapCS, nz, depth, h, T, S, eqn_of_
   real, dimension(nz),   intent(in)    :: T  !< T for column [C ~> degC]
   real, dimension(nz),   intent(in)    :: S  !< S for column [S ~> ppt]
   type(EOS_type),        intent(in)    :: eqn_of_state !< Equation of state structure
-  real, dimension(nz+1), intent(inout) :: zInterface !< Absolute positions of interfaces
+  real, dimension(nz+1), intent(inout) :: zInterface !< Absolute positions of interfaces [Z ~> m]
   real,        optional, intent(in)    :: h_neglect !< A negligibly small width for the
                                              !! purpose of cell reconstructions
                                              !! in the same units as h [Z ~> m]
@@ -225,7 +216,6 @@ subroutine build_rho_column_iteratively(CS, remapCS, nz, depth, h, T, S, eqn_of_
   real, dimension(nz) :: pres       ! The pressure used in the equation of state [R L2 T-2 ~> Pa].
   real, dimension(nz) :: densities  ! Layer densities [R ~> kg m-3]
   real, dimension(nz) :: T_tmp, S_tmp ! A temporary profile of temperature [C ~> degC] and salinity [S ~> ppt].
-  real, dimension(nz) :: Tmp        ! A temporary variable holding a remapped variable.
   real, dimension(nz) :: h0, h1, hTmp ! Temporary thicknesses [Z ~> m]
   real :: deviation            ! When iterating to determine the final grid, this is the
                                ! deviation between two successive grids [Z ~> m].
@@ -282,11 +272,9 @@ subroutine build_rho_column_iteratively(CS, remapCS, nz, depth, h, T, S, eqn_of_
       h1(k) = x1(k+1) - x1(k)
     enddo
 
-    call remapping_core_h(remapCS, nz, h0, S, nz, h1, Tmp, h_neglect, h_neglect_edge)
-    S_tmp(:) = Tmp(:)
+    call remapping_core_h(remapCS, nz, h0, S, nz, h1, S_tmp, h_neglect, h_neglect_edge)
 
-    call remapping_core_h(remapCS, nz, h0, T, nz, h1, Tmp, h_neglect, h_neglect_edge)
-    T_tmp(:) = Tmp(:)
+    call remapping_core_h(remapCS, nz, h0, T, nz, h1, T_tmp, h_neglect, h_neglect_edge)
 
     ! Compute the deviation between two successive grids
     deviation = 0.0
@@ -374,17 +362,19 @@ end subroutine copy_finite_thicknesses
 subroutine old_inflate_layers_1d( min_thickness, nk, h )
 
   ! Argument
-  real,               intent(in)    :: min_thickness !< Minimum allowed thickness [H ~> m or kg m-2]
+  real,               intent(in)    :: min_thickness !< Minimum allowed thickness [H ~> m or kg m-2] or other units
   integer,            intent(in)    :: nk  !< Number of layers in the grid
-  real, dimension(:), intent(inout) :: h   !< Layer thicknesses [H ~> m or kg m-2]
+  real, dimension(:), intent(inout) :: h   !< Layer thicknesses [H ~> m or kg m-2] or other units
 
   ! Local variable
   integer   :: k
   integer   :: k_found
   integer   :: count_nonzero_layers
-  real      :: delta
-  real      :: correction
-  real      :: maxThickness
+  real      :: delta         ! An increase to a layer to increase it to the minimum thickness in the
+                             ! same units as h, often [H ~> m or kg m-2]
+  real      :: correction    ! The accumulated correction that will be applied to the thickest layer
+                             ! to give mass conservation in the same units as h, often [H ~> m or kg m-2]
+  real      :: maxThickness  ! The thickness of the thickest layer in the same units as h, often [H ~> m or kg m-2]
 
   ! Count number of nonzero layers
   count_nonzero_layers = 0

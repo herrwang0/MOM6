@@ -4,20 +4,23 @@ module MOM_sum_output
 ! This file is part of MOM6. See LICENSE.md for the license.
 
 use iso_fortran_env, only : int64
+use MOM_checksums,     only : is_NaN
 use MOM_coms,          only : sum_across_PEs, PE_here, root_PE, num_PEs, max_across_PEs, field_chksum
 use MOM_coms,          only : reproducing_sum, reproducing_sum_EFP, EFP_to_real, real_to_EFP
 use MOM_coms,          only : EFP_type, operator(+), operator(-), assignment(=), EFP_sum_across_PEs
-use MOM_error_handler, only : MOM_error, FATAL, WARNING, is_root_pe, MOM_mesg
+use MOM_error_handler, only : MOM_error, FATAL, WARNING, NOTE, is_root_pe
 use MOM_file_parser,   only : get_param, log_param, log_version, param_file_type
 use MOM_forcing_type,  only : forcing
 use MOM_grid,          only : ocean_grid_type
 use MOM_interface_heights, only : find_eta
-use MOM_io,            only : create_file, file_type, fieldtype, flush_file, reopen_file, close_file
-use MOM_io,            only : file_exists, slasher, vardesc, var_desc, write_field, MOM_write_field
+use MOM_io,            only : create_MOM_file, reopen_MOM_file
+use MOM_io,            only : MOM_infra_file, MOM_netcdf_file, MOM_field
+use MOM_io,            only : file_exists, slasher, vardesc, var_desc, MOM_write_field
 use MOM_io,            only : field_size, read_variable, read_attribute, open_ASCII_file, stdout
 use MOM_io,            only : axis_info, set_axis_info, delete_axis_info, get_filename_appendix
 use MOM_io,            only : attribute_info, set_attribute_info, delete_attribute_info
 use MOM_io,            only : APPEND_FILE, SINGLE_FILE, WRITEONLY_FILE
+use MOM_spatial_means, only : array_global_min_max
 use MOM_time_manager,  only : time_type, get_time, get_date, set_time, operator(>)
 use MOM_time_manager,  only : operator(+), operator(-), operator(*), operator(/)
 use MOM_time_manager,  only : operator(/=), operator(<=), operator(>=), operator(<)
@@ -108,23 +111,31 @@ type, public :: sum_output_CS ; private
                                                !! of calls to write_energy and revert to the standard
                                                !! energysavedays interval
 
-  real    :: timeunit           !<  The length of the units for the time axis [s].
+  real    :: timeunit           !< The length of the units for the time axis and certain input parameters
+                                !! including ENERGYSAVEDAYS [s].
+
   logical :: date_stamped_output !< If true, use dates (not times) in messages to stdout.
   type(time_type) :: Start_time !< The start time of the simulation.
                                 ! Start_time is set in MOM_initialization.F90
   integer, pointer :: ntrunc => NULL() !< The number of times the velocity has been
                                 !! truncated since the last call to write_energy.
   real    :: max_Energy         !< The maximum permitted energy per unit mass.  If there is
-                                !! more energy than this, the model should stop [m2 s-2].
+                                !! more energy than this, the model should stop [L2 T-2 ~> m2 s-2].
   integer :: maxtrunc           !< The number of truncations per energy save
                                 !! interval at which the run is stopped.
   logical :: write_stocks       !< If true, write the integrated tracer amounts
                                 !! to stdout when the energy files are written.
+  logical :: write_min_max      !< If true, write the maximum and minimum values of temperature,
+                                !! salinity and some tracer concentrations to stdout when the energy
+                                !! files are written.
+  logical :: write_min_max_loc  !< If true, write the locations of the maximum and minimum values
+                                !! of temperature, salinity and some tracer concentrations to stdout
+                                !! when the energy files are written.
   integer :: previous_calls = 0 !< The number of times write_energy has been called.
   integer :: prev_n = 0         !< The value of n from the last call.
-  type(file_type) :: fileenergy_nc !< The file handle for the netCDF version of the energy file.
+  type(MOM_netcdf_file) :: fileenergy_nc !< The file handle for the netCDF version of the energy file.
   integer :: fileenergy_ascii   !< The unit number of the ascii version of the energy file.
-  type(fieldtype), dimension(NUM_FIELDS+MAX_FIELDS_) :: &
+  type(MOM_field), dimension(NUM_FIELDS+MAX_FIELDS_) :: &
              fields             !< fieldtype variables for the output fields.
   character(len=200) :: energyfile  !< The name of the energy file with path.
 end type sum_output_CS
@@ -147,13 +158,12 @@ subroutine MOM_sum_output_init(G, GV, US, param_file, directory, ntrnc, &
   type(Sum_output_CS),     pointer       :: CS         !< A pointer that is set to point to the
                                                        !! control structure for this module.
   ! Local variables
-  real :: Time_unit ! The time unit in seconds for ENERGYSAVEDAYS [s]
-  real :: maxvel    ! The maximum permitted velocity [m s-1]
+  real :: maxvel    ! The maximum permitted velocity [L T-1 ~> m s-1]
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl = "MOM_sum_output" ! This module's name.
   character(len=200) :: energyfile  ! The name of the energy file.
-  character(len=32) :: filename_appendix = '' !fms appendix to filename for ensemble runs
+  character(len=32) :: filename_appendix = '' ! FMS appendix to filename for ensemble runs
 
   if (associated(CS)) then
     call MOM_error(WARNING, "MOM_sum_output_init called with associated control structure.")
@@ -176,6 +186,15 @@ subroutine MOM_sum_output_init(G, GV, US, param_file, directory, ntrnc, &
   call get_param(param_file, mdl, "ENABLE_THERMODYNAMICS", CS%use_temperature, &
                  "If true, Temperature and salinity are used as state "//&
                  "variables.", default=.true.)
+  call get_param(param_file, mdl, "WRITE_TRACER_MIN_MAX", CS%write_min_max, &
+                 "If true, write the maximum and minimum values of temperature, salinity and "//&
+                 "some tracer concentrations to stdout when the energy files are written.", &
+                 default=.false., do_not_log=.not.CS%write_stocks, debuggingParam=.true.)
+  call get_param(param_file, mdl, "WRITE_TRACER_MIN_MAX_LOC", CS%write_min_max_loc, &
+                 "If true, write the locations of the maximum and minimum values of "//&
+                 "temperature, salinity and some tracer concentrations to stdout when the "//&
+                 "energy files are written.", &
+                 default=.false., do_not_log=.not.CS%write_min_max, debuggingParam=.true.)
   call get_param(param_file, mdl, "DT", CS%dt_in_T, &
                  "The (baroclinic) dynamics time step.", &
                  units="s", scale=US%s_to_T, fail_if_missing=.true.)
@@ -190,13 +209,14 @@ subroutine MOM_sum_output_init(G, GV, US, param_file, directory, ntrnc, &
                  "The maximum permitted average energy per unit mass; the "//&
                  "model will be stopped if there is more energy than "//&
                  "this.  If zero or negative, this is set to 10*MAXVEL^2.", &
-                 units="m2 s-2", default=0.0)
+                 units="m2 s-2", default=0.0, scale=US%m_s_to_L_T**2)
   if (CS%max_Energy <= 0.0) then
     call get_param(param_file, mdl, "MAXVEL", maxvel, &
                  "The maximum velocity allowed before the velocity "//&
-                 "components are truncated.", units="m s-1", default=3.0e8)
+                 "components are truncated.", units="m s-1", default=3.0e8, scale=US%m_s_to_L_T)
     CS%max_Energy = 10.0 * maxvel**2
-    call log_param(param_file, mdl, "MAX_ENERGY as used", CS%max_Energy)
+    call log_param(param_file, mdl, "MAX_ENERGY as used", CS%max_Energy, &
+                   units="m2 s-2", unscale=US%L_T_to_m_s**2)
   endif
 
   call get_param(param_file, mdl, "ENERGYFILE", energyfile, &
@@ -218,12 +238,11 @@ subroutine MOM_sum_output_init(G, GV, US, param_file, directory, ntrnc, &
   call get_param(param_file, mdl, "DATE_STAMPED_STDOUT", CS%date_stamped_output, &
                  "If true, use dates (not times) in messages to stdout", &
                  default=.true.)
+  ! Note that the units of CS%Timeunit are the MKS units of [s].
   call get_param(param_file, mdl, "TIMEUNIT", CS%Timeunit, &
                  "The time unit in seconds a number of input fields", &
                  units="s", default=86400.0)
   if (CS%Timeunit < 0.0) CS%Timeunit = 86400.0
-
-
 
   if (CS%do_APE_calc) then
     call get_param(param_file, mdl, "READ_DEPTH_LIST", CS%read_depth_list, &
@@ -257,18 +276,15 @@ subroutine MOM_sum_output_init(G, GV, US, param_file, directory, ntrnc, &
     CS%DL%listsize = 1
   endif
 
-  call get_param(param_file, mdl, "TIMEUNIT", Time_unit, &
-                 "The time unit for ENERGYSAVEDAYS.", &
-                 units="s", default=86400.0)
   call get_param(param_file, mdl, "ENERGYSAVEDAYS",CS%energysavedays, &
                  "The interval in units of TIMEUNIT between saves of the "//&
                  "energies of the run and other globally summed diagnostics.",&
-                 default=set_time(0,days=1), timeunit=Time_unit)
+                 default=set_time(0,days=1), timeunit=CS%Timeunit)
   call get_param(param_file, mdl, "ENERGYSAVEDAYS_GEOMETRIC",CS%energysavedays_geometric, &
                  "The starting interval in units of TIMEUNIT for the first call "//&
                  "to save the energies of the run and other globally summed diagnostics. "//&
                  "The interval increases by a factor of 2. after each call to write_energy.",&
-                 default=set_time(seconds=0), timeunit=Time_unit)
+                 default=set_time(seconds=0), timeunit=CS%Timeunit)
 
   if ((time_type_to_real(CS%energysavedays_geometric) > 0.) .and. &
      (CS%energysavedays_geometric < CS%energysavedays)) then
@@ -328,7 +344,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
   real :: PE_tot       ! The total available potential energy [J].
   real :: Z_0APE(SZK_(GV)+1) ! The uniform depth which overlies the same
                        ! volume as is below an interface [Z ~> m].
-  real :: H_0APE(SZK_(GV)+1) ! A version of Z_0APE, converted to m, usually positive.
+  real :: H_0APE(SZK_(GV)+1) ! A version of Z_0APE, converted to m, usually positive [m].
   real :: toten        ! The total kinetic & potential energies of
                        ! all layers [J] (i.e. kg m2 s-2).
   real :: En_mass      ! The total kinetic and potential energies divided by
@@ -381,7 +397,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
   real :: CFL_lin      ! A simpler definition of the CFL number [nondim].
   real :: max_CFL(2)   ! The maxima of the CFL numbers [nondim].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: &
-    tmp1               ! A temporary array
+    tmp1               ! A temporary array used in reproducing sums [various]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: &
     PE_pt              ! The potential energy at each point [J].
   real, dimension(SZI_(G),SZJ_(G)) :: &
@@ -398,21 +414,54 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
                                  ! lbelow & labove are lower & upper limits for li
                                  ! in the search for the entry in lH to use.
   integer :: start_of_day, num_days
-  real    :: reday, var
+  real    :: reday  ! Time in units given by CS%Timeunit, but often [days]
   character(len=240) :: energypath_nc
   character(len=200) :: mesg
   character(len=32)  :: mesg_intro, time_units, day_str, n_str, date_str
   logical :: date_stamped
   type(time_type) :: dt_force ! A time_type version of the forcing timestep.
-  real :: Tr_stocks(MAX_FIELDS_) ! The total amounts of each of the registered tracers
-  real :: Tr_min(MAX_FIELDS_)   ! The global minimum unmasked value of the tracers
-  real :: Tr_max(MAX_FIELDS_)   ! The global maximum unmasked value of the tracers
+
+  real :: S_min   ! The global minimum unmasked value of the salinity [ppt]
+  real :: S_max   ! The global maximum unmasked value of the salinity [ppt]
+  real :: S_min_x ! The x-positions of the global salinity minima
+                  ! in the units of G%geoLonT, often [degrees_E] or [km]
+  real :: S_min_y ! The y-positions of the global salinity minima
+                  ! in the units of G%geoLatT, often [degrees_N] or [km]
+  real :: S_min_z ! The z-positions of the global salinity minima [layer]
+  real :: S_max_x ! The x-positions of the global salinity maxima
+                  ! in the units of G%geoLonT, often [degrees_E] or [km]
+  real :: S_max_y ! The y-positions of the global salinity maxima
+                  ! in the units of G%geoLatT, often [degrees_N] or [km]
+  real :: S_max_z ! The z-positions of the global salinity maxima [layer]
+
+  real :: T_min   ! The global minimum unmasked value of the temperature [degC]
+  real :: T_max   ! The global maximum unmasked value of the temperature [degC]
+  real :: T_min_x ! The x-positions of the global temperature minima
+                  ! in the units of G%geoLonT, often [degreeT_E] or [km]
+  real :: T_min_y ! The y-positions of the global temperature minima
+                  ! in the units of G%geoLatT, often [degreeT_N] or [km]
+  real :: T_min_z ! The z-positions of the global temperature minima [layer]
+  real :: T_max_x ! The x-positions of the global temperature maxima
+                  ! in the units of G%geoLonT, often [degreeT_E] or [km]
+  real :: T_max_y ! The y-positions of the global temperature maxima
+                  ! in the units of G%geoLatT, often [degreeT_N] or [km]
+  real :: T_max_z ! The z-positions of the global temperature maxima [layer]
+
+
+  ! The units of the tracer stock vary between tracers, with [conc] given explicitly by Tr_units.
+  real :: Tr_stocks(MAX_FIELDS_) ! The total amounts of each of the registered tracers [kg conc]
+  real :: Tr_min(MAX_FIELDS_)   ! The global minimum unmasked value of the tracers [conc]
+  real :: Tr_max(MAX_FIELDS_)   ! The global maximum unmasked value of the tracers [conc]
   real :: Tr_min_x(MAX_FIELDS_) ! The x-positions of the global tracer minima
+                                ! in the units of G%geoLonT, often [degrees_E] or [km]
   real :: Tr_min_y(MAX_FIELDS_) ! The y-positions of the global tracer minima
-  real :: Tr_min_z(MAX_FIELDS_) ! The z-positions of the global tracer minima
+                                ! in the units of G%geoLatT, often [degrees_N] or [km]
+  real :: Tr_min_z(MAX_FIELDS_) ! The z-positions of the global tracer minima [layer]
   real :: Tr_max_x(MAX_FIELDS_) ! The x-positions of the global tracer maxima
+                                ! in the units of G%geoLonT, often [degrees_E] or [km]
   real :: Tr_max_y(MAX_FIELDS_) ! The y-positions of the global tracer maxima
-  real :: Tr_max_z(MAX_FIELDS_) ! The z-positions of the global tracer maxima
+                                ! in the units of G%geoLatT, often [degrees_N] or [km]
+  real :: Tr_max_z(MAX_FIELDS_) ! The z-positions of the global tracer maxima [layer]
   logical :: Tr_minmax_avail(MAX_FIELDS_) ! A flag indicating whether the global minimum and
                                 ! maximum information are available for each of the tracers
   character(len=40), dimension(MAX_FIELDS_) :: &
@@ -505,40 +554,50 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
     do k=1,nz ; vol_lay(k) = (US%m_to_L**2*GV%H_to_Z/GV%H_to_kg_m2)*mass_lay(k) ; enddo
   else
     tmp1(:,:,:) = 0.0
-    if (CS%do_APE_calc) then
-      do k=1,nz ; do j=js,je ; do i=is,ie
-        tmp1(i,j,k) = HL2_to_kg * h(i,j,k) * areaTm(i,j)
-      enddo ; enddo ; enddo
-      mass_tot = reproducing_sum(tmp1, isr, ier, jsr, jer, sums=mass_lay, EFP_sum=mass_EFP)
+    do k=1,nz ; do j=js,je ; do i=is,ie
+      tmp1(i,j,k) = HL2_to_kg * h(i,j,k) * areaTm(i,j)
+    enddo ; enddo ; enddo
+    mass_tot = reproducing_sum(tmp1, isr, ier, jsr, jer, sums=mass_lay, EFP_sum=mass_EFP)
 
+    if (CS%do_APE_calc) then
       call find_eta(h, tv, G, GV, US, eta, dZref=G%Z_ref)
       do k=1,nz ; do j=js,je ; do i=is,ie
         tmp1(i,j,k) = US%Z_to_m*US%L_to_m**2*(eta(i,j,K)-eta(i,j,K+1)) * areaTm(i,j)
       enddo ; enddo ; enddo
       vol_tot = reproducing_sum(tmp1, isr, ier, jsr, jer, sums=vol_lay)
       do k=1,nz ; vol_lay(k) = US%m_to_Z*US%m_to_L**2 * vol_lay(k) ; enddo
-    else
-      do k=1,nz ; do j=js,je ; do i=is,ie
-        tmp1(i,j,k) = HL2_to_kg * h(i,j,k) * areaTm(i,j)
-      enddo ; enddo ; enddo
-      mass_tot = reproducing_sum(tmp1, isr, ier, jsr, jer, sums=mass_lay, EFP_sum=mass_EFP)
-      do k=1,nz ; vol_lay(k) = US%m_to_Z*US%m_to_L**2*US%kg_m3_to_R * (mass_lay(k) / GV%Rho0) ; enddo
     endif
   endif ! Boussinesq
 
   nTr_stocks = 0
   Tr_minmax_avail(:) = .false.
-  call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
-                          stock_units=Tr_units, num_stocks=nTr_stocks,&
-                          got_min_max=Tr_minmax_avail, global_min=Tr_min, global_max=Tr_max, &
-                          xgmin=Tr_min_x, ygmin=Tr_min_y, zgmin=Tr_min_z,&
-                          xgmax=Tr_max_x, ygmax=Tr_max_y, zgmax=Tr_max_z)
+  if (CS%write_min_max .and. CS%write_min_max_loc) then
+    call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
+                            stock_units=Tr_units, num_stocks=nTr_stocks,&
+                            got_min_max=Tr_minmax_avail, global_min=Tr_min, global_max=Tr_max, &
+                            xgmin=Tr_min_x, ygmin=Tr_min_y, zgmin=Tr_min_z,&
+                            xgmax=Tr_max_x, ygmax=Tr_max_y, zgmax=Tr_max_z)
+  elseif (CS%write_min_max) then
+    call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
+                            stock_units=Tr_units, num_stocks=nTr_stocks,&
+                            got_min_max=Tr_minmax_avail, global_min=Tr_min, global_max=Tr_max)
+  else
+    call call_tracer_stocks(h, Tr_stocks, G, GV, US, tracer_CSp, stock_names=Tr_names, &
+                            stock_units=Tr_units, num_stocks=nTr_stocks)
+  endif
   if (nTr_stocks > 0) then
     do m=1,nTr_stocks
       vars(num_nc_fields+m) = var_desc(Tr_names(m), units=Tr_units(m), &
                     longname=Tr_names(m), hor_grid='1', z_grid='1')
     enddo
     num_nc_fields = num_nc_fields + nTr_stocks
+  endif
+
+  if (CS%use_temperature .and. CS%write_stocks) then
+    call array_global_min_max(tv%T, G, nz, T_min, T_max, &
+                              T_min_x, T_min_y, T_min_z, T_max_x, T_max_y, T_max_z, unscale=US%C_to_degC)
+    call array_global_min_max(tv%S, G, nz, S_min, S_max, &
+                              S_min_x, S_min_y, S_min_z, S_max_x, S_max_y, S_max_z, unscale=US%S_to_ppt)
   endif
 
   if (CS%previous_calls == 0) then
@@ -596,17 +655,15 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
           endif
         endif
       endif
-    endif
 
-    energypath_nc = trim(CS%energyfile) // ".nc"
-    if (day > CS%Start_time) then
-      call reopen_file(CS%fileenergy_nc, trim(energypath_nc), vars, &
-                       num_nc_fields, CS%fields, SINGLE_FILE, CS%timeunit, &
-                       G=G, GV=GV)
-    else
-      call create_file(CS%fileenergy_nc, trim(energypath_nc), vars, &
-                       num_nc_fields, CS%fields, SINGLE_FILE, CS%timeunit, &
-                       G=G, GV=GV)
+      energypath_nc = trim(CS%energyfile) // ".nc"
+      if (day > CS%Start_time) then
+        call reopen_MOM_file(CS%fileenergy_nc, trim(energypath_nc), vars, &
+            num_nc_fields, CS%fields, SINGLE_FILE, CS%timeunit, G=G, GV=GV)
+      else
+        call create_MOM_file(CS%fileenergy_nc, trim(energypath_nc), vars, &
+            num_nc_fields, CS%fields, SINGLE_FILE, CS%timeunit, G=G, GV=GV)
+      endif
     endif
   endif
 
@@ -640,7 +697,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
     if (GV%Boussinesq) then
       do j=js,je ; do i=is,ie
         hbelow = 0.0
-        do k=nz,1,-1
+        do K=nz,1,-1
           hbelow = hbelow + h(i,j,k) * GV%H_to_Z
           hint = Z_0APE(K) + (hbelow - (G%bathyT(i,j) + G%Z_ref))
           hbot = Z_0APE(K) - (G%bathyT(i,j) + G%Z_ref)
@@ -649,14 +706,28 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
                   (hint * hint - hbot * hbot)
         enddo
       enddo ; enddo
-    else
+    elseif (GV%semi_Boussinesq) then
       do j=js,je ; do i=is,ie
-        do k=nz,1,-1
+        do K=nz,1,-1
           hint = Z_0APE(K) + eta(i,j,K)  ! eta and H_0 have opposite signs.
           hbot = max(Z_0APE(K) - (G%bathyT(i,j) + G%Z_ref), 0.0)
           PE_pt(i,j,K) = (0.5 * PE_scale_factor * areaTm(i,j) * (GV%Rho0*GV%g_prime(K))) * &
-                  (hint * hint - hbot * hbot)
+                         (hint * hint - hbot * hbot)
         enddo
+      enddo ; enddo
+    else
+      do j=js,je ; do i=is,ie
+        do K=nz,2,-1
+          hint = Z_0APE(K) + eta(i,j,K)  ! eta and H_0 have opposite signs.
+          hbot = max(Z_0APE(K) - (G%bathyT(i,j) + G%Z_ref), 0.0)
+          PE_pt(i,j,K) = (0.25 * PE_scale_factor * areaTm(i,j) * &
+                          ((GV%Rlay(k)+GV%Rlay(k-1))*GV%g_prime(K))) * &
+                         (hint * hint - hbot * hbot)
+        enddo
+        hint = Z_0APE(1) + eta(i,j,1)  ! eta and H_0 have opposite signs.
+        hbot = max(Z_0APE(1) - (G%bathyT(i,j) + G%Z_ref), 0.0)
+        PE_pt(i,j,1) = (0.5 * PE_scale_factor * areaTm(i,j) * (GV%Rlay(1)*GV%g_prime(1))) * &
+                       (hint * hint - hbot * hbot)
       enddo ; enddo
     endif
 
@@ -672,7 +743,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
   tmp1(:,:,:) = 0.0
   do k=1,nz ; do j=js,je ; do i=is,ie
     tmp1(i,j,k) = (0.25 * KE_scale_factor * (areaTm(i,j) * h(i,j,k))) * &
-            ((u(I-1,j,k)**2 + u(I,j,k)**2) + (v(i,J-1,k)**2 + v(i,J,k)**2))
+            (((u(I-1,j,k)**2) + (u(I,j,k)**2)) + ((v(i,J-1,k)**2) + (v(i,J,k)**2)))
   enddo ; enddo ; enddo
 
   KE_tot = reproducing_sum(tmp1, isr, ier, jsr, jer, sums=KE)
@@ -792,7 +863,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
     date_str = trim(mesg_intro)//trim(day_str)
   endif
 
-  if (is_root_pe()) then
+  if (is_root_pe()) then  ! Only the root PE actually writes anything.
     if (CS%use_temperature) then
         write(stdout,'(A," ",A,": En ",ES12.6, ", MaxCFL ", F8.5, ", Mass ", &
                 & ES18.12, ", Salt ", F15.11,", Temp ", F15.11)') &
@@ -836,6 +907,15 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
           write(stdout,'("    Total Salt: ",ES24.16,", Change: ",ES24.16," Error: ",ES12.5," (",ES8.1,")")') &
               Salt*0.001, Salt_chg*0.001, Salt_anom*0.001, Salt_anom/Salt
         endif
+        if (CS%write_min_max .and. CS%write_min_max_loc) then
+          write(stdout,'(16X,"Salinity Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                S_min, S_min_x, S_min_y, S_min_z
+          write(stdout,'(16X,"Salinity Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                S_max, S_max_x, S_max_y, S_max_z
+        elseif (CS%write_min_max) then
+          write(stdout,'(16X,"Salinity Global Min & Max:",ES24.16,1X,ES24.16)') S_min, S_max
+        endif
+
         if (Heat == 0.) then
           write(stdout,'("    Total Heat: ",ES24.16,", Change: ",ES24.16," Error: ",ES12.5)') &
               Heat, Heat_chg, Heat_anom
@@ -843,61 +923,70 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
           write(stdout,'("    Total Heat: ",ES24.16,", Change: ",ES24.16," Error: ",ES12.5," (",ES8.1,")")') &
               Heat, Heat_chg, Heat_anom, Heat_anom/Heat
         endif
+        if (CS%write_min_max .and. CS%write_min_max_loc) then
+          write(stdout,'(16X,"Temperature Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                T_min, T_min_x, T_min_y, T_min_z
+          write(stdout,'(16X,"Temperature Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+                T_max, T_max_x, T_max_y, T_max_z
+        elseif (CS%write_min_max) then
+          write(stdout,'(16X,"Temperature Global Min & Max:",ES24.16,1X,ES24.16)') T_min, T_max
+        endif
       endif
       do m=1,nTr_stocks
 
-         write(stdout,'("      Total ",a,": ",ES24.16,1X,a)') &
+        write(stdout,'("      Total ",a,": ",ES24.16,1X,a)') &
               trim(Tr_names(m)), Tr_stocks(m), trim(Tr_units(m))
 
-         if (Tr_minmax_avail(m)) then
-           write(stdout,'(64X,"Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
-                Tr_min(m),Tr_min_x(m),Tr_min_y(m),Tr_min_z(m)
-           write(stdout,'(64X,"Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
-                Tr_max(m),Tr_max_x(m),Tr_max_y(m),Tr_max_z(m)
+        if (CS%write_min_max .and. CS%write_min_max_loc .and. Tr_minmax_avail(m)) then
+          write(stdout,'(18X,a," Global Min:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+               trim(Tr_names(m)), Tr_min(m), Tr_min_x(m), Tr_min_y(m), Tr_min_z(m)
+          write(stdout,'(18X,a," Global Max:",ES24.16,1X,"at: (",f7.2,",",f7.2,",",f8.2,")"  )') &
+               trim(Tr_names(m)), Tr_max(m), Tr_max_x(m), Tr_max_y(m), Tr_max_z(m)
+        elseif (CS%write_min_max .and. Tr_minmax_avail(m)) then
+          write(stdout,'(18X,a," Global Min & Max:",ES24.16,1X,ES24.16)') &
+               trim(Tr_names(m)), Tr_min(m), Tr_max(m)
         endif
 
       enddo
     endif
-  endif
 
-  var = real(CS%ntrunc)
-  call write_field(CS%fileenergy_nc, CS%fields(1), var, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(2), toten, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(3), PE, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(4), KE, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(5), H_0APE, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(6), mass_lay, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(1), real(CS%ntrunc), reday)
+    call CS%fileenergy_nc%write_field(CS%fields(2), toten, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(3), PE, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(4), KE, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(5), H_0APE, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(6), mass_lay, reday)
 
-  call write_field(CS%fileenergy_nc, CS%fields(7), mass_tot, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(8), mass_chg, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(9), mass_anom, reday)
-  call write_field(CS%fileenergy_nc, CS%fields(10), max_CFL(1), reday)
-  call write_field(CS%fileenergy_nc, CS%fields(11), max_CFL(2), reday)
-  if (CS%use_temperature) then
-    call write_field(CS%fileenergy_nc, CS%fields(12), 0.001*Salt, reday)
-    call write_field(CS%fileenergy_nc, CS%fields(13), 0.001*salt_chg, reday)
-    call write_field(CS%fileenergy_nc, CS%fields(14), 0.001*salt_anom, reday)
-    call write_field(CS%fileenergy_nc, CS%fields(15), Heat, reday)
-    call write_field(CS%fileenergy_nc, CS%fields(16), heat_chg, reday)
-    call write_field(CS%fileenergy_nc, CS%fields(17), heat_anom, reday)
-    do m=1,nTr_stocks
-      call write_field(CS%fileenergy_nc, CS%fields(17+m), Tr_stocks(m), reday)
-    enddo
-  else
-    do m=1,nTr_stocks
-      call write_field(CS%fileenergy_nc, CS%fields(11+m), Tr_stocks(m), reday)
-    enddo
-  endif
+    call CS%fileenergy_nc%write_field(CS%fields(7), mass_tot, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(8), mass_chg, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(9), mass_anom, reday)
+    call CS%fileenergy_nc%write_field(CS%fields(10), max_CFL(1), reday)
+    call CS%fileenergy_nc%write_field(CS%fields(11), max_CFL(2), reday)
+    if (CS%use_temperature) then
+      call CS%fileenergy_nc%write_field(CS%fields(12), 0.001*Salt, reday)
+      call CS%fileenergy_nc%write_field(CS%fields(13), 0.001*salt_chg, reday)
+      call CS%fileenergy_nc%write_field(CS%fields(14), 0.001*salt_anom, reday)
+      call CS%fileenergy_nc%write_field(CS%fields(15), Heat, reday)
+      call CS%fileenergy_nc%write_field(CS%fields(16), heat_chg, reday)
+      call CS%fileenergy_nc%write_field(CS%fields(17), heat_anom, reday)
+      do m=1,nTr_stocks
+        call CS%fileenergy_nc%write_field(CS%fields(17+m), Tr_stocks(m), reday)
+      enddo
+    else
+      do m=1,nTr_stocks
+        call CS%fileenergy_nc%write_field(CS%fields(11+m), Tr_stocks(m), reday)
+      enddo
+    endif
 
-  call flush_file(CS%fileenergy_nc)
+    call CS%fileenergy_nc%flush()
+  endif  ! Only the root PE actually writes anything.
 
-  ! The second (impossible-looking) test looks for a NaN in En_mass.
-  if ((En_mass>CS%max_Energy) .or. &
-     ((En_mass>CS%max_Energy) .and. (En_mass<CS%max_Energy))) then
+  if (is_NaN(En_mass)) then
+    call MOM_error(FATAL, "write_energy : NaNs in total model energy forced model termination.")
+  elseif (En_mass > US%L_T_to_m_s**2*CS%max_Energy) then
     write(mesg,'("Energy per unit mass of ",ES11.4," exceeds ",ES11.4)') &
-                  En_mass, CS%max_Energy
-    call MOM_error(FATAL, &
-      "write_energy : Excessive energy per unit mass or NaNs forced model termination.")
+                  En_mass, US%L_T_to_m_s**2*CS%max_Energy
+    call MOM_error(FATAL, "write_energy : Excessive energy per unit mass forced model termination.")
   endif
   if (CS%ntrunc>CS%maxtrunc) then
     call MOM_error(FATAL, "write_energy : Ocean velocity has been truncated too many times.")
@@ -913,7 +1002,7 @@ subroutine write_energy(u, v, h, tv, day, n, G, GV, US, CS, tracer_CSp, dt_forci
 
 end subroutine write_energy
 
-!> This subroutine accumates the net input of volume, salt and heat, through
+!> This subroutine accumulates the net input of volume, salt and heat, through
 !! the ocean surface for use in diagnosing conservation.
 subroutine accumulate_net_input(fluxes, sfc_state, tv, dt, G, US, CS)
   type(forcing),         intent(in) :: fluxes !< A structure containing pointers to any possible
@@ -1076,7 +1165,7 @@ subroutine depth_list_setup(G, GV, US, DL, CS)
         valid_DL_read = .true. ! Otherwise there would have been a fatal error.
       endif
     else
-      if (is_root_pe()) call MOM_error(WARNING, "depth_list_setup: "// &
+      if (is_root_pe()) call MOM_error(NOTE, "depth_list_setup: "// &
         trim(CS%depth_list_file)//" does not exist.  Creating a new file.")
       valid_DL_read = .false.
     endif
@@ -1100,7 +1189,7 @@ end subroutine depth_list_setup
 subroutine create_depth_list(G, DL, min_depth_inc)
   type(ocean_grid_type), intent(in)    :: G  !< The ocean's grid structure.
   type(Depth_List),      intent(inout) :: DL !< The list of depths, areas and volumes to create
-  real,                  intent(in)    :: min_depth_inc !< The minimum increment bewteen depths in the list [Z ~> m]
+  real,                  intent(in)    :: min_depth_inc !< The minimum increment between depths in the list [Z ~> m]
 
   ! Local variables
   real, dimension(G%Domain%niglobal*G%Domain%njglobal + 1) :: &
@@ -1110,7 +1199,7 @@ subroutine create_depth_list(G, DL, min_depth_inc)
     indx2     !< The position of an element in the original unsorted list.
   real    :: Dnow  !< The depth now being considered for sorting [Z ~> m].
   real    :: Dprev !< The most recent depth that was considered [Z ~> m].
-  real    :: vol   !< The running sum of open volume below a deptn [Z L2 ~> m3].
+  real    :: vol   !< The running sum of open volume below a depth [Z L2 ~> m3].
   real    :: area  !< The open area at the current depth [L2 ~> m2].
   real    :: D_list_prev !< The most recent depth added to the list [Z ~> m].
   logical :: add_to_list !< This depth should be included as an entry on the list.
@@ -1232,13 +1321,13 @@ subroutine write_depth_list(G, US, DL, filename)
   ! Local variables
   type(vardesc), dimension(:), allocatable :: &
     vars          ! Types that described the staggering and metadata for the fields
-  type(fieldtype), dimension(:), allocatable :: &
+  type(MOM_field), dimension(:), allocatable :: &
     fields        ! Types with metadata about the variables that will be written
   type(axis_info), dimension(:), allocatable :: &
     extra_axes    ! Descriptors for extra axes that might be used
   type(attribute_info), dimension(:), allocatable :: &
     global_atts   ! Global attributes and their values
-  type(file_type)   :: IO_handle     ! The I/O handle of the fileset
+  type(MOM_netcdf_file) :: IO_handle   ! The I/O handle of the fileset
   character(len=16) :: depth_chksum, area_chksum
 
   ! All ranks are required to compute the global checksum
@@ -1258,8 +1347,8 @@ subroutine write_depth_list(G, US, DL, filename)
   call set_attribute_info(global_atts(1), depth_chksum_attr, depth_chksum)
   call set_attribute_info(global_atts(2), area_chksum_attr, area_chksum)
 
-  call create_file(IO_handle, filename, vars, 3, fields, SINGLE_FILE, extra_axes=extra_axes, &
-                   global_atts=global_atts)
+  call create_MOM_file(IO_handle, filename, vars, 3, fields, SINGLE_FILE, &
+      extra_axes=extra_axes, global_atts=global_atts)
   call MOM_write_field(IO_handle, fields(1), DL%depth, scale=US%Z_to_m)
   call MOM_write_field(IO_handle, fields(2), DL%area, scale=US%L_to_m**2)
   call MOM_write_field(IO_handle, fields(3), DL%vol_below, scale=US%Z_to_m*US%L_to_m**2)
@@ -1267,8 +1356,7 @@ subroutine write_depth_list(G, US, DL, filename)
   call delete_axis_info(extra_axes)
   call delete_attribute_info(global_atts)
   deallocate(vars, extra_axes, fields, global_atts)
-  call close_file(IO_handle)
-
+  call IO_handle%close()
 end subroutine write_depth_list
 
 !> This subroutine reads in the depth list from the specified file
@@ -1360,7 +1448,7 @@ subroutine get_depth_list_checksums(G, US, depth_chksum, area_chksum)
   character(len=16), intent(out) :: area_chksum   !< Area checksum hexstring
 
   integer :: i, j
-  real, allocatable :: field(:,:)
+  real, allocatable :: field(:,:)  ! A temporary array for output converted to MKS units [m] or [m2]
 
   allocate(field(G%isc:G%iec, G%jsc:G%jec))
 

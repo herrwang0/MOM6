@@ -60,14 +60,15 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   logical,                 intent(in)    :: write_geom !< If true, write grid geometry files.
   character(len=*),        intent(in)    :: output_dir !< The directory into which to write files.
 
-  ! Local
+  ! Local variables
   character(len=200) :: inputdir   ! The directory where NetCDF input files are.
   character(len=200) :: config
   logical            :: read_porous_file
   character(len=40)  :: mdl = "MOM_fixed_initialization" ! This module's name.
+  integer :: I, J
   logical :: debug
-! This include declares and sets the variable "version".
-#include "version_variable.h"
+  ! This include declares and sets the variable "version".
+# include "version_variable.h"
 
   call callTree_enter("MOM_initialize_fixed(), MOM_fixed_initialization.F90")
   call log_version(PF, mdl, version, "")
@@ -101,7 +102,7 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   call open_boundary_impose_land_mask(OBC, G, G%areaCu, G%areaCv, US)
 
   if (debug) then
-    call hchksum(G%bathyT, 'MOM_initialize_fixed: depth ', G%HI, haloshift=1, scale=US%Z_to_m)
+    call hchksum(G%bathyT, 'MOM_initialize_fixed: depth ', G%HI, haloshift=1, unscale=US%Z_to_m)
     call hchksum(G%mask2dT, 'MOM_initialize_fixed: mask2dT ', G%HI)
     call uvchksum('MOM_initialize_fixed: mask2dC[uv]', G%mask2dCu, &
                   G%mask2dCv, G%HI)
@@ -156,10 +157,16 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   call MOM_initialize_rotation(G%CoriolisBu, G, PF, US=US)
 !   Calculate the components of grad f (beta)
   call MOM_calculate_grad_Coriolis(G%dF_dx, G%dF_dy, G, US=US)
+!   Calculate the square of the Coriolis parameter
+  do I=G%IsdB,G%IedB ; do J=G%JsdB,G%JedB
+    G%Coriolis2Bu(I,J) = G%CoriolisBu(I,J)**2
+  enddo ; enddo
+
   if (debug) then
-    call qchksum(G%CoriolisBu, "MOM_initialize_fixed: f ", G%HI, scale=US%s_to_T)
-    call hchksum(G%dF_dx, "MOM_initialize_fixed: dF_dx ", G%HI, scale=US%m_to_L*US%s_to_T)
-    call hchksum(G%dF_dy, "MOM_initialize_fixed: dF_dy ", G%HI, scale=US%m_to_L*US%s_to_T)
+    call qchksum(G%CoriolisBu, "MOM_initialize_fixed: f ", G%HI, unscale=US%s_to_T)
+    call qchksum(G%Coriolis2Bu, "MOM_initialize_fixed: f2 ", G%HI, unscale=US%s_to_T**2)
+    call hchksum(G%dF_dx, "MOM_initialize_fixed: dF_dx ", G%HI, unscale=US%m_to_L*US%s_to_T)
+    call hchksum(G%dF_dy, "MOM_initialize_fixed: dF_dy ", G%HI, unscale=US%m_to_L*US%s_to_T)
   endif
 
   call initialize_grid_rotation_angle(G, PF)
@@ -174,14 +181,13 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
 
 end subroutine MOM_initialize_fixed
 
-!> MOM_initialize_topography makes the appropriate call to set up the bathymetry.  At this
-!! point the topography is in units of [Z ~> m] or [m], depending on the presence of US.
+!> MOM_initialize_topography makes the appropriate call to set up the bathymetry in units of [Z ~> m].
 subroutine MOM_initialize_topography(D, max_depth, G, PF, US)
   type(dyn_horgrid_type),           intent(in)  :: G  !< The dynamic horizontal grid type
   real, dimension(G%isd:G%ied,G%jsd:G%jed), &
-                                    intent(out) :: D  !< Ocean bottom depth [Z ~> m] or [m]
+                                    intent(out) :: D  !< Ocean bottom depth [Z ~> m]
   type(param_file_type),            intent(in)  :: PF !< Parameter file structure
-  real,                             intent(out) :: max_depth !< Maximum depth of model [Z ~> m] or [m]
+  real,                             intent(out) :: max_depth !< Maximum depth of model [Z ~> m]
   type(unit_scale_type),            intent(in)  :: US !< A dimensional unit scaling type
 
   ! This subroutine makes the appropriate call to set up the bottom depth.
@@ -245,12 +251,13 @@ subroutine MOM_initialize_topography(D, max_depth, G, PF, US)
       "Unrecognized topography setup '"//trim(config)//"'")
   end select
   if (max_depth>0.) then
-    call log_param(PF, mdl, "MAXIMUM_DEPTH", max_depth*US%Z_to_m, &
-                   "The maximum depth of the ocean.", units="m")
+    call log_param(PF, mdl, "MAXIMUM_DEPTH", max_depth, &
+                   "The maximum depth of the ocean.", units="m", unscale=US%Z_to_m)
   else
     max_depth = diagnoseMaximumDepth(D,G)
-    call log_param(PF, mdl, "!MAXIMUM_DEPTH", max_depth*US%Z_to_m, &
-                   "The (diagnosed) maximum depth of the ocean.", units="m", like_default=.true.)
+    call log_param(PF, mdl, "!MAXIMUM_DEPTH", max_depth, &
+                   "The (diagnosed) maximum depth of the ocean.", &
+                   units="m", unscale=US%Z_to_m, like_default=.true.)
   endif
   if (trim(config) /= "DOME") then
     call limit_topography(D, G, PF, max_depth, US)

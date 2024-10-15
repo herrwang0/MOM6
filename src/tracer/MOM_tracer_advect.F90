@@ -34,6 +34,8 @@ type, public :: tracer_advect_CS ; private
   logical :: debug                 !< If true, write verbose checksums for debugging purposes.
   logical :: usePPM                !< If true, use PPM instead of PLM
   logical :: useHuynh              !< If true, use the Huynh scheme for PPM interface values
+  logical :: useHuynhStencilBug = .false. !< If true, use the incorrect stencil width.
+                                   !! This is provided for compatibility with legacy simuations.
   type(group_pass_type) :: pass_uhr_vhr_t_hprev !< A structure used for group passes
 end type tracer_advect_CS
 
@@ -94,6 +96,7 @@ subroutine advect_tracer(h_end, uhtr, vhtr, OBC, dt, G, GV, US, CS, Reg, x_first
                                        ! can be simply discarded [H L2 ~> m3 or kg].
 
   real :: landvolfill                   ! An arbitrary? nonzero cell volume [H L2 ~> m3 or kg].
+  logical :: use_PPM_stencil            ! If true, use the correct PPM stencil width.
   real :: Idt                           ! 1/dt [T-1 ~> s-1].
   logical :: domore_u(SZJ_(G),SZK_(GV))  ! domore_u and domore_v indicate whether there is more
   logical :: domore_v(SZJB_(G),SZK_(GV)) ! advection to be done in the corresponding row or column.
@@ -112,7 +115,7 @@ subroutine advect_tracer(h_end, uhtr, vhtr, OBC, dt, G, GV, US, CS, Reg, x_first
   isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
   landvolfill = 1.0e-20         ! This is arbitrary, but must be positive.
-  stencil = 2                   ! The scheme's stencil; 2 for PLM and PPM:H3
+  stencil = 2                   ! The scheme's stencil; 2 for PLM
 
   if (.not. associated(CS)) call MOM_error(FATAL, "MOM_tracer_advect: "// &
        "tracer_advect_init must be called before advect_tracer.")
@@ -123,7 +126,8 @@ subroutine advect_tracer(h_end, uhtr, vhtr, OBC, dt, G, GV, US, CS, Reg, x_first
   x_first = (MOD(G%first_direction,2) == 0)
 
   ! increase stencil size for Colella & Woodward PPM
-  if (CS%usePPM .and. .not. CS%useHuynh) stencil = 3
+  use_PPM_stencil = CS%usePPM .and. .not. CS%useHuynhStencilBug
+  if (use_PPM_stencil) stencil = 3
 
   ntr = Reg%ntr
   Idt = 1.0 / dt
@@ -157,7 +161,7 @@ subroutine advect_tracer(h_end, uhtr, vhtr, OBC, dt, G, GV, US, CS, Reg, x_first
     !   This loop reconstructs the thickness field the last time that the
     ! tracers were updated, probably just after the diabatic forcing.  A useful
     ! diagnostic could be to compare this reconstruction with that older value.
-      do i=is,ie ; do j=js,je
+      do j=js,je ; do i=is,ie
         hprev(i,j,k) = max(0.0, G%areaT(i,j)*h_end(i,j,k) + &
              ((uhr(I,j,k) - uhr(I-1,j,k)) + (vhr(i,J,k) - vhr(i,J-1,k))))
     ! In the case that the layer is now dramatically thinner than it was previously,
@@ -167,7 +171,7 @@ subroutine advect_tracer(h_end, uhtr, vhtr, OBC, dt, G, GV, US, CS, Reg, x_first
                        max(0.0, 1.0e-13*hprev(i,j,k) - G%areaT(i,j)*h_end(i,j,k))
       enddo ; enddo
     else
-      do i=is,ie ; do j=js,je
+      do j=js,je ; do i=is,ie
         hprev(i,j,k) = vol_prev(i,j,k)
       enddo ; enddo
     endif
@@ -379,9 +383,9 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
   real :: dA            ! Difference between the reconstruction tracer edge values [conc]
   real :: mA            ! Average of the reconstruction tracer edge values [conc]
   real :: a6            ! Curvature of the reconstruction tracer values [conc]
-  logical :: do_i(SZIB_(G),SZJ_(G))     ! If true, work on given points.
+  logical :: do_i(SZI_(G),SZJ_(G))     ! If true, work on given points.
   logical :: usePLMslope
-  integer :: i, j, m, n, i_up, stencil
+  integer :: i, j, m, n, i_up, stencil, ntr_id
   type(OBC_segment_type), pointer :: segment=>NULL()
   logical, dimension(SZJ_(G),SZK_(GV)) :: domore_u_initial
 
@@ -442,18 +446,19 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
         if (segment%is_E_or_W) then
           if (j>=segment%HI%jsd .and. j<=segment%HI%jed) then
             I = segment%HI%IsdB
-            do m = 1,ntr ! replace tracers with OBC values
+            do m = 1,segment%tr_Reg%ntseg ! replace tracers with OBC values
+              ntr_id = segment%tr_reg%Tr(m)%ntr_index
               if (allocated(segment%tr_Reg%Tr(m)%tres)) then
                 if (segment%direction == OBC_DIRECTION_W) then
-                  T_tmp(i,m) = segment%tr_Reg%Tr(m)%tres(i,j,k)
+                  T_tmp(i,ntr_id) = segment%tr_Reg%Tr(m)%tres(i,j,k)
                 else
-                  T_tmp(i+1,m) = segment%tr_Reg%Tr(m)%tres(i,j,k)
+                  T_tmp(i+1,ntr_id) = segment%tr_Reg%Tr(m)%tres(i,j,k)
                 endif
               else
                 if (segment%direction == OBC_DIRECTION_W) then
-                  T_tmp(i,m) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
+                  T_tmp(i,ntr_id) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
                 else
-                  T_tmp(i+1,m) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
+                  T_tmp(i+1,ntr_id) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
                 endif
               endif
             enddo
@@ -535,9 +540,9 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
         if (G%mask2dCu(I_up,j)*G%mask2dCu(I_up-1,j)*(Tp-Tc)*(Tc-Tm) <= 0.) then
           aL = Tc ; aR = Tc ! PCM for local extrema and boundary cells
         elseif ( dA*(Tc-mA) > (dA*dA)/6. ) then
-          aL = 3.*Tc - 2.*aR
+          aL = (3.*Tc) - 2.*aR
         elseif ( dA*(Tc-mA) < - (dA*dA)/6. ) then
-          aR = 3.*Tc - 2.*aL
+          aR = (3.*Tc) - 2.*aL
         endif
 
         a6 = 6.*Tc - 3. * (aR + aL) ! Curvature
@@ -586,10 +591,11 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
                   (uhr(I,j,k) < 0.0) .and. (segment%direction == OBC_DIRECTION_E)) then
                 uhh(I) = uhr(I,j,k)
               ! should the reservoir evolve for this case Kate ?? - Nope
-                do m=1,ntr
+                do m=1,segment%tr_Reg%ntseg
+                  ntr_id = segment%tr_reg%Tr(m)%ntr_index
                   if (allocated(segment%tr_Reg%Tr(m)%tres)) then
-                    flux_x(I,j,m) = uhh(I)*segment%tr_Reg%Tr(m)%tres(I,j,k)
-                  else ; flux_x(I,j,m) = uhh(I)*segment%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
+                    flux_x(I,j,ntr_id) = uhh(I)*segment%tr_Reg%Tr(m)%tres(I,j,k)
+                  else ; flux_x(I,j,ntr_id) = uhh(I)*segment%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
                 enddo
               endif
             endif
@@ -609,10 +615,11 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
             if ((uhr(I,j,k) > 0.0) .and. (G%mask2dT(i,j) < 0.5) .or. &
                 (uhr(I,j,k) < 0.0) .and. (G%mask2dT(i+1,j) < 0.5)) then
               uhh(I) = uhr(I,j,k)
-              do m=1,ntr
+              do m=1,segment%tr_Reg%ntseg
+                ntr_id = segment%tr_reg%Tr(m)%ntr_index
                 if (allocated(segment%tr_Reg%Tr(m)%tres)) then
-                  flux_x(I,j,m) = uhh(I)*segment%tr_Reg%Tr(m)%tres(I,j,k)
-                else; flux_x(I,j,m) = uhh(I)*segment%tr_Reg%Tr(m)%OBC_inflow_conc; endif
+                  flux_x(I,j,ntr_id) = uhh(I)*segment%tr_Reg%Tr(m)%tres(I,j,k)
+                else; flux_x(I,j,ntr_id) = uhh(I)*segment%tr_Reg%Tr(m)%OBC_inflow_conc; endif
               enddo
             endif
           endif
@@ -655,7 +662,7 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
       enddo
 
       ! diagnostics
-      if (associated(Tr(m)%ad_x)) then ; do i=is,ie ; if (do_i(i,j)) then
+      if (associated(Tr(m)%ad_x)) then ; do I=is-1,ie ; if (do_i(i,j) .or. do_i(i+1,j)) then
         Tr(m)%ad_x(I,j,k) = Tr(m)%ad_x(I,j,k) + flux_x(I,j,m)*Idt
       endif ; enddo ; endif
 
@@ -682,13 +689,13 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
   ! compute ad2d_x diagnostic outside above j-loop so as to make the summation ordered when OMP is active.
 
   !$OMP ordered
-  do j=js,je ; if (domore_u_initial(j,k)) then
-    do m=1,ntr
-      if (associated(Tr(m)%ad2d_x)) then ; do i=is,ie ; if (do_i(i,j)) then
+  do m=1,ntr ; if (associated(Tr(m)%ad2d_x)) then
+    do j=js,je ; if (domore_u_initial(j,k)) then
+      do I=is-1,ie ; if (do_i(i,j) .or. do_i(i+1,j)) then
         Tr(m)%ad2d_x(I,j) = Tr(m)%ad2d_x(I,j) + flux_x(I,j,m)*Idt
-      endif ; enddo ; endif
-    enddo
-  endif ; enddo ! End of j-loop.
+      endif ; enddo
+    endif ; enddo
+  endif ; enddo ! End of m-loop.
   !$OMP end ordered
 
 end subroutine advect_x
@@ -752,10 +759,11 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
   real :: mA            ! Average of the reconstruction tracer edge values [conc]
   real :: a6            ! Curvature of the reconstruction tracer values [conc]
   logical :: do_j_tr(SZJ_(G))   ! If true, calculate the tracer profiles.
-  logical :: do_i(SZIB_(G), SZJ_(G))     ! If true, work on given points.
+  logical :: do_i(SZI_(G), SZJ_(G))     ! If true, work on given points.
   logical :: usePLMslope
-  integer :: i, j, j2, m, n, j_up, stencil
+  integer :: i, j, j2, m, n, j_up, stencil, ntr_id
   type(OBC_segment_type), pointer :: segment=>NULL()
+  logical :: domore_v_initial(SZJB_(G)) ! Initial state of domore_v
 
   usePLMslope = .not. (usePPM .and. useHuynh)
   ! stencil for calculating slope values
@@ -778,6 +786,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
   ! this would require an additional loop, etc.
   do_j_tr(:) = .false.
   do J=js-1,je ; if (domore_v(J,k)) then ; do j2=1-stencil,stencil ; do_j_tr(j+j2) = .true. ; enddo ; endif ; enddo
+  domore_v_initial(:) = domore_v(:,k)
 
   ! Calculate the j-direction profiles (slopes) of each tracer that
   ! is being advected.
@@ -821,18 +830,19 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
         if (segment%is_N_or_S) then
           if (i>=segment%HI%isd .and. i<=segment%HI%ied) then
             J = segment%HI%JsdB
-            do m = 1,ntr ! replace tracers with OBC values
+            do m = 1,segment%tr_Reg%ntseg ! replace tracers with OBC values
+              ntr_id = segment%tr_reg%Tr(m)%ntr_index
               if (allocated(segment%tr_Reg%Tr(m)%tres)) then
                 if (segment%direction == OBC_DIRECTION_S) then
-                  T_tmp(i,m,j) = segment%tr_Reg%Tr(m)%tres(i,j,k)
+                  T_tmp(i,ntr_id,j) = segment%tr_Reg%Tr(m)%tres(i,j,k)
                 else
-                  T_tmp(i,m,j+1) = segment%tr_Reg%Tr(m)%tres(i,j,k)
+                  T_tmp(i,ntr_id,j+1) = segment%tr_Reg%Tr(m)%tres(i,j,k)
                 endif
               else
                 if (segment%direction == OBC_DIRECTION_S) then
-                  T_tmp(i,m,j) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
+                  T_tmp(i,ntr_id,j) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
                 else
-                  T_tmp(i,m,j+1) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
+                  T_tmp(i,ntr_id,j+1) = segment%tr_Reg%Tr(m)%OBC_inflow_conc
                 endif
               endif
             enddo
@@ -915,9 +925,9 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
         if (G%mask2dCv(i,J_up)*G%mask2dCv(i,J_up-1)*(Tp-Tc)*(Tc-Tm) <= 0.) then
           aL = Tc ; aR = Tc ! PCM for local extrema and boundary cells
         elseif ( dA*(Tc-mA) > (dA*dA)/6. ) then
-          aL = 3.*Tc - 2.*aR
+          aL = (3.*Tc) - 2.*aR
         elseif ( dA*(Tc-mA) < - (dA*dA)/6. ) then
-          aR = 3.*Tc - 2.*aL
+          aR = (3.*Tc) - 2.*aL
         endif
 
         a6 = 6.*Tc - 3. * (aR + aL) ! Curvature
@@ -966,10 +976,11 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
                 if ((vhr(i,J,k) > 0.0) .and. (segment%direction == OBC_DIRECTION_S) .or. &
                     (vhr(i,J,k) < 0.0) .and. (segment%direction == OBC_DIRECTION_N)) then
                   vhh(i,J) = vhr(i,J,k)
-                  do m=1,ntr
+                  do m=1,segment%tr_Reg%ntseg
+                    ntr_id = segment%tr_reg%Tr(m)%ntr_index
                     if (allocated(segment%tr_Reg%Tr(m)%tres)) then
-                      flux_y(i,m,J) = vhh(i,J)*OBC%segment(n)%tr_Reg%Tr(m)%tres(i,J,k)
-                    else ; flux_y(i,m,J) = vhh(i,J)*OBC%segment(n)%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
+                      flux_y(i,ntr_id,J) = vhh(i,J)*OBC%segment(n)%tr_Reg%Tr(m)%tres(i,J,k)
+                    else ; flux_y(i,ntr_id,J) = vhh(i,J)*OBC%segment(n)%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
                   enddo
                 endif
               enddo
@@ -989,10 +1000,11 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
               if ((vhr(i,J,k) > 0.0) .and. (G%mask2dT(i,j) < 0.5) .or. &
                   (vhr(i,J,k) < 0.0) .and. (G%mask2dT(i,j+1) < 0.5)) then
                 vhh(i,J) = vhr(i,J,k)
-                do m=1,ntr
+                do m=1,segment%tr_Reg%ntseg
+                  ntr_id = segment%tr_reg%Tr(m)%ntr_index
                   if (allocated(segment%tr_Reg%Tr(m)%tres)) then
-                    flux_y(i,m,J) = vhh(i,J)*segment%tr_Reg%Tr(m)%tres(i,J,k)
-                  else ; flux_y(i,m,J) = vhh(i,J)*segment%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
+                    flux_y(i,ntr_id,J) = vhh(i,J)*segment%tr_Reg%Tr(m)%tres(i,J,k)
+                  else ; flux_y(i,ntr_id,J) = vhh(i,J)*segment%tr_Reg%Tr(m)%OBC_inflow_conc ; endif
                 enddo
               endif
             enddo
@@ -1034,11 +1046,6 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
                           (flux_y(i,m,J) - flux_y(i,m,J-1))) * Ihnew(i)
       endif ; enddo
 
-      ! diagnostics
-      if (associated(Tr(m)%ad_y)) then ; do i=is,ie ; if (do_i(i,j)) then
-        Tr(m)%ad_y(i,J,k) = Tr(m)%ad_y(i,J,k) + flux_y(i,m,J)*Idt
-      endif ; enddo ; endif
-
       ! diagnose convergence of flux_y and add to convergence of flux_x.
       ! division by areaT to get into W/m2 for heat and kg/(s*m2) for salt.
       if (associated(Tr(m)%advection_xy)) then
@@ -1058,16 +1065,23 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
     enddo ; enddo
   endif ; enddo
 
-  ! compute ad2d_y diagnostic outside above j-loop so as to make the summation ordered when OMP is active.
-
+  ! compute ad_y and ad2d_y diagnostic outside above j-loop so as to make the summation ordered when OMP is active.
   !$OMP ordered
-  do j=js,je ; if (do_j_tr(j)) then
-    do m=1,ntr
-      if (associated(Tr(m)%ad2d_y)) then ; do i=is,ie ; if (do_i(i,j)) then
+  do m=1,ntr ; if (associated(Tr(m)%ad_y)) then
+    do J=js-1,je ; if (domore_v_initial(J)) then
+      do i=is,ie ; if (do_i(i,j) .or. do_i(i,j+1)) then
+        Tr(m)%ad_y(i,J,k) = Tr(m)%ad_y(i,J,k) + flux_y(i,m,J)*Idt
+      endif ; enddo
+    endif ; enddo
+  endif ; enddo ! End of m-loop.
+
+  do m=1,ntr ; if (associated(Tr(m)%ad2d_y)) then
+    do J=js-1,je ; if (domore_v_initial(J)) then
+      do i=is,ie ; if (do_i(i,j) .or. do_i(i,j+1)) then
         Tr(m)%ad2d_y(i,J) = Tr(m)%ad2d_y(i,J) + flux_y(i,m,J)*Idt
-      endif ; enddo ; endif
-    enddo
-  endif ; enddo ! End of j-loop.
+      endif ; enddo
+    endif ; enddo
+  endif ; enddo ! End of m-loop.
   !$OMP end ordered
 
 end subroutine advect_y
@@ -1118,6 +1132,18 @@ subroutine tracer_advect_init(Time, G, US, param_file, diag, CS)
       call MOM_error(FATAL, "MOM_tracer_advect, tracer_advect_init: "//&
            "Unknown TRACER_ADVECTION_SCHEME = "//trim(mesg))
   end select
+
+  if (CS%usePPM) then
+    if (CS%useHuynh) then
+      call get_param(param_file, mdl, "USE_HUYNH_STENCIL_BUG", &
+        CS%useHuynhStencilBug, &
+        desc="If true, use a stencil width of 2 in PPM:H3 tracer advection. " &
+        // "This is incorrect and will produce regressions in certain " &
+        // "configurations, but may be required to reproduce results in " &
+        // "legacy simulations.", &
+        default=.false.)
+    endif
+  endif
 
   id_clock_advect = cpu_clock_id('(Ocean advect tracer)', grain=CLOCK_MODULE)
   id_clock_pass = cpu_clock_id('(Ocean tracer halo updates)', grain=CLOCK_ROUTINE)

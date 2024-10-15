@@ -59,12 +59,14 @@ contains
 !> The following subroutines and associated definitions provide the
 !! machinery to register and call the subroutines that initialize
 !! open boundary conditions.
-subroutine call_OBC_register(param_file, CS, US, OBC, tr_Reg)
-  type(param_file_type),     intent(in) :: param_file !< Parameter file to parse
-  type(update_OBC_CS),       pointer    :: CS         !< Control structure for OBCs
-  type(unit_scale_type),     intent(in) :: US         !< A dimensional unit scaling type
-  type(ocean_OBC_type),      pointer    :: OBC        !< Open boundary structure
-  type(tracer_registry_type), pointer   :: tr_Reg     !< Tracer registry.
+subroutine call_OBC_register(G, GV, US, param_file, CS, OBC, tr_Reg)
+  type(ocean_grid_type),      intent(in) :: G    !< Ocean grid structure
+  type(verticalGrid_type),    intent(in) :: GV   !< Ocean vertical grid structure
+  type(unit_scale_type),      intent(in) :: US   !< A dimensional unit scaling type
+  type(param_file_type),      intent(in) :: param_file !< Parameter file to parse
+  type(update_OBC_CS),        pointer    :: CS         !< Control structure for OBCs
+  type(ocean_OBC_type),       pointer    :: OBC        !< Open boundary structure
+  type(tracer_registry_type), pointer    :: tr_Reg     !< Tracer registry.
 
   ! Local variables
   character(len=200) :: config
@@ -124,7 +126,7 @@ subroutine call_OBC_register(param_file, CS, US, OBC, tr_Reg)
     register_Kelvin_OBC(param_file, CS%Kelvin_OBC_CSp, US, &
                OBC%OBC_Reg)
   if (CS%use_shelfwave) CS%use_shelfwave = &
-    register_shelfwave_OBC(param_file, CS%shelfwave_OBC_CSp, US, &
+    register_shelfwave_OBC(param_file, CS%shelfwave_OBC_CSp, G, US, &
                OBC%OBC_Reg)
   if (CS%use_dyed_channel) CS%use_dyed_channel = &
     register_dyed_channel_OBC(param_file, CS%dyed_channel_OBC_CSp, US, &
@@ -154,7 +156,7 @@ subroutine update_OBC_data(OBC, G, GV, US, tv, h, CS, Time)
       call shelfwave_set_OBC_data(OBC, CS%shelfwave_OBC_CSp, G, GV, US, h, Time)
   if (CS%use_dyed_channel) &
       call dyed_channel_update_flow(OBC, CS%dyed_channel_OBC_CSp, G, GV, US, Time)
-  if (OBC%needs_IO_for_data .or. OBC%add_tide_constituents)  &
+  if (OBC%any_needs_IO_for_data .or. OBC%add_tide_constituents)  &
       call update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
 
 end subroutine update_OBC_data

@@ -28,7 +28,7 @@ public iceberg_forces, iceberg_fluxes, marine_ice_init
 type, public :: marine_ice_CS ; private
   real :: kv_iceberg          !< The viscosity of the icebergs [L4 Z-2 T-1 ~> m2 s-1] (for ice rigidity)
   real :: berg_area_threshold !< Fraction of grid cell which iceberg must occupy
-                              !! so that fluxes below are set to zero. (0.5 is a
+                              !! so that fluxes below are set to zero [nondim]. (0.5 is a
                               !! good value to use.) Not applied for negative values.
   real :: latent_heat_fusion  !< Latent heat of fusion [Q ~> J kg-1]
   real :: density_iceberg     !< A typical density of icebergs [R ~> kg m-3] (for ice rigidity)
@@ -48,7 +48,7 @@ subroutine iceberg_forces(G, forces, use_ice_shelf, sfc_state, time_step, CS)
   type(surface),         intent(inout) :: sfc_state !< A structure containing fields that
                                                     !! describe the surface state of the ocean.
   logical,               intent(in)    :: use_ice_shelf  !< If true, this configuration uses ice shelves.
-  real,                  intent(in)    :: time_step  !< The coupling time step [s].
+  real,                  intent(in)    :: time_step  !< The coupling time step [T ~> s].
   type(marine_ice_CS),   pointer       :: CS      !< Pointer to the control structure for MOM_marine_ice
 
   real :: kv_rho_ice ! The viscosity of ice divided by its density [L4 Z-2 T-1 R-1 ~> m5 kg-1 s-1].
@@ -80,7 +80,7 @@ subroutine iceberg_forces(G, forces, use_ice_shelf, sfc_state, time_step, CS)
   do j=js,je ; do I=is-1,ie
     if ((G%areaT(i,j) + G%areaT(i+1,j) > 0.0)) & ! .and. (G%dxdy_u(I,j) > 0.0)) &
       forces%frac_shelf_u(I,j) = forces%frac_shelf_u(I,j) + &
-           (forces%area_berg(i,j)*G%areaT(i,j) + forces%area_berg(i+1,j)*G%areaT(i+1,j)) / &
+           ((forces%area_berg(i,j)*G%areaT(i,j)) + (forces%area_berg(i+1,j)*G%areaT(i+1,j))) / &
            (G%areaT(i,j) + G%areaT(i+1,j))
     forces%rigidity_ice_u(I,j) = forces%rigidity_ice_u(I,j) + kv_rho_ice * &
                         min(forces%mass_berg(i,j), forces%mass_berg(i+1,j))
@@ -88,7 +88,7 @@ subroutine iceberg_forces(G, forces, use_ice_shelf, sfc_state, time_step, CS)
   do J=js-1,je ; do i=is,ie
     if ((G%areaT(i,j) + G%areaT(i,j+1) > 0.0)) & ! .and. (G%dxdy_v(i,J) > 0.0)) &
       forces%frac_shelf_v(i,J) = forces%frac_shelf_v(i,J) + &
-           (forces%area_berg(i,j)*G%areaT(i,j) + forces%area_berg(i,j+1)*G%areaT(i,j+1)) / &
+           ((forces%area_berg(i,j)*G%areaT(i,j)) + (forces%area_berg(i,j+1)*G%areaT(i,j+1))) / &
            (G%areaT(i,j) + G%areaT(i,j+1))
     forces%rigidity_ice_v(i,J) = forces%rigidity_ice_v(i,J) + kv_rho_ice * &
                          min(forces%mass_berg(i,j), forces%mass_berg(i,j+1))
@@ -106,7 +106,7 @@ subroutine iceberg_fluxes(G, US, fluxes, use_ice_shelf, sfc_state, time_step, CS
   type(surface),         intent(inout) :: sfc_state !< A structure containing fields that
                                                     !! describe the surface state of the ocean.
   logical,               intent(in)    :: use_ice_shelf  !< If true, this configuration uses ice shelves.
-  real,                  intent(in)    :: time_step   !< The coupling time step [s].
+  real,                  intent(in)    :: time_step   !< The coupling time step [T ~> s].
   type(marine_ice_CS),   pointer       :: CS      !< Pointer to the control structure for MOM_marine_ice
 
   real :: fraz      ! refreezing rate [R Z T-1 ~> kg m-2 s-1]
@@ -138,7 +138,7 @@ subroutine iceberg_fluxes(G, US, fluxes, use_ice_shelf, sfc_state, time_step, CS
 
   !Zero'ing out other fluxes under the tabular icebergs
   if (CS%berg_area_threshold >= 0.) then
-    I_dt_LHF = 1.0 / (US%s_to_T*time_step * CS%latent_heat_fusion)
+    I_dt_LHF = 1.0 / (time_step * CS%latent_heat_fusion)
     do j=jsd,jed ; do i=isd,ied
       if (fluxes%frac_shelf_h(i,j) > CS%berg_area_threshold) then
         ! Only applying for ice shelf covering most of cell.
