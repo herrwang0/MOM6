@@ -2395,16 +2395,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       !$OMP end do nowait
     endif
 
-    if (.not.CS%etaav_bug) then
-      if (find_etaav) then
-        !$OMP do
-        do j=js,je ; do i=is,ie
-          eta_sum(i,j) = eta_sum(i,j) + wt_accel2(n) * eta_PF_BT(i,j)
-        enddo ; enddo
-        !$OMP end do nowait
-      endif
-    endif
-
     !$OMP do
     do j=js,je ; do I=is-1,ie
       ubt_sum(I,j) = ubt_sum(I,j) + wt_trans(n) * ubt_trans(I,j)
@@ -2486,6 +2476,16 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
     endif
     !$OMP end parallel
+
+    if (.not.CS%etaav_bug) then
+      if (find_etaav) then
+        !$OMP do
+        do j=js,je ; do i=is,ie
+          eta_sum(i,j) = eta_sum(i,j) + wt_accel2(n) * eta_PF_BT(i,j)
+        enddo ; enddo
+        !$OMP end do nowait
+      endif
+    endif
 
     if (do_hifreq_output) then
       time_step_end = time_bt_start + real_to_time(n*US%T_to_s*dtbt_diag)
