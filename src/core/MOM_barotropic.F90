@@ -290,6 +290,7 @@ type, public :: barotropic_CS ; private
                              !! consistent with tidal self-attraction and loading
                              !! used within the barotropic solver
   logical :: wt_uv_fix       !< If true, use a normalized wt_[uv] for vertical averages.
+  logical :: etaav_bug       !< If true, etaav_bug.
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -1972,12 +1973,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     ! Recall that just outside the do n loop, there is code like...
     !  eta_PF_BT => eta_pred ; if (project_velocity) eta_PF_BT => eta
 
+    if (CS%etaav_bug) then
     if (find_etaav) then
       !$OMP do
       do j=js,je ; do i=is,ie
         eta_sum(i,j) = eta_sum(i,j) + wt_accel2(n) * eta_PF_BT(i,j)
       enddo ; enddo
       !$OMP end do nowait
+    endif
     endif
 
     if (interp_eta_PF) then
@@ -2390,6 +2393,16 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         Corv_bt_sum(i,J) = Corv_bt_sum(i,J) + wt_accel2(n) * Cor_v(i,J)
       enddo ; enddo
       !$OMP end do nowait
+    endif
+
+    if (.not.CS%etaav_bug) then
+      if (find_etaav) then
+        !$OMP do
+        do j=js,je ; do i=is,ie
+          eta_sum(i,j) = eta_sum(i,j) + wt_accel2(n) * eta_PF_BT(i,j)
+        enddo ; enddo
+        !$OMP end do nowait
+      endif
     endif
 
     !$OMP do
@@ -4657,6 +4670,9 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "baroclinic velocity and forcing. Default of this flag is set by "//&
                  "VISC_REM_BUG. This flag should be used with VISC_REM_TIMESTEP_FIX.", &
                  default=.not.visc_rem_bug)
+  call get_param(param_file, mdl, "BT_ETAAV_BUG", CS%etaav_bug, &
+                 "If true, etaav bug", &
+                 default=.true.)
   call get_param(param_file, mdl, "TIDES", use_tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
   if (use_tides .and. present(HA_CSp)) CS%HA_CSp => HA_CSp
