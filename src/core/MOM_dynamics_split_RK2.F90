@@ -179,6 +179,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   logical :: fpmix = .false.                 !< If true, applies profiles of momentum flux magnitude and direction.
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
   logical :: visc_rem_dt_fix = .false. !<If true, use dt rather than dt_pred for vertvisc_rem at the end of predictor.
+  logical :: use_cont_visc_rem = .true.
 
   !>@{ Diagnostic IDs
   integer :: id_uold   = -1, id_vold   = -1
@@ -632,8 +633,13 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
 ! u_accel_bt = layer accelerations due to barotropic solver
   if (associated(CS%BT_cont) .or. CS%BT_use_layer_fluxes) then
     call cpu_clock_begin(id_clock_continuity)
+    if (CS%use_cont_visc_rem) then
     call continuity(u_inst, v_inst, h, hp, uh_in, vh_in, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                     visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, BT_cont=CS%BT_cont)
+    else
+    call continuity(u_inst, v_inst, h, hp, uh_in, vh_in, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
+                    BT_cont=CS%BT_cont)
+    endif
     call cpu_clock_end(id_clock_continuity)
     if (BT_cont_BT_thick) then
       call btcalc(h, G, GV, CS%barotropic_CSp, CS%BT_cont%h_u, CS%BT_cont%h_v, &
@@ -753,9 +759,15 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   ! uh = u_av * h
   ! hp = h + dt * div . uh
   call cpu_clock_begin(id_clock_continuity)
+  if (CS%use_cont_visc_rem) then
   call continuity(up, vp, h, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
                   u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont)
+  else
+  call continuity(up, vp, h, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
+                  uhbt=CS%uhbt, vhbt=CS%vhbt, &
+                  u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont)
+  endif
   call cpu_clock_end(id_clock_continuity)
   if (showCallTree) call callTree_wayPoint("done with continuity (step_MOM_dyn_split_RK2)")
 
@@ -1012,9 +1024,15 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   ! h  = h + dt * div . uh
   ! u_av and v_av adjusted so their mass transports match uhbt and vhbt.
   call cpu_clock_begin(id_clock_continuity)
+  if (CS%use_cont_visc_rem) then
   call continuity(u_inst, v_inst, h, h, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
                   u_cor=u_av, v_cor=v_av)
+  else
+  call continuity(u_inst, v_inst, h, h, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
+                  uhbt=CS%uhbt, vhbt=CS%vhbt, &
+                  u_cor=u_av, v_cor=v_av)
+  endif
   call cpu_clock_end(id_clock_continuity)
   call do_group_pass(CS%pass_h, G%Domain, clock=id_clock_pass)
   ! Whenever thickness changes let the diag manager know, target grids
@@ -1449,7 +1467,8 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
                  "predictor stage for the following continuity() call and btstep() call "//&
                  "in the corrector step. This flag should be used with "//&
                  "VISC_REM_BT_WEIGHT_FIX.", default=.not.visc_rem_bug)
-
+  call get_param(param_file, mdl, "USE_CONT_VISC_REM", CS%use_cont_visc_rem, &
+                 "If true, cont_visc_rem", default=.true.)
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
 
