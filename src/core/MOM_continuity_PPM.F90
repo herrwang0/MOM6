@@ -67,6 +67,7 @@ type, public :: continuity_PPM_CS ; private
   logical :: visc_rem_hvel_fix = .False. !< If true, thickness at velocity points
                              !! h_[uv] (used by barotropic solver) is not multiplied
                              !! by visc_rem_[uv].
+  logical :: test_visc_rem = .False. !<
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -1301,6 +1302,7 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
     duL, duR, &   ! The barotropic velocity increments that give the westerly
                   ! (duL) and easterly (duR) test velocities [L T-1 ~> m s-1].
     zeros, &      ! An array of full of 0 transports [H L2 T-1 ~> m3 s-1 or kg s-1]
+    ones, &      ! An array of full of ones [nondim]
     du_CFL, &     ! The velocity increment that corresponds to CFL_min [L T-1 ~> m s-1].
     u_L, u_R, &   ! The westerly (u_L), easterly (u_R), and zero-barotropic
     u_0, &        ! transport (u_0) layer test velocities [L T-1 ~> m s-1].
@@ -1370,18 +1372,29 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
     endif
   endif ; enddo ; enddo
 
+  do I=ish-1,ieh ; ones(I) = 1.0 ; enddo
+
   do k=1,nz
     do I=ish-1,ieh ; if (do_I(I)) then
       u_L(I) = u(I,j,k) + duL(I) * visc_rem(I,k)
       u_R(I) = u(I,j,k) + duR(I) * visc_rem(I,k)
       u_0(I) = u(I,j,k) + du0(I) * visc_rem(I,k)
     endif ; enddo
+    if (CS%test_visc_rem) then
+    call zonal_flux_layer(u_0, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_0, duhdu_0, &
+                          ones, dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
+    call zonal_flux_layer(u_L, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_L, duhdu_L, &
+                          ones, dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
+    call zonal_flux_layer(u_R, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_R, duhdu_R, &
+                          ones, dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
+    else
     call zonal_flux_layer(u_0, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_0, duhdu_0, &
                           visc_rem(:,k), dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
     call zonal_flux_layer(u_L, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_L, duhdu_L, &
                           visc_rem(:,k), dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
     call zonal_flux_layer(u_R, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_R, duhdu_R, &
                           visc_rem(:,k), dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
+    endif
     do I=ish-1,ieh ; if (do_I(I)) then
       FAmt_0(I) = FAmt_0(I) + duhdu_0(I)
       FAmt_L(I) = FAmt_L(I) + duhdu_L(I)
@@ -2210,6 +2223,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
     dvL, dvR, &   ! The barotropic velocity increments that give the southerly
                   ! (dvL) and northerly (dvR) test velocities [L T-1 ~> m s-1].
     zeros, &      ! An array of full of 0 transports [H L2 T-1 ~> m3 s-1 or kg s-1]
+    ones, &      ! An array of full of ones [nondim]
     dv_CFL, &     ! The velocity increment that corresponds to CFL_min [L T-1 ~> m s-1].
     v_L, v_R, &   ! The southerly (v_L), northerly (v_R), and zero-barotropic
     v_0, &        ! transport (v_0) layer test velocities [L T-1 ~> m s-1].
@@ -2279,18 +2293,28 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
         dvL(i) = -(v(i,J,k) - dv_CFL(i)*visc_rem(i,k)) / visc_rem_lim
     endif
   endif ; enddo ; enddo
+  do i=ish,ieh ; ones(i) = 1.0 ; enddo
   do k=1,nz
     do i=ish,ieh ; if (do_I(i)) then
       v_L(i) = v(I,j,k) + dvL(i) * visc_rem(i,k)
       v_R(i) = v(I,j,k) + dvR(i) * visc_rem(i,k)
       v_0(i) = v(I,j,k) + dv0(i) * visc_rem(i,k)
     endif ; enddo
+    if (CS%test_visc_rem) then
+    call merid_flux_layer(v_0, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_0, dvhdv_0, &
+                          ones, dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k))
+    call merid_flux_layer(v_L, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_L, dvhdv_L, &
+                          ones, dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k))
+    call merid_flux_layer(v_R, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_R, dvhdv_R, &
+                          ones, dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k))
+    else
     call merid_flux_layer(v_0, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_0, dvhdv_0, &
                           visc_rem(:,k), dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k))
     call merid_flux_layer(v_L, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_L, dvhdv_L, &
                           visc_rem(:,k), dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k))
     call merid_flux_layer(v_R, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_R, dvhdv_R, &
                           visc_rem(:,k), dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k))
+    endif
     do i=ish,ieh ; if (do_I(i)) then
       FAmt_0(i) = FAmt_0(i) + dvhdv_0(i)
       FAmt_L(i) = FAmt_L(i) + dvhdv_L(i)
@@ -2779,6 +2803,8 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS)
                  "If true, velocity cell thickness h_[uv] from the continuity solver "//&
                  "is not multiplied by visc_rem_[uv]. Default of this flag is set by "//&
                  "VISC_REM_BUG.", default=.False.) !, default=.not.visc_rem_bug)
+  call get_param(param_file, mdl, "TEST_CONT_VISC_REM", CS%test_visc_rem, &
+                 "If true, test_visc_rem", default=CS%visc_rem_hvel_fix)
   CS%diag => diag
 
   id_clock_reconstruct = cpu_clock_id('(Ocean continuity reconstruction)', grain=CLOCK_ROUTINE)
