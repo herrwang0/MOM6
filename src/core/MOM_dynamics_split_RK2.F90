@@ -870,10 +870,17 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
 
 ! diffu = horizontal viscosity terms (u_av)
   call cpu_clock_begin(id_clock_horvisc)
-  call horizontal_viscosity(u_av, v_av, h_av, uh, vh, CS%diffu, CS%diffv, &
-                            MEKE, Varmix, G, GV, US, CS%hor_visc, tv, dt, &
-                            OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp, &
-                            ADp=CS%ADp, hu_cont=CS%BT_cont%h_u, hv_cont=CS%BT_cont%h_v)
+  if (associated(CS%BT_cont) .and. allocated(CS%BT_cont%h_u) .and. allocated(CS%BT_cont%h_v)) then
+    call horizontal_viscosity(u_av, v_av, h_av, uh, vh, CS%diffu, CS%diffv, &
+                              MEKE, Varmix, G, GV, US, CS%hor_visc, tv, dt, &
+                              OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp, &
+                              ADp=CS%ADp, hu_cont=CS%BT_cont%h_u, hv_cont=CS%BT_cont%h_v)
+  else
+    call horizontal_viscosity(u_av, v_av, h_av, uh, vh, CS%diffu, CS%diffv, &
+                              MEKE, Varmix, G, GV, US, CS%hor_visc, tv, dt, &
+                              OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp, &
+                              ADp=CS%ADp)
+  endif
   call cpu_clock_end(id_clock_horvisc)
   if (showCallTree) call callTree_wayPoint("done with horizontal_viscosity (step_MOM_dyn_split_RK2)")
 
@@ -1570,9 +1577,14 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
 
   if (.not. query_initialized(CS%diffu, "diffu", restart_CS) .or. &
       .not. query_initialized(CS%diffv, "diffv", restart_CS)) then
-    call horizontal_viscosity(u, v, h, uh, vh, CS%diffu, CS%diffv, MEKE, VarMix, G, GV, US, CS%hor_visc, &
-                              tv, dt, OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp, &
-                              hu_cont=CS%BT_cont%h_u, hv_cont=CS%BT_cont%h_v)
+  if (associated(CS%BT_cont) .and. allocated(CS%BT_cont%h_u) .and. allocated(CS%BT_cont%h_v)) then
+      call horizontal_viscosity(u, v, h, uh, vh, CS%diffu, CS%diffv, MEKE, VarMix, G, GV, US, CS%hor_visc, &
+                                tv, dt, OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp, &
+                                hu_cont=CS%BT_cont%h_u, hv_cont=CS%BT_cont%h_v)
+    else
+      call horizontal_viscosity(u, v, h, uh, vh, CS%diffu, CS%diffv, MEKE, VarMix, G, GV, US, CS%hor_visc, &
+                                tv, dt, OBC=CS%OBC, BT=CS%barotropic_CSp, TD=thickness_diffuse_CSp)
+    endif
     call set_initialized(CS%diffu, "diffu", restart_CS)
     call set_initialized(CS%diffv, "diffv", restart_CS)
   endif
