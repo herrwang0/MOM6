@@ -3276,9 +3276,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   if (CS%use_porbar) then
     call porous_barriers_init(Time, GV, US, param_file, diag, CS%por_bar_CS)
     if (porbar_static(CS%por_bar_CS)) then
-      ! call enable_averages(dt, Time_local, CS%diag)
+      call enable_averages(CS%dt, Time, CS%diag)
       call porous_widths_layer(CS%h, CS%tv, G, GV, US, CS%pbv, CS%por_bar_CS)
-      ! call disable_averaging(CS%diag)
+      call disable_averaging(CS%diag)
       call pass_vector(CS%pbv%por_face_areaU, CS%pbv%por_face_areaV, &
                        G%Domain, direction=To_All+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
     endif
