@@ -33,7 +33,7 @@ type, public :: SAL_CS ; private
     !< If true, use bottom pressure anomaly instead of SSH to calculate SAL.
   real :: eta_prop
     !< The partial derivative of eta_sal with the local value of eta [nondim].
-  real, allocatable :: linear_scaling
+  real :: linear_scaling
     !< Dimensional coefficients for scalar SAL [nondim or Z T2 L-2 R-1 ~> m Pa-1]
   type(sht_CS), allocatable :: sht
     !< Spherical harmonic transforms (SHT) control structure
