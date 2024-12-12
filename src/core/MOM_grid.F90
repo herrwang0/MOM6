@@ -114,26 +114,6 @@ type, public :: ocean_grid_type
     IareaCv, &   !< The masked inverse areas of v-grid cells [L-2 ~> m-2].
     areaCv       !< The areas of the v-grid cells [L2 ~> m2].
 
-  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
-    depc_low, & !< minimum topographic height (deepest) at tracer cells [Z ~> m]
-    depc_hgh, & !< maximum topographic height (shallowest) at tracer cells [Z ~> m]
-    depc_ave    !< average topographic height at tracer cells [Z ~> m]
-
-  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
-    depc_m,  & !< [Z ~> m]
-    depc_m1, & !< [Z ~> m]
-    depc_m2    !< [Z ~> m]
-
-  real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_) :: &
-    porous_DminU, & !< minimum topographic height (deepest) of U-face [Z ~> m]
-    porous_DmaxU, & !< maximum topographic height (shallowest) of U-face [Z ~> m]
-    porous_DavgU    !< average topographic height of U-face [Z ~> m]
-
-  real ALLOCABLE_, dimension(NIMEM_,NJMEMB_PTR_) :: &
-    porous_DminV, & !< minimum topographic height (deepest) of V-face [Z ~> m]
-    porous_DmaxV, & !< maximum topographic height (shallowest) of V-face [Z ~> m]
-    porous_DavgV    !< average topographic height of V-face [Z ~> m]
-
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEMB_PTR_) :: &
     mask2dBu, &  !< 0 for boundary points and 1 for ocean points on the q grid [nondim].
     geoLatBu, &  !< The geographic latitude at q points [degrees_N] or [km] or [m]
@@ -170,6 +150,30 @@ type, public :: ocean_grid_type
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
     bathyT           !< Ocean bottom depth at tracer points, in depth units [Z ~> m].
   real    :: Z_ref   !< A reference value for all geometric height fields, such as bathyT [Z ~> m].
+
+  logical :: sg_bathy_at_edge = .false. !< If true, sub-grid scale bathymetry at the cell
+                  !! edges are represented by a monomial determined by three parameters
+                  !! (porous_Dmin[UV], porous_Davg[UV] and porous_Dmax[UV]).
+  real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_) :: &
+    porous_DminU, & !< minimum topographic height (deepest) of U-face [Z ~> m]
+    porous_DmaxU, & !< maximum topographic height (shallowest) of U-face [Z ~> m]
+    porous_DavgU    !< average topographic height of U-face [Z ~> m]
+  real ALLOCABLE_, dimension(NIMEM_,NJMEMB_PTR_) :: &
+    porous_DminV, & !< minimum topographic height (deepest) of V-face [Z ~> m]
+    porous_DmaxV, & !< maximum topographic height (shallowest) of V-face [Z ~> m]
+    porous_DavgV    !< average topographic height of V-face [Z ~> m]
+
+  logical :: sg_bathy_at_center = .false. !< If true, sub-grid scale bathymetry at the cell
+                  !! centers are represented by a monomial determined by three parameters
+                  !! (depc_low, depc_ave and depc_hgh).
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
+    depc_low, & !< minimum topographic height (deepest) at tracer cells [Z ~> m]
+    depc_hgh, & !< maximum topographic height (shallowest) at tracer cells [Z ~> m]
+    depc_ave    !< average topographic height at tracer cells [Z ~> m]
+  real ALLOCABLE_, dimension(NIMEM_,NJMEM_) :: &
+    depc_m,  & !< [nondim]
+    depc_m1, & !< [nondim]
+    depc_m2    !< [nondim]
 
   logical :: bathymetry_at_vel  !< If true, there are separate values for the
                   !! basin depths at velocity points.  Otherwise the effects of
@@ -212,7 +216,8 @@ end type ocean_grid_type
 contains
 
 !> MOM_grid_init initializes the ocean grid array sizes and grid memory.
-subroutine MOM_grid_init(G, param_file, US, HI, global_indexing, bathymetry_at_vel)
+subroutine MOM_grid_init(G, param_file, US, HI, global_indexing, bathymetry_at_vel, &
+                         sg_bathy_at_edge, sg_bathy_at_center)
   type(ocean_grid_type), intent(inout) :: G          !< The horizontal grid type
   type(param_file_type), intent(in)    :: param_file !< Parameter file handle
   type(unit_scale_type), optional, pointer :: US !< A dimensional unit scaling type
@@ -225,6 +230,12 @@ subroutine MOM_grid_init(G, param_file, US, HI, global_indexing, bathymetry_at_v
                              !! separate values for the ocean bottom depths at
                              !! velocity points.  Otherwise the effects of topography
                              !! are entirely determined from thickness points.
+  logical,        optional, intent(in) :: sg_bathy_at_edge !< If true, allocate sub-grid scale
+                             !! bathymetry parameters at the cell edges (porous_Dmin[UV],
+                             !! porous_Davg[UV] and porous_Dmax[UV]).
+  logical,        optional, intent(in) :: sg_bathy_at_center !< If true, allocate sub-grid scale
+                             !! bathymetry parameters at the cell centers (depc_low, depc_ave and
+                             !! depc_hgh).
 
   ! Local variables
   real :: mean_SeaLev_scale ! A scaling factor for the reference height variable [1] or [Z m-1 ~> 1]
@@ -315,6 +326,31 @@ subroutine MOM_grid_init(G, param_file, US, HI, global_indexing, bathymetry_at_v
 
   G%bathymetry_at_vel = .false.
   if (present(bathymetry_at_vel)) G%bathymetry_at_vel = bathymetry_at_vel
+  G%sg_bathy_at_edge = .false.
+  if (present(sg_bathy_at_edge)) G%sg_bathy_at_edge = sg_bathy_at_edge
+  G%sg_bathy_at_center = .false.
+  if (present(sg_bathy_at_center)) G%sg_bathy_at_center = sg_bathy_at_center
+
+  if (G%sg_bathy_at_center) then
+    ALLOC_(G%depc_low(isd:ied,jsd:jed)) ; G%depc_low = 0.0
+    ALLOC_(G%depc_ave(isd:ied,jsd:jed)) ; G%depc_ave = 0.0
+    ALLOC_(G%depc_hgh(isd:ied,jsd:jed)) ; G%depc_hgh = 0.0
+
+    ALLOC_(G%depc_m(isd:ied,jsd:jed)) ; G%depc_m = 0.0
+    ALLOC_(G%depc_m1(isd:ied,jsd:jed)) ; G%depc_m1 = 0.0
+    ALLOC_(G%depc_m2(isd:ied,jsd:jed)) ; G%depc_m2 = 0.0
+  endif
+
+  if (G%sg_bathy_at_edge) then
+    ALLOC_(G%porous_DminU(IsdB:IedB,jsd:jed)); G%porous_DminU(:,:) = 0.0
+    ALLOC_(G%porous_DmaxU(IsdB:IedB,jsd:jed)); G%porous_DmaxU(:,:) = 0.0
+    ALLOC_(G%porous_DavgU(IsdB:IedB,jsd:jed)); G%porous_DavgU(:,:) = 0.0
+
+    ALLOC_(G%porous_DminV(isd:ied,JsdB:JedB)); G%porous_DminV(:,:) = 0.0
+    ALLOC_(G%porous_DmaxV(isd:ied,JsdB:JedB)); G%porous_DmaxV(:,:) = 0.0
+    ALLOC_(G%porous_DavgV(isd:ied,JsdB:JedB)); G%porous_DavgV(:,:) = 0.0
+  endif
+
   if (G%bathymetry_at_vel) then
     ALLOC_(G%Dblock_u(IsdB:IedB, jsd:jed)) ; G%Dblock_u(:,:) = -G%Z_ref
     ALLOC_(G%Dopen_u(IsdB:IedB, jsd:jed))  ; G%Dopen_u(:,:) = -G%Z_ref
@@ -577,21 +613,6 @@ subroutine allocate_metrics(G)
   ALLOC_(G%dx_Cv(isd:ied,JsdB:JedB))     ; G%dx_Cv(:,:) = 0.0
   ALLOC_(G%dy_Cu(IsdB:IedB,jsd:jed))     ; G%dy_Cu(:,:) = 0.0
 
-  ALLOC_(G%depc_low(isd:ied,jsd:jed)) ; G%depc_low = 0.0
-  ALLOC_(G%depc_ave(isd:ied,jsd:jed)) ; G%depc_ave = 0.0
-  ALLOC_(G%depc_hgh(isd:ied,jsd:jed)) ; G%depc_hgh = 0.0
-  ALLOC_(G%depc_m(isd:ied,jsd:jed)) ; G%depc_m = 0.0
-  ALLOC_(G%depc_m1(isd:ied,jsd:jed)) ; G%depc_m1 = 0.0
-  ALLOC_(G%depc_m2(isd:ied,jsd:jed)) ; G%depc_m2 = 0.0
-
-  ALLOC_(G%porous_DminU(IsdB:IedB,jsd:jed)); G%porous_DminU(:,:) = 0.0
-  ALLOC_(G%porous_DmaxU(IsdB:IedB,jsd:jed)); G%porous_DmaxU(:,:) = 0.0
-  ALLOC_(G%porous_DavgU(IsdB:IedB,jsd:jed)); G%porous_DavgU(:,:) = 0.0
-
-  ALLOC_(G%porous_DminV(isd:ied,JsdB:JedB)); G%porous_DminV(:,:) = 0.0
-  ALLOC_(G%porous_DmaxV(isd:ied,JsdB:JedB)); G%porous_DmaxV(:,:) = 0.0
-  ALLOC_(G%porous_DavgV(isd:ied,JsdB:JedB)); G%porous_DavgV(:,:) = 0.0
-
   ALLOC_(G%areaCu(IsdB:IedB,jsd:jed))  ; G%areaCu(:,:) = 0.0
   ALLOC_(G%areaCv(isd:ied,JsdB:JedB))  ; G%areaCv(:,:) = 0.0
   ALLOC_(G%IareaCu(IsdB:IedB,jsd:jed)) ; G%IareaCu(:,:) = 0.0
@@ -618,6 +639,16 @@ subroutine MOM_grid_end(G)
   type(ocean_grid_type), intent(inout) :: G !< The horizontal grid type
 
   deallocate(G%Block)
+
+  if (G%sg_bathy_at_edge) then
+    DEALLOC_(G%porous_DminU) ; DEALLOC_(G%porous_DmaxU) ; DEALLOC_(G%porous_DavgU)
+    DEALLOC_(G%porous_DminV) ; DEALLOC_(G%porous_DmaxV) ; DEALLOC_(G%porous_DavgV)
+  endif
+
+  if (G%sg_bathy_at_center) then
+    DEALLOC_(G%depc_low) ; DEALLOC_(G%depc_ave) ; DEALLOC_(G%depc_hgh)
+    DEALLOC_(G%depc_m) ; DEALLOC_(G%depc_m1) ; DEALLOC_(G%depc_m2)
+  endif
 
   if (G%bathymetry_at_vel) then
     DEALLOC_(G%Dblock_u) ; DEALLOC_(G%Dopen_u)
@@ -648,11 +679,6 @@ subroutine MOM_grid_end(G)
   DEALLOC_(G%bathyT)  ; DEALLOC_(G%CoriolisBu) ; DEALLOC_(G%Coriolis2Bu)
   DEALLOC_(G%dF_dx)   ; DEALLOC_(G%dF_dy)
   DEALLOC_(G%sin_rot) ; DEALLOC_(G%cos_rot)
-
-  DEALLOC_(G%depc_low) ; DEALLOC_(G%depc_ave) ; DEALLOC_(G%depc_hgh)
-  DEALLOC_(G%depc_m) ; DEALLOC_(G%depc_m1) ; DEALLOC_(G%depc_m2)
-  DEALLOC_(G%porous_DminU) ; DEALLOC_(G%porous_DmaxU) ; DEALLOC_(G%porous_DavgU)
-  DEALLOC_(G%porous_DminV) ; DEALLOC_(G%porous_DmaxV) ; DEALLOC_(G%porous_DavgV)
 
   deallocate(G%gridLonT) ; deallocate(G%gridLatT)
   deallocate(G%gridLonB) ; deallocate(G%gridLatB)

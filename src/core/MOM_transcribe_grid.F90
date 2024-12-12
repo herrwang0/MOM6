@@ -62,13 +62,6 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
     oG%sin_rot(i,j) = dG%sin_rot(i+ido,j+jdo)
     oG%cos_rot(i,j) = dG%cos_rot(i+ido,j+jdo)
     oG%mask2dT(i,j) = dG%mask2dT(i+ido,j+jdo)
-
-    oG%depc_low(i,j) = dG%depc_low(i+ido,j+jdo) - oG%Z_ref
-    oG%depc_ave(i,j) = dG%depc_ave(i+ido,j+jdo) - oG%Z_ref
-    oG%depc_hgh(i,j) = dG%depc_hgh(i+ido,j+jdo) - oG%Z_ref
-    oG%depc_m(i,j) = dG%depc_m(i+ido,j+jdo)
-    oG%depc_m1(i,j) = dG%depc_m1(i+ido,j+jdo)
-    oG%depc_m2(i,j) = dG%depc_m2(i+ido,j+jdo)
   enddo ; enddo
 
   do I=IsdB,IedB ; do j=jsd,jed
@@ -77,10 +70,6 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
     oG%dxCu(I,j) = dG%dxCu(I+ido,j+jdo)
     oG%dyCu(I,j) = dG%dyCu(I+ido,j+jdo)
     oG%dy_Cu(I,j) = dG%dy_Cu(I+ido,j+jdo)
-
-    oG%porous_DminU(I,j) = dG%porous_DminU(I+ido,j+jdo) - oG%Z_ref
-    oG%porous_DmaxU(I,j) = dG%porous_DmaxU(I+ido,j+jdo) - oG%Z_ref
-    oG%porous_DavgU(I,j) = dG%porous_DavgU(I+ido,j+jdo) - oG%Z_ref
 
     oG%mask2dCu(I,j) = dG%mask2dCu(I+ido,j+jdo)
     oG%OBCmaskCu(I,j) = dG%OBCmaskCu(I+ido,j+jdo)
@@ -94,10 +83,6 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
     oG%dxCv(i,J) = dG%dxCv(i+ido,J+jdo)
     oG%dyCv(i,J) = dG%dyCv(i+ido,J+jdo)
     oG%dx_Cv(i,J) = dG%dx_Cv(i+ido,J+jdo)
-
-    oG%porous_DminV(i,J) = dG%porous_DminV(i+ido,J+jdo) - oG%Z_ref
-    oG%porous_DmaxV(i,J) = dG%porous_DmaxV(i+ido,J+jdo) - oG%Z_ref
-    oG%porous_DavgV(i,J) = dG%porous_DavgV(i+ido,J+jdo) - oG%Z_ref
 
     oG%mask2dCv(i,J) = dG%mask2dCv(i+ido,J+jdo)
     oG%OBCmaskCv(i,J) = dG%OBCmaskCv(i+ido,J+jdo)
@@ -116,6 +101,32 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
     oG%mask2dBu(I,J) = dG%mask2dBu(I+ido,J+jdo)
   enddo ; enddo
 
+  oG%sg_bathy_at_edge = dG%sg_bathy_at_edge
+  if (oG%sg_bathy_at_edge) then
+    do I=IsdB,IedB ; do j=jsd,jed
+      oG%porous_DminU(I,j) = dG%porous_DminU(I+ido,j+jdo) - oG%Z_ref
+      oG%porous_DmaxU(I,j) = dG%porous_DmaxU(I+ido,j+jdo) - oG%Z_ref
+      oG%porous_DavgU(I,j) = dG%porous_DavgU(I+ido,j+jdo) - oG%Z_ref
+    enddo ; enddo
+    do i=isd,ied ; do J=JsdB,JedB
+      oG%porous_DminV(i,J) = dG%porous_DminV(i+ido,J+jdo) - oG%Z_ref
+      oG%porous_DmaxV(i,J) = dG%porous_DmaxV(i+ido,J+jdo) - oG%Z_ref
+      oG%porous_DavgV(i,J) = dG%porous_DavgV(i+ido,J+jdo) - oG%Z_ref
+    enddo ; enddo
+  endif
+
+  oG%sg_bathy_at_center = dG%sg_bathy_at_center
+  if (oG%sg_bathy_at_center) then
+    do i=isd,ied ; do j=jsd,jed
+      oG%depc_low(i,j) = dG%depc_low(i+ido,j+jdo) - oG%Z_ref
+      oG%depc_ave(i,j) = dG%depc_ave(i+ido,j+jdo) - oG%Z_ref
+      oG%depc_hgh(i,j) = dG%depc_hgh(i+ido,j+jdo) - oG%Z_ref
+      oG%depc_m(i,j) = dG%depc_m(i+ido,j+jdo)
+      oG%depc_m1(i,j) = dG%depc_m1(i+ido,j+jdo)
+      oG%depc_m2(i,j) = dG%depc_m2(i+ido,j+jdo)
+    enddo ; enddo
+  endif
+
   oG%bathymetry_at_vel = dG%bathymetry_at_vel
   if (oG%bathymetry_at_vel) then
     do I=IsdB,IedB ; do j=jsd,jed
@@ -130,6 +141,7 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
 
   oG%gridLonT(oG%isg:oG%ieg) = dG%gridLonT(dG%isg:dG%ieg)
   oG%gridLatT(oG%jsg:oG%jeg) = dG%gridLatT(dG%jsg:dG%jeg)
+
   ! The more complicated logic here avoids segmentation faults if one grid uses
   ! global symmetric memory while the other does not.  Because a northeast grid
   ! convention is being used, the upper bounds for each array correspond.
@@ -148,7 +160,7 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
   oG%Rad_Earth = dG%Rad_Earth ; oG%Rad_Earth_L = dG%Rad_Earth_L
   oG%max_depth = dG%max_depth
 
-! Update the halos in case the dynamic grid has smaller halos than the ocean grid.
+ ! Update the halos in case the dynamic grid has smaller halos than the ocean grid.
   call pass_var(oG%areaT, oG%Domain)
   call pass_var(oG%bathyT, oG%Domain)
   call pass_var(oG%geoLonT, oG%Domain)
@@ -175,6 +187,21 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
   call pass_var(oG%CoriolisBu, oG%Domain, position=CORNER)
   call pass_var(oG%Coriolis2Bu, oG%Domain, position=CORNER)
   call pass_var(oG%mask2dBu, oG%Domain, position=CORNER)
+
+  if (oG%sg_bathy_at_edge) then
+    call pass_vector(oG%porous_DminU, oG%porous_DminV, oG%Domain, To_All+Scalar_Pair, CGRID_NE)
+    call pass_vector(oG%porous_DavgU, oG%porous_DavgV, oG%Domain, To_All+Scalar_Pair, CGRID_NE)
+    call pass_vector(oG%porous_DmaxU, oG%porous_DmaxV, oG%Domain, To_All+Scalar_Pair, CGRID_NE)
+  endif
+
+  if (oG%sg_bathy_at_center) then
+    call pass_var(oG%depc_low, oG%Domain)
+    call pass_var(oG%depc_ave, oG%Domain)
+    call pass_var(oG%depc_hgh, oG%Domain)
+    call pass_var(oG%depc_m, oG%Domain)
+    call pass_var(oG%depc_m1, oG%Domain)
+    call pass_var(oG%depc_m2, oG%Domain)
+  endif
 
   if (oG%bathymetry_at_vel) then
     call pass_vector(oG%Dblock_u, oG%Dblock_v, oG%Domain, To_All+Scalar_Pair, CGRID_NE)
@@ -238,10 +265,6 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
     dG%dyCu(I,j) = oG%dyCu(I+ido,j+jdo)
     dG%dy_Cu(I,j) = oG%dy_Cu(I+ido,j+jdo)
 
-    dG%porous_DminU(I,j) = oG%porous_DminU(I+ido,j+jdo) + oG%Z_ref
-    dG%porous_DmaxU(I,j) = oG%porous_DmaxU(I+ido,j+jdo) + oG%Z_ref
-    dG%porous_DavgU(I,j) = oG%porous_DavgU(I+ido,j+jdo) + oG%Z_ref
-
     dG%mask2dCu(I,j) = oG%mask2dCu(I+ido,j+jdo)
     dG%OBCmaskCu(I,j) = oG%OBCmaskCu(I+ido,j+jdo)
     dG%areaCu(I,j) = oG%areaCu(I+ido,j+jdo)
@@ -254,10 +277,6 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
     dG%dxCv(i,J) = oG%dxCv(i+ido,J+jdo)
     dG%dyCv(i,J) = oG%dyCv(i+ido,J+jdo)
     dG%dx_Cv(i,J) = oG%dx_Cv(i+ido,J+jdo)
-
-    dG%porous_DminV(i,J) = oG%porous_DminU(i+ido,J+jdo) + oG%Z_ref
-    dG%porous_DmaxV(i,J) = oG%porous_DmaxU(i+ido,J+jdo) + oG%Z_ref
-    dG%porous_DavgV(i,J) = oG%porous_DavgU(i+ido,J+jdo) + oG%Z_ref
 
     dG%mask2dCv(i,J) = oG%mask2dCv(i+ido,J+jdo)
     dG%OBCmaskCv(i,J) = oG%OBCmaskCv(i+ido,J+jdo)
@@ -275,6 +294,32 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
     dG%Coriolis2Bu(I,J) = oG%Coriolis2Bu(I+ido,J+jdo)
     dG%mask2dBu(I,J) = oG%mask2dBu(I+ido,J+jdo)
   enddo ; enddo
+
+  dG%sg_bathy_at_edge = oG%sg_bathy_at_edge
+  if (dG%sg_bathy_at_edge) then
+    do I=IsdB,IedB ; do j=jsd,jed
+      dG%porous_DminU(I,j) = oG%porous_DminU(I+ido,j+jdo) + oG%Z_ref
+      dG%porous_DmaxU(I,j) = oG%porous_DmaxU(I+ido,j+jdo) + oG%Z_ref
+      dG%porous_DavgU(I,j) = oG%porous_DavgU(I+ido,j+jdo) + oG%Z_ref
+    enddo ; enddo
+    do i=isd,ied ; do J=JsdB,JedB
+      dG%porous_DminV(i,J) = oG%porous_DminV(i+ido,J+jdo) + oG%Z_ref
+      dG%porous_DmaxV(i,J) = oG%porous_DmaxV(i+ido,J+jdo) + oG%Z_ref
+      dG%porous_DavgV(i,J) = oG%porous_DavgV(i+ido,J+jdo) + oG%Z_ref
+    enddo ; enddo
+  endif
+
+  dG%sg_bathy_at_center = oG%sg_bathy_at_center
+  if (dG%sg_bathy_at_center) then
+    do i=isd,ied ; do j=jsd,jed
+      dG%depc_low(i,j) = oG%depc_low(i+ido,j+jdo) + oG%Z_ref
+      dG%depc_ave(i,j) = oG%depc_ave(i+ido,j+jdo) + oG%Z_ref
+      dG%depc_hgh(i,j) = oG%depc_hgh(i+ido,j+jdo) + oG%Z_ref
+      dG%depc_m(i,j) = oG%depc_m(i+ido,j+jdo)
+      dG%depc_m1(i,j) = oG%depc_m1(i+ido,j+jdo)
+      dG%depc_m2(i,j) = oG%depc_m2(i+ido,j+jdo)
+    enddo ; enddo
+  endif
 
   dG%bathymetry_at_vel = oG%bathymetry_at_vel
   if (dG%bathymetry_at_vel) then
@@ -309,7 +354,7 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
   dG%Rad_Earth = oG%Rad_Earth ; dG%Rad_Earth_L = oG%Rad_Earth_L
   dG%max_depth = oG%max_depth
 
-! Update the halos in case the dynamic grid has smaller halos than the ocean grid.
+  ! Update the halos in case the dynamic grid has smaller halos than the ocean grid.
   call pass_var(dG%areaT, dG%Domain)
   call pass_var(dG%bathyT, dG%Domain)
   call pass_var(dG%geoLonT, dG%Domain)
@@ -336,6 +381,21 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
   call pass_var(dG%CoriolisBu, dG%Domain, position=CORNER)
   call pass_var(dG%Coriolis2Bu, dG%Domain, position=CORNER)
   call pass_var(dG%mask2dBu, dG%Domain, position=CORNER)
+
+  if (dG%sg_bathy_at_edge) then
+    call pass_vector(dG%porous_DminU, dG%porous_DminV, dG%Domain, To_All+Scalar_Pair, CGRID_NE)
+    call pass_vector(dG%porous_DavgU, dG%porous_DavgV, dG%Domain, To_All+Scalar_Pair, CGRID_NE)
+    call pass_vector(dG%porous_DmaxU, dG%porous_DmaxV, dG%Domain, To_All+Scalar_Pair, CGRID_NE)
+  endif
+
+  if (dG%sg_bathy_at_center) then
+    call pass_var(dG%depc_low, dG%Domain)
+    call pass_var(dG%depc_ave, dG%Domain)
+    call pass_var(dG%depc_hgh, dG%Domain)
+    call pass_var(dG%depc_m, dG%Domain)
+    call pass_var(dG%depc_m1, dG%Domain)
+    call pass_var(dG%depc_m2, dG%Domain)
+  endif
 
   if (dG%bathymetry_at_vel) then
     call pass_vector(dG%Dblock_u, dG%Dblock_v, dG%Domain, To_All+Scalar_Pair, CGRID_NE)

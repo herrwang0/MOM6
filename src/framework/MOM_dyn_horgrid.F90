@@ -112,26 +112,6 @@ type, public :: dyn_horgrid_type
     areaCv       !< The areas of the v-grid cells [L2 ~> m2].
 
   real, allocatable, dimension(:,:) :: &
-    depc_low, & !< minimum topographic height (deepest) at tracer cells [Z ~> m]
-    depc_hgh, & !< maximum topographic height (shallowest) at tracer cells [Z ~> m]
-    depc_ave    !< average topographic height at tracer cells [Z ~> m]
-
-  real, allocatable, dimension(:,:) :: &
-    depc_m,  & !< [Z ~> m]
-    depc_m1, & !< [Z ~> m]
-    depc_m2    !< [Z ~> m]
-
-  real, allocatable, dimension(:,:) :: &
-    porous_DminU, & !< minimum topographic height (deepest) of U-face [Z ~> m]
-    porous_DmaxU, & !< maximum topographic height (shallowest) of U-face [Z ~> m]
-    porous_DavgU    !< average topographic height of U-face [Z ~> m]
-
-  real, allocatable, dimension(:,:) :: &
-    porous_DminV, & !< minimum topographic height (deepest) of V-face [Z ~> m]
-    porous_DmaxV, & !< maximum topographic height (shallowest) of V-face [Z ~> m]
-    porous_DavgV    !< average topographic height of V-face [Z ~> m]
-
-  real, allocatable, dimension(:,:) :: &
     mask2dBu, &  !< 0 for boundary points and 1 for ocean points on the q grid [nondim].
     geoLatBu, &  !< The geographic latitude at q points [degrees of latitude] or [m].
     geoLonBu, &  !< The geographic longitude at q points [degrees of longitude] or [m].
@@ -169,6 +149,30 @@ type, public :: dyn_horgrid_type
   real, allocatable, dimension(:,:) :: &
     bathyT        !< Ocean bottom depth at tracer points, in depth units [Z ~> m].
 
+  logical :: sg_bathy_at_edge = .false. !< If true, sub-grid scale bathymetry at the cell
+                  !! edges are represented by a monomial determined by three parameters
+                  !! (porous_Dmin[UV], porous_Davg[UV] and porous_Dmax[UV]).
+  real, allocatable, dimension(:,:) :: &
+    porous_DminU, & !< minimum topographic height (deepest) of U-face [Z ~> m]
+    porous_DmaxU, & !< maximum topographic height (shallowest) of U-face [Z ~> m]
+    porous_DavgU    !< average topographic height of U-face [Z ~> m]
+  real, allocatable, dimension(:,:) :: &
+    porous_DminV, & !< minimum topographic height (deepest) of V-face [Z ~> m]
+    porous_DmaxV, & !< maximum topographic height (shallowest) of V-face [Z ~> m]
+    porous_DavgV    !< average topographic height of V-face [Z ~> m]
+
+  logical :: sg_bathy_at_center = .false.  !< If true, sub-grid scale bathymetry at the cell
+                  !! centers are represented by a monomial determined by three parameters
+                  !! (depc_low, depc_ave and depc_hgh).
+  real, allocatable, dimension(:,:) :: &
+    depc_low, & !< minimum topographic height (deepest) at tracer cells [Z ~> m]
+    depc_hgh, & !< maximum topographic height (shallowest) at tracer cells [Z ~> m]
+    depc_ave    !< average topographic height at tracer cells [Z ~> m]
+  real, allocatable, dimension(:,:) :: &
+    depc_m,  & !< [nondim]
+    depc_m1, & !< [nondim]
+    depc_m2    !< [nondim]
+
   logical :: bathymetry_at_vel  !< If true, there are separate values for the
                   !! basin depths at velocity points.  Otherwise the effects of
                   !! of topography are entirely determined from thickness points.
@@ -204,13 +208,19 @@ contains
 
 !---------------------------------------------------------------------
 !> Allocate memory used by the dyn_horgrid_type and related structures.
-subroutine create_dyn_horgrid(G, HI, bathymetry_at_vel)
+subroutine create_dyn_horgrid(G, HI, bathymetry_at_vel, sg_bathy_at_edge, sg_bathy_at_center)
   type(dyn_horgrid_type), pointer, intent(inout) :: G  !< A pointer to the dynamic horizontal grid type
   type(hor_index_type),   intent(in) :: HI !< A hor_index_type for array extents
   logical,        optional, intent(in) :: bathymetry_at_vel !< If true, there are
                              !! separate values for the basin depths at velocity
                              !! points.  Otherwise the effects of topography are
                              !! entirely determined from thickness points.
+  logical,        optional, intent(in) :: sg_bathy_at_edge !< If true, allocate sub-grid scale
+                             !! bathymetry parameters at the cell edges (porous_Dmin[UV],
+                             !! porous_Davg[UV] and porous_Dmax[UV]).
+  logical,        optional, intent(in) :: sg_bathy_at_center !< If true, allocate sub-grid scale
+                             !! bathymetry parameters at the cell centers (depc_low, depc_ave and
+                             !! depc_hgh).
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB, isg, ieg, jsg, jeg
 
   ! This subroutine allocates the lateral elements of the dyn_horgrid_type that
@@ -238,6 +248,10 @@ subroutine create_dyn_horgrid(G, HI, bathymetry_at_vel)
 
   G%bathymetry_at_vel = .false.
   if (present(bathymetry_at_vel)) G%bathymetry_at_vel = bathymetry_at_vel
+  G%sg_bathy_at_edge = .false.
+  if (present(sg_bathy_at_edge)) G%sg_bathy_at_edge = sg_bathy_at_edge
+  G%sg_bathy_at_center = .false.
+  if (present(sg_bathy_at_center)) G%sg_bathy_at_center = sg_bathy_at_center
 
   isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
@@ -289,22 +303,6 @@ subroutine create_dyn_horgrid(G, HI, bathymetry_at_vel)
   allocate(G%IareaCu(IsdB:IedB,jsd:jed), source=0.0)
   allocate(G%IareaCv(isd:ied,JsdB:JedB), source=0.0)
 
-  allocate(G%depc_low(isd:ied,jsd:jed), source=0.0)
-  allocate(G%depc_ave(isd:ied,jsd:jed), source=0.0)
-  allocate(G%depc_hgh(isd:ied,jsd:jed), source=0.0)
-  allocate(G%depc_m(isd:ied,jsd:jed), source=0.0)
-  allocate(G%depc_m1(isd:ied,jsd:jed), source=0.0)
-  allocate(G%depc_m2(isd:ied,jsd:jed), source=0.0)
-
-  allocate(G%porous_DminU(IsdB:IedB,jsd:jed), source=0.0)
-  allocate(G%porous_DmaxU(IsdB:IedB,jsd:jed), source=0.0)
-  allocate(G%porous_DavgU(IsdB:IedB,jsd:jed), source=0.0)
-
-  allocate(G%porous_DminV(isd:ied,JsdB:JedB), source=0.0)
-  allocate(G%porous_DmaxV(isd:ied,JsdB:JedB), source=0.0)
-  allocate(G%porous_DavgV(isd:ied,JsdB:JedB), source=0.0)
-
-
   allocate(G%bathyT(isd:ied, jsd:jed), source=0.0)
   allocate(G%CoriolisBu(IsdB:IedB, JsdB:JedB), source=0.0)
   allocate(G%Coriolis2Bu(IsdB:IedB, JsdB:JedB), source=0.0)
@@ -319,6 +317,25 @@ subroutine create_dyn_horgrid(G, HI, bathymetry_at_vel)
     allocate(G%Dopen_u(IsdB:IedB, jsd:jed), source=0.0)
     allocate(G%Dblock_v(isd:ied, JsdB:JedB), source=0.0)
     allocate(G%Dopen_v(isd:ied, JsdB:JedB), source=0.0)
+  endif
+
+  if (G%sg_bathy_at_edge) then
+    allocate(G%porous_DminU(IsdB:IedB,jsd:jed), source=0.0)
+    allocate(G%porous_DmaxU(IsdB:IedB,jsd:jed), source=0.0)
+    allocate(G%porous_DavgU(IsdB:IedB,jsd:jed), source=0.0)
+
+    allocate(G%porous_DminV(isd:ied,JsdB:JedB), source=0.0)
+    allocate(G%porous_DmaxV(isd:ied,JsdB:JedB), source=0.0)
+    allocate(G%porous_DavgV(isd:ied,JsdB:JedB), source=0.0)
+  endif
+
+  if (G%sg_bathy_at_center) then
+    allocate(G%depc_low(isd:ied,jsd:jed), source=0.0)
+    allocate(G%depc_ave(isd:ied,jsd:jed), source=0.0)
+    allocate(G%depc_hgh(isd:ied,jsd:jed), source=0.0)
+    allocate(G%depc_m(isd:ied,jsd:jed), source=0.0)
+    allocate(G%depc_m1(isd:ied,jsd:jed), source=0.0)
+    allocate(G%depc_m2(isd:ied,jsd:jed), source=0.0)
   endif
 
   ! gridLonB and gridLatB are used as edge values in some cases, so they
@@ -545,11 +562,15 @@ subroutine destroy_dyn_horgrid(G)
 
   deallocate(G%dx_Cv) ; deallocate(G%dy_Cu)
 
-  deallocate(G%porous_DminU) ; deallocate(G%porous_DmaxU) ; deallocate(G%porous_DavgU)
-  deallocate(G%porous_DminV) ; deallocate(G%porous_DmaxV) ; deallocate(G%porous_DavgV)
+  if (G%sg_bathy_at_edge) then
+    deallocate(G%porous_DminU) ; deallocate(G%porous_DmaxU) ; deallocate(G%porous_DavgU)
+    deallocate(G%porous_DminV) ; deallocate(G%porous_DmaxV) ; deallocate(G%porous_DavgV)
+  endif
 
-  deallocate(G%depc_low) ; deallocate(G%depc_ave) ; deallocate(G%depc_hgh)
-  deallocate(G%depc_m) ; deallocate(G%depc_m1) ; deallocate(G%depc_m2)
+  if (G%sg_bathy_at_center) then
+    deallocate(G%depc_low) ; deallocate(G%depc_ave) ; deallocate(G%depc_hgh)
+    deallocate(G%depc_m) ; deallocate(G%depc_m1) ; deallocate(G%depc_m2)
+  endif
 
   deallocate(G%bathyT)  ; deallocate(G%CoriolisBu) ; deallocate(G%Coriolis2Bu)
   deallocate(G%dF_dx)   ; deallocate(G%dF_dy)

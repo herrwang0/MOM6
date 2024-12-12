@@ -453,6 +453,7 @@ type, public :: MOM_control_struct ; private
   type(dbcomms_CS_type)   :: dbcomms_CS !< Control structure for database client used for online ML/AI
   logical :: use_porbar !< If true, use porous barrier to constrain the widths and face areas
                         !! at the edges of the grid cells.
+  logical :: use_pormed !< If true, use porous medium to adjust cell-averaged interface heights.
   type(porous_barrier_type) :: pbv !< porous barrier fractional cell metrics
   type(particles), pointer :: particles => NULL() !<Lagrangian particles
   type(stochastic_CS), pointer :: stoch_CS => NULL() !< a pointer to the stochastics control structure
@@ -2317,6 +2318,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                  "If true, use porous barrier to constrain the widths "//&
                  "and face areas at the edges of the grid cells. ", &
                  default=.false.)
+  call get_param(param_file, "MOM", "USE_POROUS_MEDIUM", CS%use_pormed, &
+                 "If true, use cell-center sub-grid scale topography (porous medium) to adjust "//&
+                 "interface heights.", &
+                 default=.false.)
   call get_param(param_file, "MOM", "BATHYMETRY_AT_VEL", bathy_at_vel, &
                  "If true, there are separate values for the basin depths "//&
                  "at velocity points.  Otherwise the effects of topography "//&
@@ -2631,10 +2636,12 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   ! Create HI and dG on the input index map.
   call hor_index_init(G_in%Domain, HI_in, param_file, &
                       local_indexing=.not.global_indexing)
-  call create_dyn_horgrid(dG_in, HI_in, bathymetry_at_vel=bathy_at_vel)
+  call create_dyn_horgrid(dG_in, HI_in, bathymetry_at_vel=bathy_at_vel, &
+                          sg_bathy_at_edge=CS%use_porbar, sg_bathy_at_center=CS%use_pormed)
   call clone_MOM_domain(G_in%Domain, dG_in%Domain)
   ! Also allocate the input ocean_grid_type type at this point based on the same information.
-  call MOM_grid_init(G_in, param_file, US, HI_in, bathymetry_at_vel=bathy_at_vel)
+  call MOM_grid_init(G_in, param_file, US, HI_in, bathymetry_at_vel=bathy_at_vel, &
+                     sg_bathy_at_edge=CS%use_porbar, sg_bathy_at_center=CS%use_pormed)
 
   ! Allocate initialize time-invariant MOM variables.
   call MOM_initialize_fixed(dG_in, US, OBC_in, param_file, .false., dirs%output_directory)
@@ -2667,8 +2674,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     ! NOTE: If indices are rotated, then G and G_in must both be initialized separately, and
     ! the dynamic grid must be created to handle the grid rotation. G%domain has already been
     ! initialized above.
-    call MOM_grid_init(G, param_file, US, HI, bathymetry_at_vel=bathy_at_vel)
-    call create_dyn_horgrid(dG, HI, bathymetry_at_vel=bathy_at_vel)
+    call MOM_grid_init(G, param_file, US, HI, bathymetry_at_vel=bathy_at_vel, &
+                       sg_bathy_at_edge=CS%use_porbar, sg_bathy_at_center=CS%use_pormed)
+    call create_dyn_horgrid(dG, HI, bathymetry_at_vel=bathy_at_vel, &
+                            sg_bathy_at_edge=CS%use_porbar, sg_bathy_at_center=CS%use_pormed)
     call clone_MOM_domain(G%Domain, dG%Domain)
     call rotate_dyn_horgrid(dG_in, dG, US, turns)
     call copy_dyngrid_to_MOM_grid(dG, G, US)
