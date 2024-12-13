@@ -1435,12 +1435,15 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
     fields   ! Opaque types used by MOM_io to store variable metadata information
   type(MOM_infra_file) :: IO_handle ! The I/O handle of the fileset
   integer :: nFlds ! The number of variables in this file
+  integer :: nst_sg_edge, nst_sg_center ! Starting vars indices for sub-grid topography fields
   integer :: file_threading
   logical :: multiple_files
 
   call callTree_enter('write_ocean_geometry_file()')
 
   nFlds = 19 ; if (G%bathymetry_at_vel) nFlds = 23
+  if (G%sg_bathy_at_edge) nFlds = nFlds + 6
+  if (G%sg_bathy_at_center) nFlds = nFlds + 3
 
   allocate(vars(nFlds))
   allocate(fields(nFlds))
@@ -1481,6 +1484,33 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
     vars(21) = var_desc("Dopen_u","m","Open depth at u points",'u','1','1')
     vars(22) = var_desc("Dblock_v","m","Blocked depth at v points",'v','1','1')
     vars(23) = var_desc("Dopen_v","m","Open depth at v points",'v','1','1')
+  endif
+
+  ! Write sub-grid edge first
+  if (G%bathymetry_at_vel) then
+    nst_sg_edge = 24
+  else
+    nst_sg_edge = 20
+  endif
+
+  if (G%sg_bathy_at_edge) then
+    vars(nst_sg_edge)   = var_desc("Dlow_u","m","Deepest depth at u points",'u','1','1')
+    vars(nst_sg_edge+1) = var_desc("Dave_u","m","Mean depth at u points",'u','1','1')
+    vars(nst_sg_edge+2) = var_desc("Dhgh_u","m","Shallowest depth at u points",'u','1','1')
+    vars(nst_sg_edge+3) = var_desc("Dlow_v","m","Deepest depth at v points",'v','1','1')
+    vars(nst_sg_edge+4) = var_desc("Dave_v","m","Mean depth at v points",'v','1','1')
+    vars(nst_sg_edge+5) = var_desc("Dhgh_v","m","Shallowest depth at v points",'v','1','1')
+  endif
+
+  if (G%sg_bathy_at_center) then
+    if (G%sg_bathy_at_edge) then
+      nst_sg_center = nst_sg_edge + 6
+    else
+      nst_sg_center = nst_sg_edge
+    endif
+    vars(nst_sg_center)   = var_desc("Dlow_h","m","Deepest depth at h points",'h','1','1')
+    vars(nst_sg_center+1) = var_desc("Dave_h","m","Mean depth at h points",'h','1','1')
+    vars(nst_sg_center+2) = var_desc("Dhgh_h","m","Shallowest depth at h points",'h','1','1')
   endif
 
   if (present(geom_file)) then
@@ -1529,6 +1559,21 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
     call MOM_write_field(IO_handle, fields(21), G%Domain, G%Dopen_u, unscale=US%Z_to_m)
     call MOM_write_field(IO_handle, fields(22), G%Domain, G%Dblock_v, unscale=US%Z_to_m)
     call MOM_write_field(IO_handle, fields(23), G%Domain, G%Dopen_v, unscale=US%Z_to_m)
+  endif
+
+  if (G%sg_bathy_at_edge) then
+    call MOM_write_field(IO_handle, fields(nst_sg_edge),   G%Domain, G%porous_DminU, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(nst_sg_edge+1), G%Domain, G%porous_DavgU, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(nst_sg_edge+2), G%Domain, G%porous_DmaxU, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(nst_sg_edge+3), G%Domain, G%porous_DminV, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(nst_sg_edge+4), G%Domain, G%porous_DavgV, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(nst_sg_edge+5), G%Domain, G%porous_DmaxV, unscale=US%Z_to_m)
+  endif
+
+  if (G%sg_bathy_at_center) then
+    call MOM_write_field(IO_handle, fields(nst_sg_center),   G%Domain, G%depc_low, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(nst_sg_center+1), G%Domain, G%depc_ave, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(nst_sg_center+2), G%Domain, G%depc_hgh, unscale=US%Z_to_m)
   endif
 
   call IO_handle%close()
