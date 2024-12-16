@@ -196,7 +196,6 @@ end type MOM_diag_IDs
 type, public :: MOM_control_struct ; private
   real ALLOCABLE_, dimension(NIMEM_,NJMEM_,NKMEM_) :: &
     h, &            !< layer thickness [H ~> m or kg m-2]
-    dz, &           !< Nominal layer thickness [H ~> m or kg m-2]
     T, &            !< potential temperature [C ~> degC]
     S               !< salinity [S ~> ppt]
   real ALLOCABLE_, dimension(NIMEMB_PTR_,NJMEM_,NKMEM_) :: &
@@ -1142,8 +1141,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   real, dimension(:,:,:), pointer :: &
     u => NULL(), & ! u : zonal velocity component [L T-1 ~> m s-1]
     v => NULL(), & ! v : meridional velocity component [L T-1 ~> m s-1]
-    h => NULL(), &   ! h : layer thickness [H ~> m or kg m-2]
-    dz => NULL()    ! dz : layer thickness [H ~> m or kg m-2]
+    h => NULL()    ! h : layer thickness [H ~> m or kg m-2]
 
   logical :: calc_dtbt  ! Indicates whether the dynamically adjusted
                         ! barotropic time step needs to be updated.
@@ -1157,7 +1155,8 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
   Isq  = G%IscB ; Ieq  = G%IecB ; Jsq  = G%JscB ; Jeq  = G%JecB
   isd  = G%isd  ; ied  = G%ied  ; jsd  = G%jsd  ; jed  = G%jed
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
-  u => CS%u ; v => CS%v ; h => CS%h ; dz => CS%dz
+  u => CS%u ; v => CS%v ; h => CS%h
+
   showCallTree = callTree_showQuery()
 
   call cpu_clock_begin(id_clock_dynamics)
@@ -2098,6 +2097,8 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                                ! of the maximum stable value [nondim].
 
   real, allocatable, dimension(:,:)   :: eta ! free surface height or column mass [H ~> m or kg m-2]
+  real, allocatable, dimension(:,:,:) :: dz ! Distance between the interfaces around a layer [Z ~> m]
+  real, allocatable, dimension(:,:,:) :: h_prime ! Stretched volume/mass [H ~> m or kg m-2]
   real, allocatable, dimension(:,:,:) :: h_new    ! Layer thicknesses after regridding [H ~> m or kg m-2]
   real, allocatable, dimension(:,:,:) :: dzRegrid ! The change in grid interface positions due to regridding,
                                                   ! in the same units as thicknesses [H ~> m or kg m-2]
@@ -2715,9 +2716,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   ALLOC_(CS%u(IsdB:IedB,jsd:jed,nz))   ; CS%u(:,:,:) = 0.0
   ALLOC_(CS%v(isd:ied,JsdB:JedB,nz))   ; CS%v(:,:,:) = 0.0
   ALLOC_(CS%h(isd:ied,jsd:jed,nz))     ; CS%h(:,:,:) = GV%Angstrom_H
-  ALLOC_(CS%dz(isd:ied,jsd:jed,nz))     ; CS%dz(:,:,:) = GV%Angstrom_H
   ALLOC_(CS%uh(IsdB:IedB,jsd:jed,nz))  ; CS%uh(:,:,:) = 0.0
   ALLOC_(CS%vh(isd:ied,JsdB:JedB,nz))  ; CS%vh(:,:,:) = 0.0
+
   if (use_temperature) then
     ALLOC_(CS%T(isd:ied,jsd:jed,nz))   ; CS%T(:,:,:) = 0.0
     ALLOC_(CS%S(isd:ied,jsd:jed,nz))   ; CS%S(:,:,:) = 0.0
@@ -3278,7 +3279,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
               CS%thickness_diffuse_CSp, CS%OBC, CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, &
               CS%visc, dirs, CS%ntrunc, CS%pbv, calc_dtbt=calc_dtbt, cont_stencil=CS%cont_stencil)
     else
-      call initialize_dyn_split_RK2(CS%u, CS%v, CS%h, CS%dz, CS%tv, CS%uh, CS%vh, eta, Time, &
+      call initialize_dyn_split_RK2(CS%u, CS%v, CS%h, CS%tv, CS%uh, CS%vh, eta, Time, &
               G, GV, US, param_file, diag, CS%dyn_split_RK2_CSp, CS%HA_CSp, restart_CSp, &
               CS%dt, CS%ADp, CS%CDp, MOM_internal_state, CS%VarMix, CS%MEKE, &
               CS%thickness_diffuse_CSp, CS%OBC, CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, &
@@ -3430,11 +3431,23 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   endif
 
   if (.not.query_initialized(CS%ave_ssh_ibc, "ave_ssh", restart_CSp)) then
-    if (CS%split) then
-      call find_eta(CS%dz, CS%tv, G, GV, US, CS%ave_ssh_ibc, eta, dZref=G%Z_ref)
+    allocate(h_prime(SZI_(G),SZJ_(G),SZK_(G)), source=0.0)
+    if (CS%use_pormed) then
+      allocate(dz(SZI_(G),SZJ_(G),SZK_(G)), source=0.0)
+      call thickness_to_dz(CS%h, CS%tv, dz, G, GV, US)
+      call thickness_to_dz_subgrid_topo(h_prime, dz, CS%h, G, GV)
+      deallocate(dz)
     else
-      call find_eta(CS%dz, CS%tv, G, GV, US, CS%ave_ssh_ibc, dZref=G%Z_ref)
+      do k=1,nz ; do j=js,je ; do i=is,ie
+        h_prime(i,j,k) = CS%h(i,j,k)
+      enddo ; enddo ; enddo
     endif
+    if (CS%split) then
+      call find_eta(h_prime, CS%tv, G, GV, US, CS%ave_ssh_ibc, eta, dZref=G%Z_ref)
+    else
+      call find_eta(h_prime, CS%tv, G, GV, US, CS%ave_ssh_ibc, dZref=G%Z_ref)
+    endif
+    deallocate(h_prime)
     call set_initialized(CS%ave_ssh_ibc, "ave_ssh", restart_CSp)
   endif
   if (CS%split) deallocate(eta)

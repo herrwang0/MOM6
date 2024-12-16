@@ -165,7 +165,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
                                   !! of restart files.
   logical :: calculate_SAL        !< If true, calculate self-attraction and loading.
   logical :: use_tides            !< If true, tidal forcing is enabled.
-  logical :: use_pormed     !< If true, use porous media.
+  logical :: use_pormed = .False. !< If true, use porous media.
   logical :: remap_aux            !< If true, apply ALE remapping to all of the auxiliary 3-D
                                   !! variables that are needed to reproduce across restarts,
                                   !! similarly to what is done with the primary state variables.
@@ -1329,7 +1329,7 @@ end subroutine remap_dyn_split_RK2_aux_vars
 
 !> This subroutine initializes all of the variables that are used by this
 !! dynamic core, including diagnostics and the cpu clocks.
-subroutine initialize_dyn_split_RK2(u, v, h, dz, tv, uh, vh, eta, Time, G, GV, US, param_file, &
+subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, param_file, &
                       diag, CS, HA_CSp, restart_CS, dt, Accel_diag, Cont_diag, MIS, &
                       VarMix, MEKE, thickness_diffuse_CSp,                  &
                       OBC, update_OBC_CSp, ALE_CSp, set_visc, &
@@ -1343,8 +1343,6 @@ subroutine initialize_dyn_split_RK2(u, v, h, dz, tv, uh, vh, eta, Time, G, GV, U
                                     intent(inout) :: v          !< merid velocity [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)),  &
                                     intent(inout) :: h          !< layer thickness [H ~> m or kg m-2]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) , &
-                                    intent(inout) :: dz          !< layer thickness [H ~> m or kg m-2]
   type(thermo_var_ptrs),            intent(in)    :: tv         !< Thermodynamic type
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
                             target, intent(inout) :: uh    !< zonal volume/mass transport [H L2 T-1 ~> m3 s-1 or kg s-1]
@@ -1415,6 +1413,8 @@ subroutine initialize_dyn_split_RK2(u, v, h, dz, tv, uh, vh, eta, Time, G, GV, U
                  "If true, apply tidal momentum forcing.", default=.false.)
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
+  call get_param(param_file, mdl, "USE_POROUS_MEDIUM", CS%use_pormed, &
+                 default=.false., do_not_log=.true.)
   call get_param(param_file, mdl, "BE", CS%be, &
                  "If SPLIT is true, BE determines the relative weighting "//&
                  "of a  2nd-order Runga-Kutta baroclinic time stepping "//&
@@ -1559,7 +1559,7 @@ subroutine initialize_dyn_split_RK2(u, v, h, dz, tv, uh, vh, eta, Time, G, GV, U
       do j=js,je ; do i=is,ie ; CS%eta(i,j) = -GV%Z_to_H * G%bathyT(i,j) ; enddo ; enddo
     endif
     do k=1,nz ; do j=js,je ; do i=is,ie
-      CS%eta(i,j) = CS%eta(i,j) + dz(i,j,k)
+      CS%eta(i,j) = CS%eta(i,j) + h(i,j,k)
     enddo ; enddo ; enddo
     call set_initialized(CS%eta, trim(eta_rest_name), restart_CS)
   endif
