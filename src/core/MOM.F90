@@ -99,6 +99,7 @@ use MOM_harmonic_analysis,     only : HA_accum_FtF, HA_accum_FtSSH, harmonic_ana
 use MOM_hor_index,             only : hor_index_type, hor_index_init
 use MOM_hor_index,             only : rotate_hor_index
 use MOM_interface_heights,     only : find_eta, calc_derived_thermo, thickness_to_dz
+use MOM_interface_heights,     only : thickness_to_dz_subgrid_topo
 use MOM_interface_filter,      only : interface_filter, interface_filter_init, interface_filter_end
 use MOM_interface_filter,      only : interface_filter_CS
 use MOM_internal_tides,        only : int_tide_CS
@@ -1254,7 +1255,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
                   CS%eta_av_bc, G, GV, US, CS%dyn_split_RK2b_CSp, calc_dtbt, CS%VarMix, &
                   CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, waves=waves)
     else
-      call step_MOM_dyn_split_RK2(u, v, h, dz, CS%tv, CS%visc, Time_local, dt, forces, &
+      call step_MOM_dyn_split_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
                   CS%eta_av_bc, G, GV, US, CS%dyn_split_RK2_CSp, calc_dtbt, CS%VarMix, &
                   CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, waves=waves)
@@ -1274,7 +1275,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
                p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
                CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_RK2_CSp, CS%VarMix, CS%MEKE, CS%pbv)
     else
-      call step_MOM_dyn_unsplit(u, v, h, dz, CS%tv, CS%visc, Time_local, dt, forces, &
+      call step_MOM_dyn_unsplit(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
                CS%eta_av_bc, G, GV, US, CS%dyn_unsplit_CSp, CS%VarMix, CS%MEKE, CS%pbv, Waves=Waves)
     endif
@@ -2959,7 +2960,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     allocate(u_in(G_in%IsdB:G_in%IedB, G_in%jsd:G_in%jed, nz), source=0.0)
     allocate(v_in(G_in%isd:G_in%ied, G_in%JsdB:G_in%JedB, nz), source=0.0)
     allocate(h_in(G_in%isd:G_in%ied, G_in%jsd:G_in%jed, nz), source=GV%Angstrom_H)
-    allocate(dz_in(G_in%isd:G_in%ied, G_in%jsd:G_in%jed, nz), source=GV%Angstrom_H)
 
     if (use_temperature) then
       allocate(T_in(G_in%isd:G_in%ied, G_in%jsd:G_in%jed, nz), source=0.0)
@@ -2983,14 +2983,14 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       ! MOM_initialize_state is using the  unrotated metric
       call rotate_array(CS%frac_shelf_h, -turns, frac_shelf_in)
       call rotate_array(CS%mass_shelf, -turns, mass_shelf_in)
-      call MOM_initialize_state(u_in, v_in, h_in, dz_in, CS%tv, Time, G_in, GV, US, &
+      call MOM_initialize_state(u_in, v_in, h_in, CS%tv, Time, G_in, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
           sponge_in_CSp, ALE_sponge_in_CSp, oda_incupd_in_CSp, OBC_in, Time_in, &
-          frac_shelf_h=frac_shelf_in, mass_shelf=mass_shelf_in)
+          frac_shelf_h=frac_shelf_in, mass_shelf=mass_shelf_in, adjust_to_topo=CS%use_pormed)
     else
-      call MOM_initialize_state(u_in, v_in, h_in, dz_in, CS%tv, Time, G_in, GV, US, &
+      call MOM_initialize_state(u_in, v_in, h_in, CS%tv, Time, G_in, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
-          sponge_in_CSp, ALE_sponge_in_CSp, oda_incupd_in_CSp, OBC_in, Time_in)
+          sponge_in_CSp, ALE_sponge_in_CSp, oda_incupd_in_CSp, OBC_in, Time_in, adjust_to_topo=CS%use_pormed)
     endif
 
     if (use_temperature) then
@@ -3038,14 +3038,14 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       allocate(CS%frac_shelf_h(isd:ied, jsd:jed), source=0.0)
       allocate(CS%mass_shelf(isd:ied, jsd:jed), source=0.0)
       call ice_shelf_query(ice_shelf_CSp,G,CS%frac_shelf_h, CS%mass_shelf)
-      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%dz, CS%tv, Time, G, GV, US, &
+      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%tv, Time, G, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
           CS%sponge_CSp, CS%ALE_sponge_CSp,CS%oda_incupd_CSp, CS%OBC, Time_in, &
-          frac_shelf_h=CS%frac_shelf_h, mass_shelf=CS%mass_shelf)
+          frac_shelf_h=CS%frac_shelf_h, mass_shelf=CS%mass_shelf, adjust_to_topo=CS%use_pormed)
     else
-      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%dz, CS%tv, Time, G, GV, US, &
+      call MOM_initialize_state(CS%u, CS%v, CS%h, CS%tv, Time, G, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
-          CS%sponge_CSp, CS%ALE_sponge_CSp, CS%oda_incupd_CSp, CS%OBC, Time_in)
+          CS%sponge_CSp, CS%ALE_sponge_CSp, CS%oda_incupd_CSp, CS%OBC, Time_in, adjust_to_topo=CS%use_pormed)
     endif
 
     ! Reset the first direction if it was found in a restart file.
@@ -3055,6 +3055,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       CS%first_dir_restart = real(modulo(first_direction, 2))
     endif
   endif
+
+  ! if (CS%use_pormed) &
+  !   call thickness_to_dz_subgrid_topo(CS%dz, CS%h, CS%tv, G, GV)
 
   ! Allocate any derived densities or other equation of state derived fields.
   if (.not.(GV%Boussinesq .or. GV%semi_Boussinesq)) then
@@ -3472,6 +3475,7 @@ subroutine finish_MOM_initialization(Time, dirs, CS)
                                                    ! various unit conversion factors
   type(MOM_restart_CS),    pointer :: restart_CSp_tmp => NULL()
   real, allocatable :: z_interface(:,:,:) ! Interface heights [Z ~> m]
+  real, allocatable :: dz(:,:,:), h_prime(:,:,:)
 
   call cpu_clock_begin(id_clock_init)
   call callTree_enter("finish_MOM_initialization()")
@@ -3489,7 +3493,18 @@ subroutine finish_MOM_initialization(Time, dirs, CS)
     restart_CSp_tmp = CS%restart_CS
     call restart_registry_lock(restart_CSp_tmp, unlocked=.true.)
     allocate(z_interface(SZI_(G),SZJ_(G),SZK_(GV)+1))
-    call find_eta(CS%h, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
+
+    if (CS%use_pormed) then
+      allocate(dz(SZI_(G),SZJ_(G),SZK_(GV)))
+      allocate(h_prime(SZI_(G),SZJ_(G),SZK_(GV)))
+      call thickness_to_dz(CS%h, CS%tv, dz, G, GV, US)
+      call thickness_to_dz_subgrid_topo(h_prime, dz, CS%h, G, GV)
+      call find_eta(h_prime, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
+      deallocate(h_prime)
+      deallocate(dz)
+    else
+      call find_eta(CS%h, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
+    endif
     call register_restart_field(z_interface, "eta", .true., restart_CSp_tmp, &
                                 "Interface heights", "meter", z_grid='i', conversion=US%Z_to_m)
     ! NOTE: write_ic=.true. routes routine to fms2 IO write_initial_conditions interface

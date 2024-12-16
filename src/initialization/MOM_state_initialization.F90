@@ -18,7 +18,6 @@ use MOM_file_parser, only : log_version
 use MOM_get_input, only : directories
 use MOM_grid, only : ocean_grid_type, isPointInCell
 use MOM_interface_heights, only : find_eta, dz_to_thickness, dz_to_thickness_simple
-use MOM_interface_heights, only : calculate_h
 use MOM_interface_heights, only : calc_derived_thermo
 use MOM_io, only : file_exists, field_size, MOM_read_data, MOM_read_vector, slasher
 use MOM_open_boundary, only : ocean_OBC_type, open_boundary_init, set_tracer_data
@@ -117,9 +116,10 @@ contains
 
 !> Initialize temporally evolving fields, either as initial
 !! conditions or by reading them from a restart (or saves) file.
-subroutine MOM_initialize_state(u, v, h, dz, tv, Time, G, GV, US, PF, dirs, &
+subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
                                 restart_CS, ALE_CSp, tracer_Reg, sponge_CSp, &
-                                ALE_sponge_CSp, oda_incupd_CSp, OBC, Time_in, frac_shelf_h, mass_shelf)
+                                ALE_sponge_CSp, oda_incupd_CSp, OBC, Time_in, frac_shelf_h, mass_shelf, &
+                                adjust_to_topo)
   type(ocean_grid_type),      intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type),    intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),      intent(in)    :: US   !< A dimensional unit scaling type
@@ -131,8 +131,6 @@ subroutine MOM_initialize_state(u, v, h, dz, tv, Time, G, GV, US, PF, dirs, &
                                                     !! initialized [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                               intent(out)   :: h    !< Layer thicknesses [H ~> m or kg m-2]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
-                              intent(out)   :: dz   !< The layer thicknesses in geopotential (z) units [Z ~> m]
   type(thermo_var_ptrs),      intent(inout) :: tv   !< A structure pointing to various thermodynamic
                                                     !! variables
   type(time_type),            intent(inout) :: Time !< Time at the start of the run segment.
@@ -154,8 +152,11 @@ subroutine MOM_initialize_state(u, v, h, dz, tv, Time, G, GV, US, PF, dirs, &
   real, dimension(SZI_(G),SZJ_(G)), &
                      optional, intent(in)   :: mass_shelf      !< The mass per unit area of the overlying
                                                                !! ice shelf [ R Z ~> kg m-2 ]
+  logical,           optional, intent(in)   :: adjust_to_topo !< If true, adjust thickness with sub-grid scale
+                                                              !! topography.
   ! Local variables
   real :: depth_tot(SZI_(G),SZJ_(G))   ! The nominal total depth of the ocean [Z ~> m]
+  real :: dz(SZI_(G),SZJ_(G),SZK_(GV)) ! The layer thicknesses in geopotential (z) units [Z ~> m]
   character(len=200) :: inputdir   ! The directory where NetCDF input files are.
   character(len=200) :: config, h_config
   real :: H_rescale   ! A rescaling factor for thicknesses from the representation in
@@ -263,7 +264,8 @@ subroutine MOM_initialize_state(u, v, h, dz, tv, Time, G, GV, US, PF, dirs, &
        "use_temperature must be true if INIT_LAYERS_FROM_Z_FILE is true")
 
     call MOM_temp_salt_initialize_from_Z(h, tv, depth_tot, G, GV, US, PF, &
-                                         just_read=just_read, frac_shelf_h=frac_shelf_h)
+                                         just_read=just_read, frac_shelf_h=frac_shelf_h, &
+                                         adjust_to_topo=adjust_to_topo)
     convert = .false.
   else
     ! Initialize thickness, h.
@@ -418,7 +420,8 @@ subroutine MOM_initialize_state(u, v, h, dz, tv, Time, G, GV, US, PF, dirs, &
         case ("dumbbell"); call dumbbell_initialize_temperature_salinity(tv%T, &
                                     tv%S, dz, G, GV, US, PF, just_read=just_read)
         case ("rossby_front")
-          if (convert .and. .not.just_read) call dz_to_thickness(dz, tv, h, G, GV, US)
+          if (convert .and. .not.just_read) &
+            call dz_to_thickness(dz, tv, h, G, GV, US, adjust_to_topo=adjust_to_topo)
           call Rossby_front_initialize_temperature_salinity ( tv%T, tv%S, h, &
                                         G, GV, US, PF, just_read=just_read)
         case ("SCM_CVMix_tests"); call SCM_CVMix_tests_TS_init(tv%T, tv%S, dz, &
@@ -436,8 +439,9 @@ subroutine MOM_initialize_state(u, v, h, dz, tv, Time, G, GV, US, PF, dirs, &
     call fill_temp_salt_segments(G, GV, US, OBC, tv)
 
   ! Convert thicknesses from geometric distances in depth units to thickness units or mass-per-unit-area.
-    ! if (new_sim .and. convert) call dz_to_thickness(dz, tv, h, G, GV, US)
-    if (new_sim .and. convert) call calculate_h(dz, h, G, GV)
+  if (new_sim .and. convert) then
+    call dz_to_thickness(dz, tv, h, G, GV, US, adjust_to_topo=adjust_to_topo)
+  endif
 
   ! Handle the initial surface displacement under ice shelf
   call get_param(PF, mdl, "DEPRESS_INITIAL_SURFACE", depress_sfc, &
@@ -2382,7 +2386,7 @@ end subroutine set_velocity_depth_min
 !> This subroutine determines the isopycnal or other coordinate interfaces and
 !! layer potential temperatures and salinities directly from a z-space file on
 !! a latitude-longitude grid.
-subroutine MOM_temp_salt_initialize_from_Z(h, tv, depth_tot, G, GV, US, PF, just_read, frac_shelf_h)
+subroutine MOM_temp_salt_initialize_from_Z(h, tv, depth_tot, G, GV, US, PF, just_read, frac_shelf_h, adjust_to_topo)
   type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure
   type(verticalGrid_type), intent(in)    :: GV   !< The ocean's vertical grid structure
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
@@ -2399,6 +2403,8 @@ subroutine MOM_temp_salt_initialize_from_Z(h, tv, depth_tot, G, GV, US, PF, just
   real, dimension(SZI_(G),SZJ_(G)), &
                  optional, intent(in)    :: frac_shelf_h  !< The fraction of the grid cell covered
                                                  !! by a floating ice shelf [nondim].
+  logical,       optional, intent(in)    :: adjust_to_topo !< If true, adjust thickness with sub-grid scale
+                                                 !! topography.
 
   ! Local variables
   character(len=200) :: filename   !< The name of an input file containing temperature
@@ -2749,7 +2755,7 @@ subroutine MOM_temp_salt_initialize_from_Z(h, tv, depth_tot, G, GV, US, PF, just
     tv_loc%S => tmpS1dIn
     GV_loc = GV
     GV_loc%ke = nkd
-    call dz_to_thickness(dz1, tv_loc, h1, G, GV_loc, US)
+    call dz_to_thickness(dz1, tv_loc, h1, G, GV_loc, US, adjust_to_topo=adjust_to_topo)
 
     ! Build the target grid (and set the model thickness to it)
 
@@ -2808,10 +2814,10 @@ subroutine MOM_temp_salt_initialize_from_Z(h, tv, depth_tot, G, GV, US, PF, just
       if (GV%Boussinesq .or. GV%semi_Boussinesq) then
         ! This is a simple conversion of the target grid to thickness units that is not
         ! appropriate in non-Boussinesq mode.
-        call dz_to_thickness_simple(dz, h, G, GV, US)
+        call dz_to_thickness_simple(dz, h, G, GV, US, adjust_to_topo=adjust_to_topo)
       else
         ! Convert dz into thicknesses in units of H using the equation of state as appropriate.
-        call dz_to_thickness(dz, tv, h, G, GV, US)
+        call dz_to_thickness(dz, tv, h, G, GV, US, adjust_to_topo=adjust_to_topo)
       endif
     endif
 
@@ -2897,7 +2903,7 @@ subroutine MOM_temp_salt_initialize_from_Z(h, tv, depth_tot, G, GV, US, PF, just
     endif
 
     ! Now convert dz into thicknesses in units of H.
-    call dz_to_thickness(dz, tv, h, G, GV, US)
+    call dz_to_thickness(dz, tv, h, G, GV, US, adjust_to_topo=adjust_to_topo)
 
   endif ! useALEremapping
 

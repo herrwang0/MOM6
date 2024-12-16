@@ -21,7 +21,7 @@ public find_eta, dz_to_thickness, thickness_to_dz, dz_to_thickness_simple
 public calc_derived_thermo
 public convert_MLD_to_ML_thickness
 public find_rho_bottom, find_col_avg_SpV
-public calculate_dz, calculate_h
+public thickness_to_dz_subgrid_topo
 
 !> Calculates the heights of the free surface or all interfaces from layer thicknesses.
 interface find_eta
@@ -343,7 +343,7 @@ subroutine find_col_avg_SpV(h, SpV_avg, tv, G, GV, US, halo_size)
   real :: h_tot(SZI_(G))        ! Sum of the layer thicknesses [H ~> m or kg m-3]
   real :: SpV_x_h_tot(SZI_(G))  ! Vertical sum of the layer average specific volume times
                                 ! the layer thicknesses [H R-1 ~> m4 kg-1 or m]
-  real :: I_rho                 ! The inverse of the Boussiensq reference density [R-1 ~> m3 kg-1]
+  real :: I_rho                 ! The inverse of the Boussinesq reference density [R-1 ~> m3 kg-1]
   real :: SpV_lay(SZK_(GV))     ! The inverse of the layer target potential densities [R-1 ~> m3 kg-1]
   character(len=128) :: mesg    ! A string for error messages
   integer i, j, k, is, ie, js, je, nz, halo
@@ -578,7 +578,7 @@ end subroutine find_rho_bottom
 !> Converts thickness from geometric height units to thickness units, perhaps via an
 !! inversion of the integral of the density in pressure using variables stored in
 !! the thermo_var_ptrs type when in non-Boussinesq mode.
-subroutine dz_to_thickness_tv(dz, tv, h, G, GV, US, halo_size)
+subroutine dz_to_thickness_tv(dz, tv, h, G, GV, US, halo_size, adjust_to_topo)
   type(ocean_grid_type),   intent(in)    :: G  !< The ocean's grid structure
   type(verticalGrid_type), intent(in)    :: GV !< The ocean's vertical grid structure
   type(unit_scale_type),   intent(in)    :: US !< A dimensional unit scaling type
@@ -592,10 +592,15 @@ subroutine dz_to_thickness_tv(dz, tv, h, G, GV, US, halo_size)
                                                !! inout to preserve any initialized values in halo points.
   integer,         optional, intent(in)  :: halo_size !< Width of halo within which to
                                                !! calculate thicknesses
+  logical,         optional, intent(in)  :: adjust_to_topo !< If True, adjust thickness with sub-grid scale
+                                               !! topography.
+
   ! Local variables
+  logical :: topo_adj
   integer :: i, j, k, is, ie, js, je, halo, nz
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
+  topo_adj = .false. ; if (present(adjust_to_topo)) topo_adj = adjust_to_topo
   is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo ; nz = GV%ke
 
   if (GV%Boussinesq) then
@@ -616,6 +621,8 @@ subroutine dz_to_thickness_tv(dz, tv, h, G, GV, US, halo_size)
     endif
   endif
 
+  if (topo_adj) &
+    call adjust_h_subgrid_topo(h, dz, G, GV)
 end subroutine dz_to_thickness_tv
 
 !> Converts thickness from geometric height units to thickness units, working via an
@@ -743,7 +750,7 @@ end subroutine dz_to_thickness_EOS
 
 !> Converts thickness from geometric height units to thickness units, perhaps using
 !! a simple conversion factor that may be problematic in non-Boussinesq mode.
-subroutine dz_to_thickness_simple(dz, h, G, GV, US, halo_size, layer_mode)
+subroutine dz_to_thickness_simple(dz, h, G, GV, US, halo_size, layer_mode, adjust_to_topo)
   type(ocean_grid_type),   intent(in)    :: G  !< The ocean's grid structure
   type(verticalGrid_type), intent(in)    :: GV !< The ocean's vertical grid structure
   type(unit_scale_type),   intent(in)    :: US !< A dimensional unit scaling type
@@ -760,13 +767,18 @@ subroutine dz_to_thickness_simple(dz, h, G, GV, US, halo_size, layer_mode)
                                                !! no state variables or equation of state.  Otherwise
                                                !! use a simple constant rescaling factor and avoid the
                                                !! use of GV%Rlay.
+  logical,         optional, intent(in)  :: adjust_to_topo !< If True, adjust thickness with sub-grid scale
+                                               !! topography.
+
   ! Local variables
   logical :: layered  ! If true and the model is non-Boussinesq, do calculations appropriate for use
                       ! in pure isopycnal layered mode with no state variables or equation of state.
+  logical :: topo_adj
   integer :: i, j, k, is, ie, js, je, halo, nz
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
   layered = .false. ; if (present(layer_mode)) layered = layer_mode
+  topo_adj = .false. ; if (present(adjust_to_topo)) topo_adj = adjust_to_topo
   is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo ; nz = GV%ke
 
   if (GV%Boussinesq) then
@@ -783,6 +795,8 @@ subroutine dz_to_thickness_simple(dz, h, G, GV, US, halo_size, layer_mode)
     enddo ; enddo ; enddo
   endif
 
+  if (topo_adj) &
+    call adjust_h_subgrid_topo(h, dz, G, GV)
 end subroutine dz_to_thickness_simple
 
 !> Converts layer thicknesses in thickness units to the vertical distance between edges in height
@@ -878,16 +892,63 @@ subroutine thickness_to_dz_jslice(h, tv, dz, j, G, GV, halo_size)
 
 end subroutine thickness_to_dz_jslice
 
-subroutine calculate_h(dz, h, G, GV)
-  type(ocean_grid_type),                      intent(in)   :: G   !< Ocean grid structure
-  type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)  :: dz   !< Layer thickness [H ~> m]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(out) :: h   !< Layer thickness [H ~> m]
-
+subroutine thickness_to_dz_subgrid_topo(h_prime, dz, h, G, GV, halo_size)
+  type(ocean_grid_type),                     intent(in)  :: G   !< Ocean grid structure
+  type(verticalGrid_type),                   intent(in)  :: GV  !< Vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)  :: h  !< Volume/mass per unit area [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: dz !< Geometric distance between interfaces [Z ~> m]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(out) :: h_prime !< Redistributed volume/mass per unit area [H ~> m or kg m-2]
+  integer,       optional, intent(in)    :: halo_size !< Width of halo within which to
+                                               !! calculate thicknesses
+  ! Local variables
   logical, dimension(SZI_(G),SZJ_(G)) :: do_I
-  real, dimension(SZI_(G),SZJ_(G)) :: vol_below
-  real, dimension(SZI_(G),SZJ_(G)) :: et
-  real :: vol
+  real, dimension(SZI_(G),SZJ_(G)) :: vol_below ! [H ~> m]
+  real, dimension(SZI_(G),SZJ_(G)) :: eb ! [Z ~> m]
+  real :: eta ! [Z ~> m]
+  integer :: is, ie, js, je, nz, halo
+  integer :: i, j, k
+
+  halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
+  is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo ; nz = GV%ke
+  nz = GV%ke
+
+  do j=js,je ; do i=is,ie
+    vol_below(i,j) = 0.0
+    eb(i,j) = -G%depc_low(i,j)
+    do_I(i,j) = (G%mask2dT(i,j)==1.0)
+  enddo ; enddo
+
+  do k=nz,1,-1 ; do j=js,je ; do i=is,ie
+    if (do_I(i,j)) then
+      vol_below(i,j) = vol_below(i,j) + dz(i,j,k)
+
+      call height_from_vol_monomial(eta, do_I(i,j), vol_below(i,j), G%depc_m(i,j), &
+                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
+
+      ! h_prime(i,j,k) = max(G%depc_low(i,j) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      h_prime(i,j,k) = max((eta - eb(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      ! h_prime(i,j,k) = G%depc_low(i,j)
+      dz(i,j,k) = eta - eb(i,j)
+      eb(i,j) = eta
+    else
+      h_prime(i,j,k) = h(i,j,k)
+    endif
+  enddo ; enddo ; enddo
+end subroutine thickness_to_dz_subgrid_topo
+
+! This subroutine removes mass/volume from the reduced cell capacity due to sub-grid scale topogrpahy
+! This is primarily used to adjust initialized thickness.
+subroutine adjust_h_subgrid_topo(h, dz, G, GV)
+  type(ocean_grid_type),                     intent(in)    :: G   !< Ocean grid structure
+  type(verticalGrid_type),                   intent(in)    :: GV  !< Vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: h  !< Volume/mass per unit area [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)    :: dz !< Apparent layer thickness [Z ~> m]
+
+  ! Local variables
+  logical, dimension(SZI_(G),SZJ_(G)) :: do_I ! Flag for calculation
+  real :: vol ! Volume per unit area below the top interface [H ~> m]
+  real, dimension(SZI_(G),SZJ_(G)) :: vol_below ! Volume per unit area below the bottom interface [Z ~> m]
+  real, dimension(SZI_(G),SZJ_(G)) :: et ! Top interface height [Z ~> m]
   integer :: is, ie, js, je, nz
   integer :: i, j, k
 
@@ -895,127 +956,102 @@ subroutine calculate_h(dz, h, G, GV)
   nz = GV%ke
 
   do j=js,je ; do i=is,ie
-    et(i,j) = G%depc_low(i,j)
+    et(i,j) = -G%depc_low(i,j)
     vol_below(i,j) = 0.0
-    do_I(i,j) = (G%mask2dT(i,j)==1.0) .and. (G%depc_m(i,j)/=0.0)
+    do_I(i,j) = (G%mask2dT(i,j)==1.0)
   enddo ; enddo
 
   do k=nz,1,-1 ; do j=js,je ; do i=is,ie
     if (do_I(i,j)) then
       et(i,j) = et(i,j) + dz(i,j,k)
-      call calc_por_layer(G%depc_low(i,j), G%depc_hgh(i,j), G%depc_ave(i,j), et(i,j), vol, do_I(i,j))
-      h(i,j,k) = vol - vol_below(i,j)
+      call vol_from_height_monomial(vol, do_I(i,j), et(i,j), G%depc_m(i,j), &
+                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
+      h(i,j,k) = min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      ! h(i,j,k) = min(G%depc_ave(i,j) / (G%depc_low(i,j) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      ! h(i,j,k) = G%depc_ave(i,j)
       vol_below(i,j) = vol
-    else
-      h(i,j,k) = dz(i,j,k)
     endif
   enddo ; enddo ; enddo
+end subroutine adjust_h_subgrid_topo
 
-end subroutine calculate_h
+! Calculate interface height given a total volume below, using the monomial sub-grid topo
+subroutine height_from_vol_monomial(eta, do_next, vol_below, m, topo_stat, hmin, maxitt)
+  real, intent(out)    :: eta ! [Z ~> m]
+  logical, intent(out) :: do_next
+  real, intent(in)     :: vol_below ! [H ~> m]
+  real, intent(in)     :: m ! [nondim]
+  real, dimension(3), intent(in) :: topo_stat ! (/low, mean, high/) [Z ~> m]
+  real, intent(in), optional :: hmin ! [H ~> m]
+  integer, intent(in), optional :: maxitt ! [nondim]
 
-!> subroutine to calculate the profile fit (the three parameter fit from Adcroft 2013)
-! of the open face area fraction below a certain depth (eta_layer) in a column
-subroutine calc_por_layer(D_min, D_max, D_avg, eta_layer, A_layer, do_next)
-  real,    intent(in)  :: D_min     !< minimum topographic height (deepest) [Z ~> m]
-  real,    intent(in)  :: D_max     !< maximum topographic height (shallowest) [Z ~> m]
-  real,    intent(in)  :: D_avg     !< mean topographic height [Z ~> m]
-  real,    intent(in)  :: eta_layer !< height of interface [Z ~> m]
-  real,    intent(out) :: A_layer   !< frac. open face area of below eta_layer [Z ~> m]
+ ! local variables
+  real :: vol_topo ! [Z ~> m]
+  real :: zeta, feta, dfeta ! [nondim]
+  real :: tol ! [nondim]
+  integer :: max_iter, it ! [nondim]
+
+  max_iter = 200
+  if (present(maxitt)) max_iter = maxitt
+
+  tol = 1e-10 / (topo_stat(3) - topo_stat(1))
+  if (present(hmin)) tol = hmin / (topo_stat(3) - topo_stat(1))
+
+  vol_topo = topo_stat(3) - topo_stat(2)
+
+  do_next = .True.
+  if (vol_below >= vol_topo .or. m==0.0) then
+    eta = vol_below + topo_stat(2)
+    do_next = .False.
+  else
+    if (m <= 0.5) then
+      zeta = (vol_below / (topo_stat(3) - topo_stat(2))) ** (1.0 - m)
+    else
+      zeta = 1.0
+      it = 1
+      do while (it<=max_iter)
+        feta = (zeta - m) + m * ((1 - zeta) ** (1.0 / m)) - vol_below / (topo_stat(3) - topo_stat(1))
+        if (abs(feta) < tol) &
+          exit
+        dfeta = 1.0 - (1.0 - zeta) ** ((1.0 - m) / m)
+        zeta = zeta - feta / dfeta
+        it = it + 1
+      enddo
+    endif
+    eta = zeta * (topo_stat(3) - topo_stat(1)) + topo_stat(1)
+  endif
+end subroutine height_from_vol_monomial
+
+! Calculate total volume below a certain interface height, using the monomial sub-grid topo
+subroutine vol_from_height_monomial(vol_below, do_next, eta, m, topo_stat)
+  real,    intent(out) :: vol_below !< frac. open face area of below eta_layer [H ~> m]
   logical, intent(out) :: do_next   !< False if eta_layer>D_max
+  real,    intent(in)  :: eta       !< height of interface [Z ~> m]
+  real,    intent(in)  :: m         !< [nondim]
+  real, dimension(3), intent(in) :: topo_stat ! (/low, mean, high/) [Z ~> m]
 
   ! local variables
-  real :: m      ! convenience constant for fit [nondim]
   real :: zeta   ! normalized vertical coordinate [nondim]
 
   do_next = .True.
-  if (eta_layer <= D_min) then
-    A_layer = 0.0
-  elseif (eta_layer > D_max) then
-    A_layer = eta_layer - D_avg
+
+  if (m==0.0) then ! special case
+    vol_below = max(eta - topo_stat(2), 0.0)
+    return
+  endif
+  if (eta <= topo_stat(1)) then
+    vol_below = 0.0
+  elseif (eta >= topo_stat(3)) then
+    vol_below = eta - topo_stat(2)
     do_next = .False.
   else
-    m = (D_avg - D_min) / (D_max - D_min)
-    zeta = (eta_layer - D_min) / (D_max - D_min)
-    if (m < 0.5) then
-      A_layer = (D_max - D_min) * ((1.0 - m) * zeta**(1.0 / (1.0 - m)))
-    elseif (m == 0.5) then
-      A_layer = (D_max - D_min) * (0.5 * zeta * zeta)
+    zeta = (eta - topo_stat(1)) / (topo_stat(3) - topo_stat(1))
+    if (m<=0.5) then
+      vol_below = (topo_stat(3) - topo_stat(2)) * (zeta ** (1.0 / (1.0 - m)))
     else
-      A_layer = (D_max - D_min) * (zeta - m + m * ((1.0 - zeta)**(1.0 / m)))
+      vol_below = (eta - topo_stat(2)) + (topo_stat(2) - topo_stat(1)) * ((1.0 - zeta) ** (1.0 / m))
     endif
   endif
-end subroutine calc_por_layer
-
-subroutine calculate_dz(h, dz, G, GV)
-  type(ocean_grid_type),                      intent(in)  :: G   !< Ocean grid structure
-  type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
-
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)  :: h   !< Layer thickness [H ~> m]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(out)  :: dz   !< Layer thickness [H ~> m]
-
-  logical, dimension(SZI_(G),SZJ_(G)) :: do_I
-  real, dimension(SZI_(G),SZJ_(G)) :: vol_below
-  real, dimension(SZI_(G),SZJ_(G)) :: eb, eb_monomial
-  integer :: is, ie, js, je, nz
-  integer :: i, j, k
-
-  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
-  nz = GV%ke
-
-  do j=js,je ; do i=is,ie
-    vol_below(i,j) = 0.0
-    eb(i,j) = G%depc_low(i,j)
-    do_I(i,j) = (G%mask2dT(i,j)==1.0) .and. (G%depc_m(i,j)/=0.0)
-  enddo ; enddo
-
-  do K=nz,1,-1
-    do j=js,je ; do i=is,ie
-      if (do_I(i,j)) then
-        vol_below(i,j) = vol_below(i,j) + h(i,j,k)
-        if (vol_below(i,j) > G%depc_hgh(i,j)-G%depc_ave(i,j)) then
-          dz(i,j,k) = vol_below(i,j) + G%depc_ave(i,j) - eb(i,j)
-          do_I(i,j) = .False.
-        else
-          dz(i,j,k) = eb(i,j)
-          call inverse_eta(eb(i,j), eb_monomial(i,j), h(i,j,k), &
-                           G%depc_low(i,j), G%depc_ave(i,j), G%depc_hgh(i,j), &
-                           G%depc_m(i,j), G%depc_m1(i,j), G%depc_m2(i,j))
-          dz(i,j,k) = eb(i,j) - dz(i,j,k)
-        endif
-      else
-        dz(i,j,k) = h(i,j,k)
-      endif
-    enddo ; enddo
-  enddo
-end subroutine calculate_dz
-
-subroutine inverse_eta(eta, eb_monomial, h, D_lo, D_av, D_hi, m, m1, m2)
-  real, intent(out)   :: eta
-  real, intent(inout) :: eb_monomial
-  real, intent(in)    :: h
-  real, intent(in)    :: D_lo, D_av, D_hi
-  real, intent(in)    :: m, m1, m2
-  real :: feta, dfeta
-  integer :: it, maxitt
-  if (m<=0.5) then
-    eb_monomial = (h*m2 + eb_monomial)
-    eta = (eb_monomial**m1) * (D_hi - D_lo) + D_lo
-  else
-    maxitt = 200
-    eta = D_hi
-    it = 1
-    do while (it<=maxitt)
-      feta = (eta-D_lo) + (D_av-D_lo) * &
-        ( ((D_hi-eta)*m2)**(m1) - 1 ) - eb_monomial
-      if (abs(feta-h) < 1e-10) exit
-      dfeta = 1 - ( ((D_hi-eta)*m2)**(m1-1) )
-      eta = eta - (feta-h)/dfeta
-      it = it + 1
-    enddo
-    eb_monomial = feta
-  endif
-end subroutine inverse_eta
-
+end subroutine vol_from_height_monomial
 
 !> Convert mixed layer depths in height units into the thickness of water in the mixed
 !! in thickness units.

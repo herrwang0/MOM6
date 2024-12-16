@@ -80,7 +80,7 @@ use MOM_grid, only : ocean_grid_type
 use MOM_hor_index, only : hor_index_type
 use MOM_hor_visc, only : horizontal_viscosity, hor_visc_init, hor_visc_CS
 use MOM_interface_heights, only : find_eta, thickness_to_dz
-use MOM_interface_heights,     only : calculate_dz
+use MOM_interface_heights,     only : thickness_to_dz_subgrid_topo
 use MOM_lateral_mixing_coeffs, only : VarMix_CS
 use MOM_MEKE_types, only : MEKE_type
 use MOM_open_boundary, only : ocean_OBC_type
@@ -124,6 +124,7 @@ type, public :: MOM_dyn_unsplit_CS ; private
   logical :: debug          !< If true, write verbose checksums for debugging purposes.
   logical :: calculate_SAL  !< If true, calculate self-attraction and loading.
   logical :: use_tides      !< If true, tidal forcing is enabled.
+  logical :: use_pormed     !< If true, use porous media.
 
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
 
@@ -188,7 +189,7 @@ contains
 
 !> Step the MOM6 dynamics using an unsplit mixed 2nd order (for continuity) and
 !! 3rd order (for the inviscid momentum equations) order scheme
-subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
+subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, G, GV, US, CS, &
                   VarMix, MEKE, pbv, Waves)
   type(ocean_grid_type),   intent(inout) :: G      !< The ocean's grid structure.
@@ -197,7 +198,6 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(inout) :: u !< The zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(inout) :: v !< The meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: h !< Layer thicknesses [H ~> m or kg m-2].
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: dz !< Layer thicknesses [H ~> m or kg m-2].
   type(thermo_var_ptrs),   intent(in)    :: tv     !< A structure pointing to various
                                                    !! thermodynamic variables.
   type(vertvisc_type),     intent(inout) :: visc   !< A structure containing vertical
@@ -230,7 +230,8 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
 
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: h_av, hp ! Predicted or averaged layer thicknesses [H ~> m or kg m-2]
-  ! real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: dz       ! Distance between the interfaces around a layer [Z ~> m]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: dz       ! Distance between the interfaces around a layer [Z ~> m]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: h_prime  ! Stretched volume/mass [H ~> m or kg m-2]
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: up, upp ! Predicted zonal velocities [L T-1 ~> m s-1]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: vp, vpp ! Predicted meridional velocities [L T-1 ~> m s-1]
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: ueffA   ! Effective Area of U-Faces [H L ~> m2]
@@ -306,8 +307,17 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   call cpu_clock_end(id_clock_mom_update)
   call pass_vector(u, v, G%Domain, clock=id_clock_pass)
 
-  call calculate_dz(h_av, dz, G, GV)
-  call pass_var(dz, G%Domain)
+  ! subgrid topo
+  if (CS%use_pormed) then
+    call thickness_to_dz(h_av, tv, dz, G, GV, US)
+    call thickness_to_dz_subgrid_topo(h_prime, dz, h_av, G, GV)
+    call pass_var(h_prime, G%Domain)
+    call pass_var(dz, G%Domain)
+  else
+    do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
+      h_prime(i,j,k) = h_av(i,j,k)
+    enddo ; enddo ; enddo
+  endif
 
   ! CAu = -(f+zeta)/h_av vh + d/dx KE
   call cpu_clock_begin(id_clock_Cor)
@@ -320,7 +330,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   if (dyn_p_surf) then ; do j=js-2,je+2 ; do i=is-2,ie+2
     p_surf(i,j) = 0.75*p_surf_begin(i,j) + 0.25*p_surf_end(i,j)
   enddo ; enddo ; endif
-  call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, &
+  call PressureForce(h_prime, tv, CS%PFu, CS%PFv, G, GV, US, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
 
@@ -356,7 +366,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   call disable_averaging(CS%diag)
 
   dt_visc = dt_pred ; if (CS%dt_visc_bug) dt_visc = 0.5*dt
-  ! call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  if (.not. CS%use_pormed) call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h_av, dz, forces, visc, tv, dt_visc, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(up, vp, h_av, forces, visc, dt_visc, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -375,8 +385,18 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
     h_av(i,j,k) = (hp(i,j,k) + h_av(i,j,k)) * 0.5
   enddo ; enddo ; enddo
-  call calculate_dz(h_av, dz, G, GV)
-  call pass_var(dz, G%Domain)
+
+  ! subgrid topo
+  if (CS%use_pormed) then
+    call thickness_to_dz(h_av, tv, dz, G, GV, US)
+    call thickness_to_dz_subgrid_topo(h_prime, dz, h_av, G, GV)
+    call pass_var(h_prime, G%Domain)
+    call pass_var(dz, G%Domain)
+  else
+    do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
+      h_prime(i,j,k) = h_av(i,j,k)
+    enddo ; enddo ; enddo
+  endif
 
 ! CAu = -(f+zeta(up))/h_av vh + d/dx KE(up)
   call cpu_clock_begin(id_clock_Cor)
@@ -389,7 +409,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
   if (dyn_p_surf) then ; do j=js-2,je+2 ; do i=is-2,ie+2
     p_surf(i,j) = 0.25*p_surf_begin(i,j) + 0.75*p_surf_end(i,j)
   enddo ; enddo ; endif
-  call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, &
+  call PressureForce(h_prime, tv, CS%PFu, CS%PFv, G, GV, US, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
 
@@ -419,7 +439,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
 
 ! upp <- upp + dt/2 d/dz visc d/dz upp
   call cpu_clock_begin(id_clock_vertvisc)
-  ! call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
+  if (.not. CS%use_pormed) call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(upp, vpp, hp, dz, forces, visc, tv, dt*0.5, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(upp, vpp, hp, forces, visc, dt*0.5, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -473,8 +493,18 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
       vhtr(i,j,k) = vhtr(i,j,k) + 0.5*dt*vh(i,j,k)
     enddo ; enddo
   enddo
-  call calculate_dz(h_av, dz, G, GV)
-  call pass_var(dz, G%Domain)
+
+  ! subgrid topo
+  if (CS%use_pormed) then
+    call thickness_to_dz(h_av, tv, dz, G, GV, US)
+    call thickness_to_dz_subgrid_topo(h_prime, dz, h_av, G, GV)
+    call pass_var(h_prime, G%Domain)
+    call pass_var(dz, G%Domain)
+  else
+    do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
+      h_prime(i,j,k) = h_av(i,j,k)
+    enddo ; enddo ; enddo
+  endif
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)
   call cpu_clock_begin(id_clock_Cor)
@@ -484,7 +514,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
 
 ! PFu = d/dx M(h_av,T,S)
   call cpu_clock_begin(id_clock_pres)
-  call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, &
+  call PressureForce(h_prime, tv, CS%PFu, CS%PFv, G, GV, US, &
                      CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
   call cpu_clock_end(id_clock_pres)
 
@@ -506,7 +536,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
 
 ! u <- u + dt d/dz visc d/dz u
   call cpu_clock_begin(id_clock_vertvisc)
-  ! call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  if (.not. CS%use_pormed) call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(u, v, h_av, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(u, v, h_av, forces, visc, dt, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot, Waves=Waves)
@@ -525,7 +555,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, dz, tv, visc, Time_local, dt, forces, &
     do j=js,je ; do i=is,ie ; eta_av(i,j) = 0.0 ; enddo ; enddo
   endif
   do k=1,nz ; do j=js,je ; do i=is,ie
-    eta_av(i,j) = eta_av(i,j) + h_av(i,j,k)
+    eta_av(i,j) = eta_av(i,j) + h_prime(i,j,k)
   enddo ; enddo ; enddo
 
   if (dyn_p_surf) deallocate(p_surf)
@@ -700,7 +730,8 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
                  "If true, apply tidal momentum forcing.", default=.false.)
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
-
+  call get_param(param_file, mdl, "USE_POROUS_MEDIUM", CS%use_pormed, &
+                 default=.false., do_not_log=.true.)
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
 

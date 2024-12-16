@@ -1268,22 +1268,18 @@ subroutine initialize_subgrid_topo_center(G, param_file, US)
     G%bathyT(i,j) = G%depc_low(i,j)
   enddo ; enddo
 
-  G%depc_low = -G%depc_low
-  G%depc_ave = -G%depc_ave
-  G%depc_hgh = -G%depc_hgh
-
-  do j=js,je ; do i=is,ie
-    if (G%depc_m(i,j)==0.0) then
-      G%depc_m1(i,j) = 0.0
-      G%depc_m2(i,j) = 0.0
-    elseif (G%depc_m(i,j) <= 0.5) then
-      G%depc_m1(i,j) = (G%depc_hgh(i,j) - G%depc_ave(i,j)) / (G%depc_hgh(i,j) - G%depc_low(i,j))
-      G%depc_m2(i,j) = 1.0 / (G%depc_ave(i,j) - G%depc_low(i,j))
-    else
-      G%depc_m1(i,j) = 1.0 / G%depc_m(i,j)
-      G%depc_m2(i,j) = 1.0 / (G%depc_hgh(i,j) - G%depc_low(i,j))
-    endif
-  enddo ; enddo
+  ! do j=js,je ; do i=is,ie
+  !   if (G%depc_m(i,j)==0.0) then
+  !     G%depc_m1(i,j) = 0.0
+  !     G%depc_m2(i,j) = 0.0
+  !   elseif (G%depc_m(i,j) <= 0.5) then
+  !     G%depc_m1(i,j) = (G%depc_hgh(i,j) - G%depc_ave(i,j)) / (G%depc_hgh(i,j) - G%depc_low(i,j))
+  !     G%depc_m2(i,j) = 1.0 / (G%depc_ave(i,j) - G%depc_low(i,j))
+  !   else
+  !     G%depc_m1(i,j) = 1.0 / G%depc_m(i,j)
+  !     G%depc_m2(i,j) = 1.0 / (G%depc_hgh(i,j) - G%depc_low(i,j))
+  !   endif
+  ! enddo ; enddo
 
   call callTree_leave(trim(mdl)//'()')
 end subroutine initialize_subgrid_topo_center

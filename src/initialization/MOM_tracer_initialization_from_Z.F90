@@ -37,7 +37,8 @@ contains
 !> Initializes a tracer from a z-space data file, including any lateral regridding that is needed.
 subroutine MOM_initialize_tracer_from_Z(h, tr, G, GV, US, PF, src_file, src_var_nam, &
                           src_var_unit_conversion, src_var_record, homogenize, &
-                          useALEremapping, remappingScheme, src_var_gridspec, h_in_Z_units )
+                          useALEremapping, remappingScheme, src_var_gridspec, h_in_Z_units, &
+                          adjust_to_topo)
   type(ocean_grid_type),      intent(inout) :: G   !< Ocean grid structure.
   type(verticalGrid_type),    intent(in)    :: GV  !< Ocean vertical grid structure.
   type(unit_scale_type),      intent(in)    :: US  !< A dimensional unit scaling type
@@ -60,6 +61,8 @@ subroutine MOM_initialize_tracer_from_Z(h, tr, G, GV, US, PF, src_file, src_var_
                                                             !! thicknesses are in the units of height
                                                             !! ([Z ~> m]) instead of the usual units of
                                                             !! thicknesses ([H ~> m or kg m-2])
+  logical,          optional, intent(in)    :: adjust_to_topo !< If true, adjust thickness with sub-grid scale
+                                                              !! topography.
 
   ! Local variables
   real :: land_fill = 0.0  ! A value to use to replace missing values [CU ~> conc]
@@ -218,7 +221,7 @@ subroutine MOM_initialize_tracer_from_Z(h, tr, G, GV, US, PF, src_file, src_var_
       ! Equation of state data is not available, so a simpler rescaling will have to suffice,
       ! but it might be problematic in non-Boussinesq mode.
       GV_loc = GV ; GV_loc%ke = kd
-      call dz_to_thickness_simple(dzSrc, hSrc, G, GV_loc, US)
+      call dz_to_thickness_simple(dzSrc, hSrc, G, GV_loc, US, adjust_to_topo=adjust_to_topo)
 
       call ALE_remap_scalar(remapCS, G, GV, kd, hSrc, tr_z, h, tr, all_cells=.false.)
     endif
