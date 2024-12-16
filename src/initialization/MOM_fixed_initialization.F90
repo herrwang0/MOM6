@@ -23,7 +23,7 @@ use MOM_shared_initialization, only : initialize_topography_named, limit_topogra
 use MOM_shared_initialization, only : set_rotation_planetary, set_rotation_beta_plane, initialize_grid_rotation_angle
 use MOM_shared_initialization, only : reset_face_lengths_named, reset_face_lengths_file, reset_face_lengths_list
 use MOM_shared_initialization, only : read_face_length_list, set_velocity_depth_max, set_velocity_depth_min
-use MOM_shared_initialization, only : set_subgrid_topo_at_vel_from_file, set_subgrid_topo_at_h
+use MOM_shared_initialization, only : initialize_subgrid_topo_edge, initialize_subgrid_topo_center
 use MOM_shared_initialization, only : compute_global_grid_integrals, write_ocean_geometry_file
 use MOM_unit_scaling, only : unit_scale_type
 
@@ -95,12 +95,6 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   ! Make bathymetry consistent with open boundaries
   call open_boundary_impose_normal_slope(OBC, G, G%bathyT)
 
-  ! This call sets masks that prohibit flow over any point interpreted as land
-  call initialize_masks(G, PF, US)
-
-  ! Make OBC mask consistent with land mask
-  call open_boundary_impose_land_mask(OBC, G, G%areaCu, G%areaCv, US)
-
   if (debug) then
     call hchksum(G%bathyT, 'MOM_initialize_fixed: depth ', G%HI, haloshift=1, unscale=US%Z_to_m)
     call hchksum(G%mask2dT, 'MOM_initialize_fixed: mask2dT ', G%HI)
@@ -151,13 +145,19 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
                  "If true, use variables from TOPO_AT_VEL_FILE as parameters for porous barrier.", &
                  default=.False.)
   if (read_porous_file) &
-    call set_subgrid_topo_at_vel_from_file(G, PF, US)
+    call initialize_subgrid_topo_edge(G, PF, US)
 
   call get_param(PF, mdl, "SUBGRID_TOPO_AT_H", read_porous_file, &
-                 "If true, use variables from TOPO_AT_VEL_FILE as parameters for porous barrier.", &
-                 default=.False.)
+                  "If true, use variables from TOPO_AT_VEL_FILE as parameters for porous barrier.", &
+                  default=.False.)
   if (read_porous_file) &
-    call set_subgrid_topo_at_h(G, PF, US)
+    call initialize_subgrid_topo_center(G, PF, US)
+
+  ! This call sets masks that prohibit flow over any point interpreted as land
+  call initialize_masks(G, PF, US)
+
+  ! Make OBC mask consistent with land mask
+  call open_boundary_impose_land_mask(OBC, G, G%areaCu, G%areaCv, US)
 
     !    Calculate the value of the Coriolis parameter at the latitude   !
 !  of the q grid points [T-1 ~> s-1].

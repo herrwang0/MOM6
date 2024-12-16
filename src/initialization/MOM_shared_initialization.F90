@@ -28,9 +28,8 @@ public initialize_topography_named, limit_topography, diagnoseMaximumDepth
 public set_rotation_planetary, set_rotation_beta_plane, initialize_grid_rotation_angle
 public reset_face_lengths_named, reset_face_lengths_file, reset_face_lengths_list
 public read_face_length_list, set_velocity_depth_max, set_velocity_depth_min
-public set_subgrid_topo_at_vel_from_file
+public initialize_subgrid_topo_edge, initialize_subgrid_topo_center
 public compute_global_grid_integrals, write_ocean_geometry_file
-public set_subgrid_topo_at_h
 ! A note on unit descriptions in comments: MOM6 uses units that can be rescaled for dimensional
 ! consistency testing. These are noted in comments with units like Z, H, L, and T, along with
 ! their mks counterparts with notation like "a velocity [Z T-1 ~> m s-1]".  If the units
@@ -1189,7 +1188,7 @@ subroutine read_face_length_list(iounit, filename, num_lines, lines)
 end subroutine read_face_length_list
 ! -----------------------------------------------------------------------------
 
-subroutine set_subgrid_topo_at_h(G, param_file, US)
+subroutine initialize_subgrid_topo_center(G, param_file, US)
   type(dyn_horgrid_type), intent(inout) :: G          !< The dynamic horizontal grid type
   type(param_file_type),  intent(in)    :: param_file !< Parameter file structure
   type(unit_scale_type),  intent(in)    :: US         !< A dimensional unit scaling type
@@ -1197,9 +1196,10 @@ subroutine set_subgrid_topo_at_h(G, param_file, US)
   ! Local variables
   character(len=200) :: filename, topo_file, inputdir ! Strings for file/path
   character(len=200) :: varname_lo, varname_av, varname_hi ! Variable names in file
-  character(len=40)  :: mdl = "set_subgrid_topo_at_h" ! This subroutine's name.
+  character(len=40)  :: mdl = "initialize_subgrid_topo_center" ! This subroutine's name.
   integer :: is, ie, js, je
   integer :: i, j
+  real :: max_depth
   character (len=300) :: msg
 
   call callTree_enter(trim(mdl)//"(), MOM_shared_initialization.F90")
@@ -1207,23 +1207,24 @@ subroutine set_subgrid_topo_at_h(G, param_file, US)
   ! read params
   call get_param(param_file, mdl, "INPUTDIR", inputdir, default=".")
   inputdir = slasher(inputdir)
-  call get_param(param_file, mdl, "TOPO_AT_CENTER_FILE", topo_file, &
+  call get_param(param_file, mdl, "SG_TOPO_CENTER_FILE", topo_file, &
                  "The file from which the bathymetry parameters at the cell centers are read.  "//&
                  "While the names of the parameters reflect their physical locations, i.e. HIGH is above LOW, "//&
                  "their signs follow the model's convention, which is positive below the sea surface", &
                  default="topog_center.nc")
+  ! HW: the following should be replaced by "defaults" array once rebased with dev/gfdl branch.
   call get_param(param_file, mdl, "TOPO_AT_CENTER_VARNAME_HGH", varname_hi, &
-                 "The variable name of the highest bathymetry at the u-cells in TOPO_AT_VEL_FILE.", &
+                 "Variable name of the shallowest topography at cell centers in SG_TOPO_CENTER_FILE.", &
                  default="depth_hi")
-  call get_param(param_file, mdl, "TOPO_AT_CENTER_VARNAME_LOW",  varname_lo, &
-                 "The variable name of the lowest bathymetry at the u-cells in TOPO_AT_VEL_FILE.", &
+  call get_param(param_file, mdl, "TOPO_AT_CENTER_VARNAME_LOW", varname_lo, &
+                 "Variable name of the deepest topography at cell centers in SG_TOPO_CENTER_FILE.", &
                  default="depth_lo")
-  call get_param(param_file, mdl, "TOPO_AT_CENTER_VARNAME_AVE",  varname_av, &
-                 "The variable name of the average bathymetry at the u-cells in TOPO_AT_VEL_FILE.", &
+  call get_param(param_file, mdl, "TOPO_AT_CENTER_VARNAME_AVE", varname_av, &
+                 "Variable name of the mean topography at cell centers in SG_TOPO_CENTER_FILE.", &
                  default="depth_av")
 
   filename = trim(inputdir)//trim(topo_file)
-  call log_param(param_file, mdl, "INPUTDIR/TOPO_AT_CENTER_FILE", filename)
+  call log_param(param_file, mdl, "INPUTDIR/SG_TOPO_CENTER_FILE", filename)
 
   if (.not.file_exists(filename, G%Domain)) call MOM_error(FATAL, &
        " "//trim(mdl)//": Unable to open "//trim(filename))
@@ -1232,13 +1233,17 @@ subroutine set_subgrid_topo_at_h(G, param_file, US)
   call MOM_read_data(filename, trim(varname_av), G%depc_ave, G%Domain, scale=US%m_to_Z)
   call MOM_read_data(filename, trim(varname_hi), G%depc_hgh, G%Domain, scale=US%m_to_Z)
 
-  G%depc_low = -G%depc_low ; G%depc_ave = -G%depc_ave ; G%depc_hgh = -G%depc_hgh
+  ! HW: The limit essentially makes sure depc_low and bathyT are consistent. Need to revisit!
+  ! Since G%bathyT==G%depc_low, so if MAXIMUM_DEPTH is not specified, G%max_depth will not limit low, ave and hgh.
+  call limit_topography(G%depc_low, G, param_file, G%max_depth, US)
+  call limit_topography(G%depc_ave, G, param_file, G%max_depth, US)
+  call limit_topography(G%depc_hgh, G, param_file, G%max_depth, US)
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
 
   ! check params
   do j=js,je ; do i=is,ie
-    if ((G%depc_hgh(i,j) < G%depc_ave(i,j)) .or. (G%depc_ave(i,j) < G%depc_low(i,j))) then
+    if ((G%depc_hgh(i,j) > G%depc_ave(i,j)) .or. (G%depc_ave(i,j) > G%depc_low(i,j))) then
       write(msg, '(a)') trim(mdl)//": center depth profile parameters incorrect."
       call MOM_error(FATAL, trim(msg))
     endif
@@ -1247,12 +1252,25 @@ subroutine set_subgrid_topo_at_h(G, param_file, US)
   ! calc params
   ! If any two of the three parameters equal, m is set to zero. This includes hgh==ave, where m would be 1.0
   do j=js,je ; do i=is,ie
-    if ((G%depc_hgh(i,j)==G%depc_low(i,j)) .or. (G%depc_hgh(i,j)==G%depc_ave(i,j))) then
+    if ((G%depc_hgh(i,j)==G%depc_low(i,j)) .or. (G%depc_hgh(i,j)==G%depc_ave(i,j)) &
+        .or. (G%depc_ave(i,j)==G%depc_low(i,j))) then
       G%depc_m(i,j) = 0.0
     else
       G%depc_m(i,j) = (G%depc_ave(i,j) - G%depc_low(i,j)) / (G%depc_hgh(i,j) - G%depc_low(i,j))
     endif
   enddo ; enddo
+
+  ! Check consistency with G%bathyT
+  do j=js,je ; do i=is,ie
+    if ((G%depc_m(i,j)==0.0) .and. (G%depc_low(i,j)/=G%depc_ave(i,j))) then
+      G%depc_low(i,j) = G%depc_ave(i,j)
+    endif
+    G%bathyT(i,j) = G%depc_low(i,j)
+  enddo ; enddo
+
+  G%depc_low = -G%depc_low
+  G%depc_ave = -G%depc_ave
+  G%depc_hgh = -G%depc_hgh
 
   do j=js,je ; do i=is,ie
     if (G%depc_m(i,j)==0.0) then
@@ -1268,7 +1286,7 @@ subroutine set_subgrid_topo_at_h(G, param_file, US)
   enddo ; enddo
 
   call callTree_leave(trim(mdl)//'()')
-end subroutine set_subgrid_topo_at_h
+end subroutine initialize_subgrid_topo_center
 
 ! -----------------------------------------------------------------------------
 !> Read from a file the maximum, minimum and average bathymetry at velocity points,
@@ -1280,7 +1298,7 @@ end subroutine set_subgrid_topo_at_h
 !! CHANNEL_LIST_FILE all have negative values below the surface. Therefore, to ensure
 !! backward compatibility, all signs of the variable are inverted here.
 !! And porous_Dmax[UV] = shallowest point, porous_Dmin[UV] = deepest point
-subroutine set_subgrid_topo_at_vel_from_file(G, param_file, US)
+subroutine initialize_subgrid_topo_edge(G, param_file, US)
   type(dyn_horgrid_type), intent(inout) :: G          !< The dynamic horizontal grid type
   type(param_file_type),  intent(in)    :: param_file !< Parameter file structure
   type(unit_scale_type),  intent(in)    :: US         !< A dimensional unit scaling type
@@ -1289,7 +1307,7 @@ subroutine set_subgrid_topo_at_vel_from_file(G, param_file, US)
   character(len=200) :: filename, topo_file, inputdir ! Strings for file/path
   character(len=200) :: varname_uhi, varname_ulo, varname_uav, &
                         varname_vhi, varname_vlo, varname_vav     ! Variable names in file
-  character(len=40)  :: mdl = "set_subgrid_topo_at_vel_from_file" ! This subroutine's name.
+  character(len=40)  :: mdl = "initialize_subgrid_topo_edge" ! This subroutine's name.
   integer :: i, j
 
   call callTree_enter(trim(mdl)//"(), MOM_shared_initialization.F90")
@@ -1343,7 +1361,7 @@ subroutine set_subgrid_topo_at_vel_from_file(G, param_file, US)
   call pass_vector(G%porous_DavgU, G%porous_DavgV, G%Domain, To_All+SCALAR_PAIR, CGRID_NE)
 
   call callTree_leave(trim(mdl)//'()')
-end subroutine set_subgrid_topo_at_vel_from_file
+end subroutine initialize_subgrid_topo_edge
 ! -----------------------------------------------------------------------------
 
 ! -----------------------------------------------------------------------------
