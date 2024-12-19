@@ -15,6 +15,7 @@ use MOM_domains, only : start_group_pass, complete_group_pass, pass_var, pass_ve
 use MOM_error_handler, only : MOM_error, MOM_mesg, FATAL, WARNING, is_root_pe
 use MOM_file_parser, only : get_param, log_param, log_version, param_file_type
 use MOM_forcing_type, only : mech_forcing
+use MOM_interface_heights, only : h_to_hprime
 use MOM_grid, only : ocean_grid_type
 use MOM_harmonic_analysis, only : HA_accum_FtSSH, harmonic_analysis_CS
 use MOM_hor_index, only : hor_index_type
@@ -289,6 +290,7 @@ type, public :: barotropic_CS ; private
   logical :: tidal_sal_flather !< Apply adjustment to external gravity wave speed
                              !! consistent with tidal self-attraction and loading
                              !! used within the barotropic solver
+  logical :: use_pormed = .false. !< If true,
   logical :: wt_uv_bug = .true. !< If true, recover a bug that wt_[uv] that is not normalized.
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
@@ -320,6 +322,7 @@ type, public :: barotropic_CS ; private
   type(group_pass_type) :: pass_ubta_uhbta !< Handle for a group halo pass
   type(group_pass_type) :: pass_e_anom !< Handle for a group halo pass
   type(group_pass_type) :: pass_SpV_avg !< Handle for a group halo pass
+  type(group_pass_type) :: pass_eta_in_prime !< Handle for a group halo pass
 
   !>@{ Diagnostic IDs
   integer :: id_PFu_bt = -1, id_PFv_bt = -1, id_Coru_bt = -1, id_Corv_bt = -1
@@ -487,7 +490,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                                                          !! Visc_rem_u is between 0 (at the bottom) and 1 (far above).
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(in)  :: visc_rem_v    !< Ditto for meridional direction [nondim].
   real, dimension(SZI_(G),SZJ_(G)),           intent(in)  :: SpV_avg     !< The column average specific volume, used
-                                                         !! in non-Boussinesq OBC calculations [R-1 ~> m3 kg-1]
+                                                         !! in non-Boussinesq OBC or porous medium calculations
+                                                         !! [R-1 ~> m3 kg-1]
   type(accel_diag_ptrs),                      pointer    :: ADp          !< Acceleration diagnostic pointers
   type(ocean_OBC_type),                       pointer    :: OBC          !< The open boundary condition structure.
   type(BT_cont_type),                         pointer    :: BT_cont      !< A structure with elements that describe
@@ -615,8 +619,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                   ! anomaly [H ~> m or kg m-2]
     eta_pred      ! A predictor value of eta [H ~> m or kg m-2] like eta.
   real, dimension(:,:), pointer :: &
-    eta_PF_BT     ! A pointer to the eta array (either eta or eta_pred) that
+    eta_PF_BT     ! A pointer to the eta array (either eta_prime or eta_pred_prime) that
                   ! determines the barotropic pressure force [H ~> m or kg m-2]
+  real, target, dimension(SZIW_(CS),SZJW_(CS)) :: &
+    eta_in_prime, & ! Stretched eta_in for e_anom [H ~> m or kg m-2]
+    eta_prime,    & ! Stretched eta, target of eta_PF_BT [H ~> m or kg m-2]
+    eta_pred_prime  ! Stretched eta_pred, target of eta_PF_BT [H ~> m or kg m-2]
   real, dimension(SZIW_(CS),SZJW_(CS)) :: &
     eta_sum, &    ! eta summed across the timesteps [H ~> m or kg m-2].
     eta_wtd, &    ! A weighted estimate used to calculate eta_out [H ~> m or kg m-2].
@@ -884,8 +892,11 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (apply_OBC_open) &
       call create_group_pass(CS%pass_eta_ubt, uhbt_int, vhbt_int, CS%BT_Domain)
   endif
-  if (apply_OBC_flather .and. .not.GV%Boussinesq) &
+  if ((apply_OBC_flather .or. CS%use_pormed) .and. .not.GV%Boussinesq) &
     call create_group_pass(CS%pass_SpV_avg, SpV_col_avg, CS%BT_domain)
+
+  if (CS%use_pormed) &
+    call create_group_pass(CS%pass_eta_in_prime, eta_in_prime, CS%BT_domain)
 
   call create_group_pass(CS%pass_ubt_Cor, ubt_Cor, vbt_Cor, G%Domain)
   ! These passes occur at the end of the routine, as data is being readied to
@@ -1013,6 +1024,32 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         call do_group_pass(CS%pass_SpV_avg, CS%BT_domain)
       endif
     endif
+  endif
+
+  if (CS%use_pormed) then
+    ! not sure if this can be merged with the block above. SpV_col_avg==0.0 does have a meaning for
+    ! the OBC application, but not for porous media. - HW
+    if (.not.GV%Boussinesq) then
+      !$OMP parallel do default(shared)
+      do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
+        SpV_col_avg(i,j) = Spv_avg(i,j)
+      enddo ; enddo
+      if (nonblock_setup) then
+        call start_group_pass(CS%pass_SpV_avg, CS%BT_domain)
+      else
+        call do_group_pass(CS%pass_SpV_avg, CS%BT_domain)
+      endif
+    endif
+    call h_to_hprime(eta_in, G, GV, eta_in_prime, spv_avg=SpV_col_avg)
+    if (nonblock_setup) then
+      call start_group_pass(CS%pass_eta_in_prime, CS%BT_domain)
+    else
+      call do_group_pass(CS%pass_eta_in_prime, CS%BT_domain)
+    endif
+  else
+    do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
+      eta_in_prime(i,j) = eta_in(i,j)
+    enddo ; enddo
   endif
 
   if (CS%linear_wave_drag) then
@@ -1195,6 +1232,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       call set_up_BT_OBC(OBC, eta, SpV_col_avg, CS%BT_OBC, CS%BT_Domain, G, GV, US, CS, MS, ievf-ie, &
                          use_BT_cont, integral_BT_cont, dt, Datu, Datv, BTCL_u, BTCL_v)
     endif
+  endif
+
+  ! subgrid topo
+  if (nonblock_setup .and. CS%use_pormed) then
+    if (.not.GV%Boussinesq) &
+      call complete_group_pass(CS%pass_SpV_avg, CS%BT_domain)
+    call complete_group_pass(CS%pass_eta_in_prime, CS%BT_domain)
   endif
 
   ! Determine the difference between the sum of the layer fluxes and the
@@ -1676,7 +1720,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   do j=js,je ; do i=is,ie
     eta_src(i,j) = G%mask2dT(i,j) * (Instep * CS%eta_cor(i,j))
   enddo ; enddo
-!$OMP end parallel
+  !$OMP end parallel
 
   if (CS%dynamic_psurf) then
     ice_is_rigid = (associated(forces%rigidity_ice_u) .and. &
@@ -1801,7 +1845,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_calc_pre > 0) call cpu_clock_end(id_clock_calc_pre)
   if (id_clock_calc > 0) call cpu_clock_begin(id_clock_calc)
 
-  if (project_velocity) then ; eta_PF_BT => eta ; else ; eta_PF_BT => eta_pred ; endif
+  if (project_velocity) then ; eta_PF_BT => eta_prime ; else ; eta_PF_BT => eta_pred_prime ; endif
 
   if (CS%dt_bt_filter >= 0.0) then
     dt_filt = 0.5 * max(0.0, min(CS%dt_bt_filter, 2.0*dt))
@@ -1967,6 +2011,19 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           p_surf_dyn(i,j) = dyn_coef_eta(i,j) * (eta_pred(i,j) - eta(i,j))
         enddo ; enddo
       endif
+    endif
+
+    ! subgrid topo
+    if (CS%use_pormed) then
+      call h_to_hprime(eta, G, GV, eta_prime, spv_avg=SpV_col_avg, halo_size=max(iev-ie, jev-je))
+      if (CS%dynamic_psurf .or. (.not.project_velocity)) &
+        call h_to_hprime(eta_pred, G, GV, eta_pred_prime, spv_avg=SpV_col_avg, &
+                         halo_size=max(iev-ie, jev-je))
+    else
+      do j=jsv-1,jev+1 ; do i=isv-1,iev+1
+        eta_prime(i,j) = eta(i,j)
+        eta_pred_prime(i,j) = eta_pred(i,j)
+      enddo ; enddo
     endif
 
     ! Recall that just outside the do n loop, there is code like...
@@ -2532,12 +2589,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   do j=js-1,je+1 ; do i=is-1,ie+1 ; e_anom(i,j) = 0.0 ; enddo ; enddo
   if (interp_eta_PF) then
     do j=js,je ; do i=is,ie
-      e_anom(i,j) = dgeo_de * (0.5 * (eta(i,j) + eta_in(i,j)) - &
+      e_anom(i,j) = dgeo_de * (0.5 * (eta_prime(i,j) + eta_in_prime(i,j)) - &
                                (eta_PF_1(i,j) + 0.5*d_eta_PF(i,j)))
     enddo ; enddo
   else
     do j=js,je ; do i=is,ie
-      e_anom(i,j) = dgeo_de * (0.5 * (eta(i,j) + eta_in(i,j)) - eta_PF(i,j))
+      e_anom(i,j) = dgeo_de * (0.5 * (eta_prime(i,j) + eta_in_prime(i,j)) - eta_PF(i,j))
     enddo ; enddo
   endif
   if (apply_OBCs) then
@@ -2664,6 +2721,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       endif
     enddo ; enddo ; endif
   endif
+
+  ! call uvchksum(" accel_bt", u_accel_bt, v_accel_bt, CS%debug_BT_HI)
+  ! call uvchksum(" accel_layer", accel_layer_u, accel_layer_v, CS%debug_BT_HI)
+  ! call hchksum(e_anom, "e_anom",G%HI)
+  ! call hchksum(eta, "eta",G%HI)
+  ! call hchksum(eta_in, "eta_in",G%HI)
+  ! call hchksum(eta_pf, "eta_pf",G%HI)
 
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
 
@@ -4676,7 +4740,8 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "tidal forcing using the scalar self-attraction approximation. "//&
                  "The default is currently False in order to retain previous answers "//&
                  "but should be set to True for new experiments", default=.false.)
-
+  call get_param(param_file, mdl, "USE_POROUS_MEDIUM", CS%use_pormed, &
+                 default=.false., do_not_log=.true.)
   call get_param(param_file, mdl, "SADOURNY", CS%Sadourny, &
                  "If true, the Coriolis terms are discretized with the "//&
                  "Sadourny (1975) energy conserving scheme, otherwise "//&

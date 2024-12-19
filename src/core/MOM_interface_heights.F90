@@ -21,7 +21,8 @@ public find_eta, dz_to_thickness, thickness_to_dz, dz_to_thickness_simple
 public calc_derived_thermo
 public convert_MLD_to_ML_thickness
 public find_rho_bottom, find_col_avg_SpV
-public thickness_to_dz_subgrid_topo
+! public thickness_to_dz_subgrid_topo, adjust_h_subgrid_topo
+public adjust_h_subgrid_topo, h_to_hprime
 
 !> Calculates the heights of the free surface or all interfaces from layer thicknesses.
 interface find_eta
@@ -40,6 +41,9 @@ interface thickness_to_dz
   module procedure thickness_to_dz_3d, thickness_to_dz_jslice
 end interface thickness_to_dz
 
+interface h_to_hprime
+  module procedure h_to_hprime_2d, h_to_hprime_3d
+end interface
 contains
 
 !> Calculates the heights of all interfaces between layers, using the appropriate
@@ -892,16 +896,24 @@ subroutine thickness_to_dz_jslice(h, tv, dz, j, G, GV, halo_size)
 
 end subroutine thickness_to_dz_jslice
 
-subroutine thickness_to_dz_subgrid_topo(h_prime, dz, h, G, GV, halo_size)
-  type(ocean_grid_type),                     intent(in)  :: G   !< Ocean grid structure
-  type(verticalGrid_type),                   intent(in)  :: GV  !< Vertical grid structure
+subroutine h_to_hprime_3d(h, tv, G, GV, US, halo_size, h_prime, dz_prime)
+  type(ocean_grid_type),                     intent(in)  :: G  !< Ocean grid structure
+  type(verticalGrid_type),                   intent(in)  :: GV !< Vertical grid structure
+  type(unit_scale_type),                     intent(in)  :: US !< A dimensional unit scaling type
+  type(thermo_var_ptrs),                     intent(in)  :: tv !< A structure pointing to thermodynamic variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(in)  :: h  !< Volume/mass per unit area [H ~> m or kg m-2]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(inout) :: dz !< Geometric distance between interfaces [Z ~> m]
-  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), intent(out) :: h_prime !< Redistributed volume/mass per unit area [H ~> m or kg m-2]
-  integer,       optional, intent(in)    :: halo_size !< Width of halo within which to
-                                               !! calculate thicknesses
+  integer,                         optional, intent(in)  :: halo_size !< Width of halo
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                          target,  optional, intent(out) :: h_prime !< Redistributed volume/mass per unit area
+                                                                    !! [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                                   optional, intent(out) :: dz_prime !< Geometric distance between interfaces
+                                                                     !! [Z ~> m]
+
   ! Local variables
   logical, dimension(SZI_(G),SZJ_(G)) :: do_I
+  real, pointer :: hp(:,:,:) ! [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: dz ! [H ~> m]
   real, dimension(SZI_(G),SZJ_(G)) :: vol_below ! [H ~> m]
   real, dimension(SZI_(G),SZJ_(G)) :: eb ! [Z ~> m]
   real :: eta ! [Z ~> m]
@@ -909,8 +921,16 @@ subroutine thickness_to_dz_subgrid_topo(h_prime, dz, h, G, GV, halo_size)
   integer :: i, j, k
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
-  is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo ; nz = GV%ke
+  is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo
   nz = GV%ke
+
+  if (present(h_prime)) then
+    hp => h_prime
+  else
+    allocate(hp(SZI_(G),SZJ_(G),SZK_(GV)), source=0.0)
+  endif
+
+  call thickness_to_dz(h, tv, dz, G, GV, US, halo_size)
 
   do j=js,je ; do i=is,ie
     vol_below(i,j) = 0.0
@@ -925,16 +945,76 @@ subroutine thickness_to_dz_subgrid_topo(h_prime, dz, h, G, GV, halo_size)
       call height_from_vol_monomial(eta, do_I(i,j), vol_below(i,j), G%depc_m(i,j), &
                                     (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
 
-      ! h_prime(i,j,k) = max(G%depc_low(i,j) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
-      h_prime(i,j,k) = max((eta - eb(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
-      ! h_prime(i,j,k) = G%depc_low(i,j)
+      ! hp(i,j,k) = max(G%depc_low(i,j) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      ! hp(i,j,k) = G%depc_low(i,j)
+      hp(i,j,k) = max((eta - eb(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
       dz(i,j,k) = eta - eb(i,j)
       eb(i,j) = eta
     else
-      h_prime(i,j,k) = h(i,j,k)
+      hp(i,j,k) = h(i,j,k)
     endif
   enddo ; enddo ; enddo
-end subroutine thickness_to_dz_subgrid_topo
+
+  if (.not.present(h_prime)) deallocate(hp)
+
+  if (present(dz_prime)) then
+    do k=1,nz ; do j=js,je ; do i=is,ie
+      dz_prime(i,j,k) = dz(i,j,k)
+    enddo ; enddo ; enddo
+  endif
+end subroutine h_to_hprime_3d
+
+! Convert 2D thickness (free surface height in Boussnesq mode or column mass in non-Boussinseq mode)
+! to effective thickness modified by porous media.
+subroutine h_to_hprime_2d(eta, G, GV, eta_prime, spv_avg, halo_size)
+  type(ocean_grid_type),            intent(in)  :: G  !< Ocean grid structure
+  type(verticalGrid_type),          intent(in)  :: GV !< Vertical grid structure
+  real, dimension(SZI_(G),SZJ_(G)), intent(in)  :: eta !< Free surface height (in Boussinesq mode)
+                                    !! or column mass (in non-Boussinesq mode) [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G)), intent(out) :: eta_prime !< Redistributed free surface height
+                                    !! (in Boussinesq mode) or column mass (in non-Boussinesq mode)
+                                    !! [H ~> m or kg m-2]
+  real, dimension(SZI_(G),SZJ_(G)), &
+                          optional, intent(in)  :: spv_avg !< Column average specific volume
+                                    !! [R-1 ~> m3 kg-1]
+  integer,                optional, intent(in)  :: halo_size !< Halo width
+  ! Local variables
+  real :: e_top ! Top interface height [Z ~> m]
+  real :: vol   ! Volume per unit area [Z ~> m]
+  integer :: is, ie, js, je, halo
+  integer :: i, j, k
+  logical :: dummy
+
+  halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
+  is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo
+
+  if (GV%Boussinesq) then
+    do j=js,je ; do i=is,ie ; if (G%mask2dT(i,j)==1.0) then
+      ! convert thickness to dz
+      vol = eta(i,j) + GV%Z_to_H * G%bathyT(i,j)
+      ! vol = GV%H_to_Z * eta(i,j) + G%bathyT(i,j)
+      call height_from_vol_monomial(e_top, dummy, vol, G%depc_m(i,j), &
+                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
+      ! eta_prime(i,j) = GV%Z_to_H * max(e_top, vol - G%depc_low(i,j))
+      ! The following expression is bitwise accurate (zero PF) for a trivial test case. The parethesis is needed (FMA?).
+      eta_prime(i,j) = (max((e_top + G%depc_low(i,j)) / (vol + GV%dZ_subroundoff), 1.0) * vol) - GV%Z_to_H * G%bathyT(i,j)
+    else
+      eta_prime(i,j) = eta(i,j)
+    endif ; enddo ; enddo
+  else
+    if (.not.present(spv_avg)) &
+      call MOM_error(FATAL, "h_to_hprime_2d called in non-Boussinesq mode without spv_avg.")
+    do j=js,je ; do i=is,ie ; if (G%mask2dT(i,j)==1.0) then
+      ! convert thickness to dz
+      vol = GV%H_to_RZ * eta(i,j) * spv_avg(i,j)
+      call height_from_vol_monomial(e_top, dummy, vol, G%depc_m(i,j), &
+                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
+      eta_prime(i,j) = max((e_top + G%depc_low(i,j)) / (vol + GV%dZ_subroundoff), 1.0) * eta(i,j)
+    else
+      eta_prime(i,j) = eta(i,j)
+    endif ; enddo ; enddo
+  endif
+end subroutine h_to_hprime_2d
 
 ! This subroutine removes mass/volume from the reduced cell capacity due to sub-grid scale topogrpahy
 ! This is primarily used to adjust initialized thickness.
@@ -976,13 +1056,13 @@ end subroutine adjust_h_subgrid_topo
 
 ! Calculate interface height given a total volume below, using the monomial sub-grid topo
 subroutine height_from_vol_monomial(eta, do_next, vol_below, m, topo_stat, hmin, maxitt)
-  real, intent(out)    :: eta ! [Z ~> m]
+  real,    intent(out) :: eta ! [Z ~> m]
   logical, intent(out) :: do_next
-  real, intent(in)     :: vol_below ! [H ~> m]
-  real, intent(in)     :: m ! [nondim]
-  real, dimension(3), intent(in) :: topo_stat ! (/low, mean, high/) [Z ~> m]
-  real, intent(in), optional :: hmin ! [H ~> m]
-  integer, intent(in), optional :: maxitt ! [nondim]
+  real,    intent(in)  :: vol_below ! [H ~> m]
+  real,    intent(in)  :: m ! [nondim]
+  real,    intent(in)  :: topo_stat(3) ! (/low, mean, high/) [Z ~> m]
+  real,    optional, intent(in) :: hmin ! [H ~> m]
+  integer, optional, intent(in) :: maxitt ! [nondim]
 
  ! local variables
   real :: vol_topo ! [Z ~> m]

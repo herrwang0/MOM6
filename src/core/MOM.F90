@@ -99,7 +99,7 @@ use MOM_harmonic_analysis,     only : HA_accum_FtF, HA_accum_FtSSH, harmonic_ana
 use MOM_hor_index,             only : hor_index_type, hor_index_init
 use MOM_hor_index,             only : rotate_hor_index
 use MOM_interface_heights,     only : find_eta, calc_derived_thermo, thickness_to_dz
-use MOM_interface_heights,     only : thickness_to_dz_subgrid_topo
+use MOM_interface_heights,     only : h_to_hprime
 use MOM_interface_filter,      only : interface_filter, interface_filter_init, interface_filter_end
 use MOM_interface_filter,      only : interface_filter_CS
 use MOM_internal_tides,        only : int_tide_CS
@@ -2097,7 +2097,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                                ! of the maximum stable value [nondim].
 
   real, allocatable, dimension(:,:)   :: eta ! free surface height or column mass [H ~> m or kg m-2]
-  real, allocatable, dimension(:,:,:) :: dz ! Distance between the interfaces around a layer [Z ~> m]
   real, allocatable, dimension(:,:,:) :: h_prime ! Stretched volume/mass [H ~> m or kg m-2]
   real, allocatable, dimension(:,:,:) :: h_new    ! Layer thicknesses after regridding [H ~> m or kg m-2]
   real, allocatable, dimension(:,:,:) :: dzRegrid ! The change in grid interface positions due to regridding,
@@ -3433,10 +3432,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   if (.not.query_initialized(CS%ave_ssh_ibc, "ave_ssh", restart_CSp)) then
     allocate(h_prime(SZI_(G),SZJ_(G),SZK_(G)), source=0.0)
     if (CS%use_pormed) then
-      allocate(dz(SZI_(G),SZJ_(G),SZK_(G)), source=0.0)
-      call thickness_to_dz(CS%h, CS%tv, dz, G, GV, US)
-      call thickness_to_dz_subgrid_topo(h_prime, dz, CS%h, G, GV)
-      deallocate(dz)
+      call h_to_hprime(CS%h, CS%tv, G, GV, US, h_prime=h_prime)
     else
       do k=1,nz ; do j=js,je ; do i=is,ie
         h_prime(i,j,k) = CS%h(i,j,k)
@@ -3488,7 +3484,7 @@ subroutine finish_MOM_initialization(Time, dirs, CS)
                                                    ! various unit conversion factors
   type(MOM_restart_CS),    pointer :: restart_CSp_tmp => NULL()
   real, allocatable :: z_interface(:,:,:) ! Interface heights [Z ~> m]
-  real, allocatable :: dz(:,:,:), h_prime(:,:,:)
+  real, allocatable :: h_prime(:,:,:) ! [H ~> m or kg m-2]
 
   call cpu_clock_begin(id_clock_init)
   call callTree_enter("finish_MOM_initialization()")
@@ -3508,13 +3504,10 @@ subroutine finish_MOM_initialization(Time, dirs, CS)
     allocate(z_interface(SZI_(G),SZJ_(G),SZK_(GV)+1))
 
     if (CS%use_pormed) then
-      allocate(dz(SZI_(G),SZJ_(G),SZK_(GV)))
       allocate(h_prime(SZI_(G),SZJ_(G),SZK_(GV)))
-      call thickness_to_dz(CS%h, CS%tv, dz, G, GV, US)
-      call thickness_to_dz_subgrid_topo(h_prime, dz, CS%h, G, GV)
+      call h_to_hprime(CS%h, CS%tv, G, GV, US, halo_size=1, h_prime=h_prime)
       call find_eta(h_prime, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
       deallocate(h_prime)
-      deallocate(dz)
     else
       call find_eta(CS%h, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
     endif

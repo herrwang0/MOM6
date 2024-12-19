@@ -52,7 +52,7 @@ use MOM_hor_index,             only : hor_index_type
 use MOM_hor_visc,              only : horizontal_viscosity, hor_visc_CS
 use MOM_hor_visc,              only : hor_visc_init, hor_visc_end
 use MOM_interface_heights,     only : thickness_to_dz, find_col_avg_SpV
-use MOM_interface_heights,     only : thickness_to_dz_subgrid_topo
+use MOM_interface_heights,     only : h_to_hprime, adjust_h_subgrid_topo
 use MOM_lateral_mixing_coeffs, only : VarMix_CS
 use MOM_MEKE_types,            only : MEKE_type
 use MOM_open_boundary,         only : ocean_OBC_type, radiation_open_bdry_conds
@@ -491,14 +491,12 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
 
   ! subgrid topo
   if (CS%use_pormed) then
-    call thickness_to_dz(h, tv, dz, G, GV, US)
-    call thickness_to_dz_subgrid_topo(h_prime, dz, h, G, GV)
-    call pass_var(h_prime, G%Domain)
-    call pass_var(dz, G%Domain)
+    call h_to_hprime(h, tv, G, GV, US, halo_size=1, h_prime=h_prime, dz_prime=dz)
   else
     do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
       h_prime(i,j,k) = h(i,j,k)
     enddo ; enddo ; enddo
+    call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   endif
 
 ! PFu = d/dx M(h,T,S)
@@ -610,7 +608,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%debug) then
     call uvchksum("before vertvisc: up", up, vp, G%HI, haloshift=0, symmetric=sym, unscale=US%L_T_to_m_s)
   endif
-  if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! For porous medium, dz has been calculated.
+  ! if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt, G, GV, US, CS%vertvisc_CSp)
   call cpu_clock_end(id_clock_vertvisc)
@@ -640,6 +639,10 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     if (open_boundary_query(CS%OBC, apply_Flather_OBC=.true.)) &
       call find_col_avg_SpV(h, SpV_avg, tv, G, GV, US)
   endif
+
+  if ((.not.GV%Boussinesq) .and. CS%use_pormed) &
+    call find_col_avg_SpV(h, SpV_avg, tv, G, GV, US)
+
   call cpu_clock_end(id_clock_btcalc)
 
   if (G%nonblocking_updates) &
@@ -731,7 +734,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     enddo
   endif
 
-  if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! h is not changed since the last thickness_to_dz call. no need to recalculate dz.
+  ! if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt_pred, G, GV, US, CS%vertvisc_CSp, &
                      CS%OBC, VarMix)
   call vertvisc(up, vp, h, forces, visc, dt_pred, CS%OBC, CS%AD_pred, CS%CDp, G, &
@@ -772,8 +776,6 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   call continuity(up, vp, h, hp, uh, vh, dt, G, GV, US, CS%continuity_CSp, CS%OBC, pbv, &
                   uhbt=CS%uhbt, vhbt=CS%vhbt, visc_rem_u=CS%visc_rem_u, visc_rem_v=CS%visc_rem_v, &
                   u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont)
-  ! call calculate_dz(hp, dz, G, GV)
-  call pass_var(dz, G%Domain)
   call cpu_clock_end(id_clock_continuity)
   if (showCallTree) call callTree_wayPoint("done with continuity (step_MOM_dyn_split_RK2)")
 
@@ -823,10 +825,19 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
       hp(i,j,k) = (1.0-CS%begw)*h(i,j,k) + CS%begw*hp(i,j,k)
     enddo ; enddo ; enddo
 
+    ! subgrid topo
+    if (CS%use_pormed) then
+      call h_to_hprime(hp, tv, G, GV, US, halo_size=1, h_prime=h_prime)
+    else
+      do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
+        h_prime(i,j,k) = hp(i,j,k)
+      enddo ; enddo ; enddo
+    endif
+
     ! PFu = d/dx M(hp,T,S)
     ! pbce = dM/deta
     call cpu_clock_begin(id_clock_pres)
-    call PressureForce(dz, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
+    call PressureForce(h_prime, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
                        CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
     ! Stokes shear force contribution to pressure gradient
     Use_Stokes_PGF = present(Waves)
@@ -992,7 +1003,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     enddo
   endif
 
-  if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  ! h is not changed since the last thickness_to_dz call. no need to recalculate dz.
+  ! if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(u_inst, v_inst, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(u_inst, v_inst, h, forces, visc, dt, CS%OBC, CS%ADp, CS%CDp, G, GV, US, &
                 CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot,waves=waves)

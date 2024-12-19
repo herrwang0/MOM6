@@ -80,7 +80,7 @@ use MOM_grid, only : ocean_grid_type
 use MOM_hor_index, only : hor_index_type
 use MOM_hor_visc, only : horizontal_viscosity, hor_visc_init, hor_visc_CS
 use MOM_interface_heights, only : find_eta, thickness_to_dz
-use MOM_interface_heights,     only : thickness_to_dz_subgrid_topo
+use MOM_interface_heights,     only : h_to_hprime
 use MOM_lateral_mixing_coeffs, only : VarMix_CS
 use MOM_MEKE_types, only : MEKE_type
 use MOM_open_boundary, only : ocean_OBC_type
@@ -309,14 +309,12 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   ! subgrid topo
   if (CS%use_pormed) then
-    call thickness_to_dz(h_av, tv, dz, G, GV, US)
-    call thickness_to_dz_subgrid_topo(h_prime, dz, h_av, G, GV)
-    call pass_var(h_prime, G%Domain)
-    call pass_var(dz, G%Domain)
+    call h_to_hprime(h_av, tv, G, GV, US, halo_size=1, h_prime=h_prime, dz_prime=dz)
   else
     do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
       h_prime(i,j,k) = h_av(i,j,k)
     enddo ; enddo ; enddo
+    call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   endif
 
   ! CAu = -(f+zeta)/h_av vh + d/dx KE
@@ -366,7 +364,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   call disable_averaging(CS%diag)
 
   dt_visc = dt_pred ; if (CS%dt_visc_bug) dt_visc = 0.5*dt
-  if (.not. CS%use_pormed) call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  ! if (.not. CS%use_pormed) call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h_av, dz, forces, visc, tv, dt_visc, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(up, vp, h_av, forces, visc, dt_visc, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -388,10 +386,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   ! subgrid topo
   if (CS%use_pormed) then
-    call thickness_to_dz(h_av, tv, dz, G, GV, US)
-    call thickness_to_dz_subgrid_topo(h_prime, dz, h_av, G, GV)
-    call pass_var(h_prime, G%Domain)
-    call pass_var(dz, G%Domain)
+    call h_to_hprime(h_av, tv, G, GV, US, halo_size=1, h_prime=h_prime)
   else
     do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
       h_prime(i,j,k) = h_av(i,j,k)
@@ -439,7 +434,12 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
 ! upp <- upp + dt/2 d/dz visc d/dz upp
   call cpu_clock_begin(id_clock_vertvisc)
-  if (.not. CS%use_pormed) call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
+  if (CS%use_pormed) then ! update dz
+    call h_to_hprime(hp, tv, G, GV, US, halo_size=1, dz_prime=dz)
+  else
+    call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
+  endif
+  ! if (.not. CS%use_pormed) call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(upp, vpp, hp, dz, forces, visc, tv, dt*0.5, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(upp, vpp, hp, forces, visc, dt*0.5, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -496,14 +496,12 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   ! subgrid topo
   if (CS%use_pormed) then
-    call thickness_to_dz(h_av, tv, dz, G, GV, US)
-    call thickness_to_dz_subgrid_topo(h_prime, dz, h_av, G, GV)
-    call pass_var(h_prime, G%Domain)
-    call pass_var(dz, G%Domain)
+    call h_to_hprime(h_av, tv, G, GV, US, halo_size=1, h_prime=h_prime, dz_prime=dz)
   else
     do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
       h_prime(i,j,k) = h_av(i,j,k)
     enddo ; enddo ; enddo
+    call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   endif
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)
@@ -536,7 +534,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
 ! u <- u + dt d/dz visc d/dz u
   call cpu_clock_begin(id_clock_vertvisc)
-  if (.not. CS%use_pormed) call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  ! if (.not. CS%use_pormed) call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(u, v, h_av, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(u, v, h_av, forces, visc, dt, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot, Waves=Waves)
