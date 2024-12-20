@@ -159,7 +159,7 @@ end type transport_diag_IDs
 
 contains
 !> Diagnostics not more naturally calculated elsewhere are computed here.
-subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
+subroutine calculate_diagnostic_fields(u, v, h, h_prime, uh, vh, tv, ADp, CDp, p_surf, &
                                        dt, diag_pre_sync, G, GV, US, CS)
   type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV   !< The ocean's vertical grid structure.
@@ -170,6 +170,8 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
                            intent(in)    :: v    !< The meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                            intent(in)    :: h    !< Layer thicknesses [H ~> m or kg m-2].
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                           intent(in)    :: h_prime !< Stretched layer thicknesses [H ~> m or kg m-2].
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
                            intent(in)    :: uh   !< Transport through zonal faces = u*h*dy,
                                                  !! [H L2 T-1 ~> m3 s-1 or kg s-1].
@@ -307,7 +309,7 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
 
   ! Find the interface heights, relative either to a reference height or to the bottom [Z ~> m].
   if (CS%id_e > 0) then
-    call find_eta(h, tv, G, GV, US, eta, dZref=G%Z_ref)
+    call find_eta(h_prime, tv, G, GV, US, eta, dZref=G%Z_ref)
     if (CS%id_e > 0) call post_data(CS%id_e, eta, CS%diag)
     if (CS%id_e_D > 0) then
       do k=1,nz+1 ; do j=js,je ; do i=is,ie
@@ -316,7 +318,7 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
       call post_data(CS%id_e_D, eta, CS%diag)
     endif
   elseif (CS%id_e_D > 0) then
-    call find_eta(h, tv, G, GV, US, eta)
+    call find_eta(h_prime, tv, G, GV, US, eta)
     do k=1,nz+1 ; do j=js,je ; do i=is,ie
       eta(i,j,k) = eta(i,j,k) + G%bathyT(i,j)
     enddo ; enddo ; enddo
@@ -488,7 +490,7 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
     call post_data(CS%id_salt_layer_ave, salt_layer_ave, CS%diag)
   endif
 
-  call calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
+  call calculate_vertical_integrals(h, h_prime, tv, p_surf, G, GV, US, CS)
 
   if ((CS%id_Rml > 0) .or. (CS%id_Rcv > 0) .or. (CS%id_h_Rlay > 0) .or. &
       (CS%id_uh_Rlay > 0) .or. (CS%id_vh_Rlay > 0) .or. &
@@ -816,12 +818,14 @@ end subroutine find_weights
 !> This subroutine calculates vertical integrals of several tracers, along
 !! with the mass-weight of these tracers, the total column mass, and the
 !! carefully calculated column height.
-subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
+subroutine calculate_vertical_integrals(h, h_prime, tv, p_surf, G, GV, US, CS)
   type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),   intent(in)    :: US   !< A dimensional unit scaling type
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                            intent(in)    :: h    !< Layer thicknesses [H ~> m or kg m-2].
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                           intent(in)    :: h_prime !< Stretched layer thicknesses [H ~> m or kg m-2].
   type(thermo_var_ptrs),   intent(in)    :: tv   !< A structure pointing to various
                                                  !! thermodynamic variables.
   real, dimension(:,:),    pointer       :: p_surf !< A pointer to the surface pressure [R L2 T-2 ~> Pa].
@@ -874,7 +878,7 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
   endif
 
   if (CS%id_col_ht > 0) then
-    call find_eta(h, tv, G, GV, US, z_top)
+    call find_eta(h_prime, tv, G, GV, US, z_top)
     do j=js,je ; do i=is,ie
       z_bot(i,j) = z_top(i,j) + G%bathyT(i,j)
     enddo ; enddo

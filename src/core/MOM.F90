@@ -577,6 +577,10 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
     ssh         ! sea surface height, which may be based on eta_av [Z ~> m]
   real, dimension(SZI_(CS%G),SZJ_(CS%G),SZK_(CS%GV)) :: &
     dz          ! Vertical distance across layers [Z ~> m]
+  ! real, dimension(SZI_(CS%G),SZJ_(CS%G),SZK_(CS%GV)), pointer :: &
+  !   h_prime     ! Stretched volume/mass [H ~> m or kg m-2]
+  real, dimension(SZI_(CS%G),SZJ_(CS%G),SZK_(CS%GV)) :: &
+    h_prime     ! Stretched volume/mass [H ~> m or kg m-2]
 
   real, dimension(:,:,:), pointer :: &
     u => NULL(), & ! u : zonal velocity component [L T-1 ~> m s-1]
@@ -602,6 +606,8 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
   isd  = G%isd  ; ied  = G%ied  ; jsd  = G%jsd  ; jed  = G%jed
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
   u => CS%u ; v => CS%v ; h => CS%h
+
+  ! if (.not.CS%use_pormed) h_prime => CS%h
 
   time_interval = time_int_in
   do_dyn = .true. ; if (present(do_dynamics)) do_dyn = do_dynamics
@@ -781,14 +787,22 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       ! Update wave information, which is presently kept static over each call to step_mom
       call enable_averages(time_interval, Time_start + real_to_time(US%T_to_s*time_interval), CS%diag)
       call find_ustar(forces, CS%tv, U_star, G, GV, US, halo=1)
-      call thickness_to_dz(h, CS%tv, dz, G, GV, US, halo_size=1)
+      if (CS%use_pormed) then
+        call h_to_hprime(h, CS%tv, G, GV, US, halo_size=1, dz_prime=dz)
+      else
+        call thickness_to_dz(h, CS%tv, dz, G, GV, US, halo_size=1)
+      endif
       call Update_Stokes_Drift(G, GV, US, Waves, dz, U_star, time_interval, do_dyn)
       call disable_averaging(CS%diag)
     endif
   else ! not do_dyn.
     if (CS%UseWaves) then ! Diagnostics are not enabled in this call.
       call find_ustar(fluxes, CS%tv, U_star, G, GV, US, halo=1)
-      call thickness_to_dz(h, CS%tv, dz, G, GV, US, halo_size=1)
+      if (CS%use_pormed) then
+        call h_to_hprime(h, CS%tv, G, GV, US, halo_size=1, dz_prime=dz)
+      else
+        call thickness_to_dz(h, CS%tv, dz, G, GV, US, halo_size=1)
+      endif
       call Update_Stokes_Drift(G, GV, US, Waves, dz, U_star, time_interval, do_dyn)
     endif
   endif
@@ -984,7 +998,14 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       ! Determining the time-average sea surface height is part of the algorithm.
       ! This may be eta_av if Boussinesq, or need to be diagnosed if not.
       CS%time_in_cycle = CS%time_in_cycle + dt
-      call find_eta(h, CS%tv, G, GV, US, ssh, CS%eta_av_bc, dZref=G%Z_ref)
+      if (CS%use_pormed) then
+        call h_to_hprime(h, CS%tv, G, GV, US, h_prime=h_prime)
+      else
+        do k=1,nz ; do j=js,je ; do i=is,ie
+          h_prime(i,j,k) = h(i,j,k)
+        enddo ; enddo ; enddo
+      endif
+      call find_eta(h_prime, CS%tv, G, GV, US, ssh, CS%eta_av_bc, dZref=G%Z_ref)
       do j=js,je ; do i=is,ie
         CS%ssh_rint(i,j) = CS%ssh_rint(i,j) + dt*ssh(i,j)
       enddo ; enddo
@@ -1000,7 +1021,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       ! Diagnostics that require the complete state to be up-to-date can be calculated.
 
       call enable_averages(CS%t_dyn_rel_diag, Time_local, CS%diag)
-      call calculate_diagnostic_fields(u, v, h, CS%uh, CS%vh, CS%tv, CS%ADp,  &
+      call calculate_diagnostic_fields(u, v, h, h_prime, CS%uh, CS%vh, CS%tv, CS%ADp,  &
                           CS%CDp, p_surf, CS%t_dyn_rel_diag, CS%diag_pre_sync,&
                           G, GV, US, CS%diagnostics_CSp)
       call post_tracer_diagnostics_at_sync(CS%Tracer_reg, h, CS%diag_pre_sync, CS%diag, G, GV, CS%t_dyn_rel_diag)
