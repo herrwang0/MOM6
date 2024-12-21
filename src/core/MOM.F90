@@ -99,7 +99,7 @@ use MOM_harmonic_analysis,     only : HA_accum_FtF, HA_accum_FtSSH, harmonic_ana
 use MOM_hor_index,             only : hor_index_type, hor_index_init
 use MOM_hor_index,             only : rotate_hor_index
 use MOM_interface_heights,     only : find_eta, calc_derived_thermo, thickness_to_dz
-use MOM_interface_heights,     only : h_to_hprime
+use MOM_interface_heights,     only : h_to_hprime, find_col_avg_SpV
 use MOM_interface_filter,      only : interface_filter, interface_filter_init, interface_filter_end
 use MOM_interface_filter,      only : interface_filter_CS
 use MOM_internal_tides,        only : int_tide_CS
@@ -2118,6 +2118,8 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                                ! of the maximum stable value [nondim].
 
   real, allocatable, dimension(:,:)   :: eta ! free surface height or column mass [H ~> m or kg m-2]
+  real, allocatable, dimension(:,:)   :: eta_prime ! free surface height or column mass [H ~> m or kg m-2]
+  real, allocatable, dimension(:,:)   :: spv_avg ! The column averaged specific volume [R-1 ~> m3 kg-1]
   real, allocatable, dimension(:,:,:) :: h_prime ! Stretched volume/mass [H ~> m or kg m-2]
   real, allocatable, dimension(:,:,:) :: h_new    ! Layer thicknesses after regridding [H ~> m or kg m-2]
   real, allocatable, dimension(:,:,:) :: dzRegrid ! The change in grid interface positions due to regridding,
@@ -3460,7 +3462,20 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       enddo ; enddo ; enddo
     endif
     if (CS%split) then
-      call find_eta(h_prime, CS%tv, G, GV, US, CS%ave_ssh_ibc, eta, dZref=G%Z_ref)
+      allocate(eta_prime(SZI_(G),SZJ_(G)), source=0.0)
+      if (CS%use_pormed) then
+        allocate(spv_avg(SZI_(G),SZJ_(G)), source=0.0)
+        if (.not.GV%Boussinesq) &
+          call find_col_avg_SpV(CS%h, spv_avg, CS%tv, G, GV, US)
+        call h_to_hprime(eta, G, GV, eta_prime, spv_avg=spv_avg)
+        deallocate(spv_avg)
+      else
+        do j=js,je ; do i=is,ie
+          eta_prime(i,j) = eta(i,j)
+        enddo ; enddo
+      endif
+      call find_eta(h_prime, CS%tv, G, GV, US, CS%ave_ssh_ibc, eta_prime, dZref=G%Z_ref)
+      deallocate(eta_prime)
     else
       call find_eta(h_prime, CS%tv, G, GV, US, CS%ave_ssh_ibc, dZref=G%Z_ref)
     endif
@@ -3468,7 +3483,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     call set_initialized(CS%ave_ssh_ibc, "ave_ssh", restart_CSp)
   endif
   if (CS%split) deallocate(eta)
-  call hchksum(CS%h,"Pre ALE adjust init cond h", G%HI, haloshift=1, scale=GV%H_to_MKS)
 
   CS%nstep_tot = 0
   if (present(count_calls)) CS%count_calls = count_calls
@@ -4071,7 +4085,7 @@ subroutine extract_surface_state(CS, sfc_state_in)
     numberOfErrors=0 ! count number of errors
     do j=js,je ; do i=is,ie
       if (G%mask2dT(i,j)>0.) then
-        localError = sfc_state%sea_lev(i,j) <= -G%bathyT(i,j) - G%Z_ref &
+        localError = sfc_state%sea_lev(i,j) < -G%bathyT(i,j) - G%Z_ref &
                 .or. sfc_state%sea_lev(i,j) >=  CS%bad_val_ssh_max  &
                 .or. sfc_state%sea_lev(i,j) <= -CS%bad_val_ssh_max  &
                 .or. sfc_state%sea_lev(i,j) + G%bathyT(i,j) + G%Z_ref < CS%bad_val_col_thick
@@ -4098,7 +4112,7 @@ subroutine extract_surface_state(CS, sfc_state_in)
               write(msg(1:240),'(2(a,i4,1x),4(a,f8.3,1x),6(a,es11.4))') &
                 'Extreme surface sfc_state detected: i=',ig,'j=',jg, &
                 'lon=',G%geoLonT(i,j), 'lat=',G%geoLatT(i,j), &
-                'x=',G%gridLonT(i), 'y=',G%gridLatT(j), &
+                'x=',G%gridLonT(ig), 'y=',G%gridLatT(jg), &
                 'D=',US%Z_to_m*(G%bathyT(i,j)+G%Z_ref), 'SSH=',US%Z_to_m*sfc_state%sea_lev(i,j), &
                 'U-=',US%L_T_to_m_s*sfc_state%u(I-1,j), 'U+=',US%L_T_to_m_s*sfc_state%u(I,j), &
                 'V-=',US%L_T_to_m_s*sfc_state%v(i,J-1), 'V+=',US%L_T_to_m_s*sfc_state%v(i,J)
