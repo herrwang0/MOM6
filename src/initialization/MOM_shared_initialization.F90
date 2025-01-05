@@ -1199,10 +1199,12 @@ subroutine initialize_subgrid_topo_center(G, param_file, US)
   character(len=40)  :: mdl = "initialize_subgrid_topo_center" ! This subroutine's name.
   integer :: is, ie, js, je
   integer :: i, j
-  real :: max_depth
+  real :: max_depth, min_depth, mask_depth
   character (len=300) :: msg
 
   call callTree_enter(trim(mdl)//"(), MOM_shared_initialization.F90")
+
+  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
 
   ! read params
   call get_param(param_file, mdl, "INPUTDIR", inputdir, default=".")
@@ -1233,19 +1235,33 @@ subroutine initialize_subgrid_topo_center(G, param_file, US)
   call MOM_read_data(filename, trim(varname_av), G%depc_ave, G%Domain, scale=US%m_to_Z)
   call MOM_read_data(filename, trim(varname_hi), G%depc_hgh, G%Domain, scale=US%m_to_Z)
 
-  ! HW: The limit essentially makes sure depc_low and bathyT are consistent. Need to revisit!
-  ! Since G%bathyT==G%depc_low, so if MAXIMUM_DEPTH is not specified, G%max_depth will not limit low, ave and hgh.
-  call limit_topography(G%depc_low, G, param_file, G%max_depth, US)
-  call limit_topography(G%depc_ave, G, param_file, G%max_depth, US)
-  call limit_topography(G%depc_hgh, G, param_file, G%max_depth, US)
-
-  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
-
-  ! check params
+ ! Check initial input data
   do j=js,je ; do i=is,ie
     if ((G%depc_hgh(i,j) > G%depc_ave(i,j)) .or. (G%depc_ave(i,j) > G%depc_low(i,j))) then
       write(msg, '(a)') trim(mdl)//": center depth profile parameters incorrect."
       call MOM_error(FATAL, trim(msg))
+    endif
+  enddo ; enddo
+
+  ! HW: The limit essentially makes sure depc_low and bathyT are consistent. Need to revisit!
+  ! Since G%bathyT==G%depc_low, so if MAXIMUM_DEPTH is not specified, G%max_depth will not limit low, ave and hgh.
+  call get_param(param_file, '', "MINIMUM_DEPTH", min_depth, units="m", default=0.0, &
+                 scale=US%m_to_Z, do_not_log=.true.)
+  call get_param(param_file, '', "MASKING_DEPTH", mask_depth, units="m", default=-9999.0, &
+                 scale=US%m_to_Z, do_not_log=.true.)
+  ! call limit_topography(G%depc_low, G, param_file, G%max_depth, US)
+  ! call limit_topography(G%depc_ave, G, param_file, G%max_depth, US)
+  ! call limit_topography(G%depc_hgh, G, param_file, G%max_depth, US)
+
+  do j=js,je ; do i=is,ie
+    if (G%depc_ave(i,j) > min(min_depth, mask_depth)) then ! wet points
+      G%depc_low(i,j) = min( max( G%depc_low(i,j), min_depth ), G%max_depth )
+      G%depc_ave(i,j) = min( max( G%depc_ave(i,j), min_depth ), G%max_depth )
+      G%depc_hgh(i,j) = min( max( G%depc_hgh(i,j), min_depth ), G%max_depth )
+    else
+      G%depc_low(i,j) = min(min_depth, mask_depth)
+      G%depc_ave(i,j) = min(min_depth, mask_depth)
+      G%depc_hgh(i,j) = min(min_depth, mask_depth)
     endif
   enddo ; enddo
 
@@ -1260,13 +1276,20 @@ subroutine initialize_subgrid_topo_center(G, param_file, US)
     endif
   enddo ; enddo
 
-  ! Check consistency with G%bathyT
   do j=js,je ; do i=is,ie
     if ((G%depc_m(i,j)==0.0) .and. (G%depc_low(i,j)/=G%depc_ave(i,j))) then
       G%depc_low(i,j) = G%depc_ave(i,j)
     endif
+  enddo ; enddo
+
+  ! Enforce consistency with G%bathyT
+  do j=js,je ; do i=is,ie
     G%bathyT(i,j) = G%depc_low(i,j)
   enddo ; enddo
+
+  call pass_var(G%depc_low, G%Domain)
+  call pass_var(G%depc_ave, G%Domain)
+  call pass_var(G%depc_hgh, G%Domain)
 
   ! do j=js,je ; do i=is,ie
   !   if (G%depc_m(i,j)==0.0) then

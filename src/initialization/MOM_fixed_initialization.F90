@@ -86,23 +86,6 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   ! or, if absent, is diagnosed as G%max_depth = max( G%D(:,:) )
   call MOM_initialize_topography(G%bathyT, G%max_depth, G, PF, US)
 
-  ! To initialize masks, the bathymetry in halo regions must be filled in
-  call pass_var(G%bathyT, G%Domain)
-
-  ! Determine the position of any open boundaries
-  call open_boundary_config(G, US, PF, OBC)
-
-  ! Make bathymetry consistent with open boundaries
-  call open_boundary_impose_normal_slope(OBC, G, G%bathyT)
-
-  if (debug) then
-    call hchksum(G%bathyT, 'MOM_initialize_fixed: depth ', G%HI, haloshift=1, unscale=US%Z_to_m)
-    call hchksum(G%mask2dT, 'MOM_initialize_fixed: mask2dT ', G%HI)
-    call uvchksum('MOM_initialize_fixed: mask2dC[uv]', G%mask2dCu, &
-                  G%mask2dCv, G%HI)
-    call qchksum(G%mask2dBu, 'MOM_initialize_fixed: mask2dBu ', G%HI)
-  endif
-
   ! Modulate geometric scales according to geography.
   call get_param(PF, mdl, "CHANNEL_CONFIG", config, &
                  "A parameter that determines which set of channels are \n"//&
@@ -126,6 +109,7 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   end select
 
   !   This call sets the topography at velocity points.
+  ! NOT USED - HW
   if (G%bathymetry_at_vel) then
     call get_param(PF, mdl, "VELOCITY_DEPTH_CONFIG", config, &
                    "A string that determines how the topography is set at "//&
@@ -153,18 +137,34 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF, write_geom, output_dir)
   if (read_porous_file) &
     call initialize_subgrid_topo_center(G, PF, US)
 
+  ! Determine the position of any open boundaries
+  call open_boundary_config(G, US, PF, OBC)
+
+  ! Make bathymetry consistent with open boundaries
+  call open_boundary_impose_normal_slope(OBC, G, G%bathyT)
+
+  ! To initialize masks, the bathymetry in halo regions must be filled in
+  call pass_var(G%bathyT, G%Domain)
+
   ! This call sets masks that prohibit flow over any point interpreted as land
   call initialize_masks(G, PF, US)
 
   ! Make OBC mask consistent with land mask
   call open_boundary_impose_land_mask(OBC, G, G%areaCu, G%areaCv, US)
 
-    !    Calculate the value of the Coriolis parameter at the latitude   !
-!  of the q grid points [T-1 ~> s-1].
+  if (debug) then
+    call hchksum(G%bathyT, 'MOM_initialize_fixed: depth ', G%HI, haloshift=1, unscale=US%Z_to_m)
+    call hchksum(G%mask2dT, 'MOM_initialize_fixed: mask2dT ', G%HI)
+    call uvchksum('MOM_initialize_fixed: mask2dC[uv]', G%mask2dCu, &
+                  G%mask2dCv, G%HI)
+    call qchksum(G%mask2dBu, 'MOM_initialize_fixed: mask2dBu ', G%HI)
+  endif
+
+  ! Calculate the value of the Coriolis parameter at the latitude of the q grid points [T-1 ~> s-1].
   call MOM_initialize_rotation(G%CoriolisBu, G, PF, US=US)
-!   Calculate the components of grad f (beta)
+  ! Calculate the components of grad f (beta)
   call MOM_calculate_grad_Coriolis(G%dF_dx, G%dF_dy, G, US=US)
-!   Calculate the square of the Coriolis parameter
+  ! Calculate the square of the Coriolis parameter
   do I=G%IsdB,G%IedB ; do J=G%JsdB,G%JedB
     G%Coriolis2Bu(I,J) = G%CoriolisBu(I,J)**2
   enddo ; enddo
