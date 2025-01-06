@@ -189,6 +189,7 @@ type MOM_diag_IDs
   !>@}
   !> 2-d state field diagnostic ID
   integer :: id_ssh_inst = -1
+  integer :: id_h_prime = -1
 end type MOM_diag_IDs
 
 !> Control structure for the MOM module, including the variables that describe
@@ -1010,6 +1011,11 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
         CS%ssh_rint(i,j) = CS%ssh_rint(i,j) + dt*ssh(i,j)
       enddo ; enddo
       if (CS%IDs%id_ssh_inst > 0) call post_data(CS%IDs%id_ssh_inst, ssh, CS%diag)
+      if (CS%use_pormed .and. CS%IDs%id_h_prime > 0) then
+        call enable_averages(dt, Time_local, CS%diag)
+        call post_data(CS%IDs%id_h_prime, h_prime, CS%diag)
+        call disable_averaging(CS%diag)
+      endif
       call cpu_clock_end(id_clock_dynamics)
     endif
 
@@ -3582,6 +3588,9 @@ subroutine register_diags(Time, G, GV, US, IDs, diag)
   IDs%id_v = register_diag_field('ocean_model', 'v_dyn', diag%axesCvL, Time, &
       'Meridional velocity after the dynamics update', 'm s-1', conversion=US%L_T_to_m_s)
   IDs%id_h = register_diag_field('ocean_model', 'h_dyn', diag%axesTL, Time, &
+      'Layer Thickness after the dynamics update', thickness_units, conversion=GV%H_to_MKS, &
+      v_extensive=.true.)
+  IDs%id_h_prime = register_diag_field('ocean_model', 'h_prime_dyn', diag%axesTL, Time, &
       'Layer Thickness after the dynamics update', thickness_units, conversion=GV%H_to_MKS, &
       v_extensive=.true.)
   IDs%id_ssh_inst = register_diag_field('ocean_model', 'SSH_inst', diag%axesT1, &
