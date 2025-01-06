@@ -911,6 +911,32 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_pass_pre > 0) call cpu_clock_end(id_clock_pass_pre)
 !--- end setup for group halo update
 
+  if (CS%use_pormed) then
+    ! not sure if this can be merged with the block below with OBC. SpV_col_avg==0.0
+    ! does have a meaning for the OBC application, but not for porous media. - HW
+    if (.not.GV%Boussinesq) then
+      !$OMP parallel do default(shared)
+      do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
+        SpV_col_avg(i,j) = Spv_avg(i,j)
+      enddo ; enddo
+      if (nonblock_setup) then
+        call start_group_pass(CS%pass_SpV_avg, CS%BT_domain)
+      else
+        call do_group_pass(CS%pass_SpV_avg, CS%BT_domain)
+      endif
+    endif
+    call h_to_hprime(eta_in, G, GV, eta_in_prime, spv_avg=SpV_col_avg)
+    if (nonblock_setup) then
+      call start_group_pass(CS%pass_eta_in_prime, CS%BT_domain)
+    else
+      call do_group_pass(CS%pass_eta_in_prime, CS%BT_domain)
+    endif
+  else
+    do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
+      eta_in_prime(i,j) = eta_in(i,j)
+    enddo ; enddo
+  endif
+
 !   Calculate the constant coefficients for the Coriolis force terms in the
 ! barotropic momentum equations.  This has to be done quite early to start
 ! the halo update that needs to be completed before the next calculations.
@@ -932,38 +958,38 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     if (GV%Boussinesq) then
       !$OMP parallel do default(shared)
       do j=js,je ; do I=is-1,ie
-        DCor_u(I,j) = 0.5 * (max(GV%Z_to_H*G%bathyT(i+1,j) + eta_in(i+1,j), 0.0) + &
-                             max(GV%Z_to_H*G%bathyT(i,j) + eta_in(i,j), 0.0) )
+        DCor_u(I,j) = 0.5 * (max(GV%Z_to_H*G%bathyT(i+1,j) + eta_in_prime(i+1,j), 0.0) + &
+                             max(GV%Z_to_H*G%bathyT(i,j) + eta_in_prime(i,j), 0.0) )
       enddo ; enddo
       !$OMP parallel do default(shared)
       do J=js-1,je ; do i=is,ie
-        DCor_v(i,J) = 0.5 * (max(GV%Z_to_H*G%bathyT(i,j+1) + eta_in(i+1,j), 0.0) + &
-                             max(GV%Z_to_H*G%bathyT(i,j) + eta_in(i,j), 0.0) )
+        DCor_v(i,J) = 0.5 * (max(GV%Z_to_H*G%bathyT(i,j+1) + eta_in_prime(i+1,j), 0.0) + &
+                             max(GV%Z_to_H*G%bathyT(i,j) + eta_in_prime(i,j), 0.0) )
       enddo ; enddo
       !$OMP parallel do default(shared)
       do J=js-1,je ; do I=is-1,ie
         q(I,J) = 0.25 * (CS%BT_Coriolis_scale * G%CoriolisBu(I,J)) * &
              ((G%areaT(i,j) + G%areaT(i+1,j+1)) + (G%areaT(i+1,j) + G%areaT(i,j+1))) / &
-             (max(((G%areaT(i,j) * max(GV%Z_to_H*G%bathyT(i,j) + eta_in(i,j), 0.0)) + &
-                   (G%areaT(i+1,j+1) * max(GV%Z_to_H*G%bathyT(i+1,j+1) + eta_in(i+1,j+1), 0.0))) + &
-                  ((G%areaT(i+1,j) * max(GV%Z_to_H*G%bathyT(i+1,j) + eta_in(i+1,j), 0.0)) + &
-                   (G%areaT(i,j+1) * max(GV%Z_to_H*G%bathyT(i,j+1) + eta_in(i,j+1), 0.0))), h_neglect) )
+             (max(((G%areaT(i,j) * max(GV%Z_to_H*G%bathyT(i,j) + eta_in_prime(i,j), 0.0)) + &
+                   (G%areaT(i+1,j+1) * max(GV%Z_to_H*G%bathyT(i+1,j+1) + eta_in_prime(i+1,j+1), 0.0))) + &
+                  ((G%areaT(i+1,j) * max(GV%Z_to_H*G%bathyT(i+1,j) + eta_in_prime(i+1,j), 0.0)) + &
+                   (G%areaT(i,j+1) * max(GV%Z_to_H*G%bathyT(i,j+1) + eta_in_prime(i,j+1), 0.0))), h_neglect) )
       enddo ; enddo
     else
       !$OMP parallel do default(shared)
       do j=js,je ; do I=is-1,ie
-        DCor_u(I,j) = 0.5 * (eta_in(i+1,j) + eta_in(i,j))
+        DCor_u(I,j) = 0.5 * (eta_in_prime(i+1,j) + eta_in_prime(i,j))
       enddo ; enddo
       !$OMP parallel do default(shared)
       do J=js-1,je ; do i=is,ie
-        DCor_v(i,J) = 0.5 * (eta_in(i,j+1) + eta_in(i,j))
+        DCor_v(i,J) = 0.5 * (eta_in_prime(i,j+1) + eta_in_prime(i,j))
       enddo ; enddo
       !$OMP parallel do default(shared)
       do J=js-1,je ; do I=is-1,ie
         q(I,J) = 0.25 * (CS%BT_Coriolis_scale * G%CoriolisBu(I,J)) * &
              ((G%areaT(i,j) + G%areaT(i+1,j+1)) + (G%areaT(i+1,j) + G%areaT(i,j+1))) / &
-             (max(((G%areaT(i,j) * eta_in(i,j)) + (G%areaT(i+1,j+1) * eta_in(i+1,j+1))) + &
-                  ((G%areaT(i+1,j) * eta_in(i+1,j)) + (G%areaT(i,j+1) * eta_in(i,j+1))), h_neglect) )
+             (max(((G%areaT(i,j) * eta_in_prime(i,j)) + (G%areaT(i+1,j+1) * eta_in_prime(i+1,j+1))) + &
+                  ((G%areaT(i+1,j) * eta_in_prime(i+1,j)) + (G%areaT(i,j+1) * eta_in_prime(i,j+1))), h_neglect) )
       enddo ; enddo
     endif
 
@@ -1024,32 +1050,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         call do_group_pass(CS%pass_SpV_avg, CS%BT_domain)
       endif
     endif
-  endif
-
-  if (CS%use_pormed) then
-    ! not sure if this can be merged with the block above. SpV_col_avg==0.0 does have a meaning for
-    ! the OBC application, but not for porous media. - HW
-    if (.not.GV%Boussinesq) then
-      !$OMP parallel do default(shared)
-      do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
-        SpV_col_avg(i,j) = Spv_avg(i,j)
-      enddo ; enddo
-      if (nonblock_setup) then
-        call start_group_pass(CS%pass_SpV_avg, CS%BT_domain)
-      else
-        call do_group_pass(CS%pass_SpV_avg, CS%BT_domain)
-      endif
-    endif
-    call h_to_hprime(eta_in, G, GV, eta_in_prime, spv_avg=SpV_col_avg)
-    if (nonblock_setup) then
-      call start_group_pass(CS%pass_eta_in_prime, CS%BT_domain)
-    else
-      call do_group_pass(CS%pass_eta_in_prime, CS%BT_domain)
-    endif
-  else
-    do j=CS%jsdw,CS%jedw ; do i=CS%isdw,CS%iedw
-      eta_in_prime(i,j) = eta_in(i,j)
-    enddo ; enddo
   endif
 
   if (CS%linear_wave_drag) then
@@ -2015,10 +2015,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     ! subgrid topo
     if (CS%use_pormed) then
-      call h_to_hprime(eta, G, GV, eta_prime, spv_avg=SpV_col_avg, halo_size=max(iev-ie, jev-je))
+      call h_to_hprime(eta, G, GV, eta_prime, spv_avg=SpV_col_avg, halo_size=max(iev-ie+1, jev-je+1))
       if (CS%dynamic_psurf .or. (.not.project_velocity)) &
         call h_to_hprime(eta_pred, G, GV, eta_pred_prime, spv_avg=SpV_col_avg, &
-                         halo_size=max(iev-ie, jev-je))
+                         halo_size=max(iev-ie+1, jev-je+1))
     else
       do j=jsv-1,jev+1 ; do i=isv-1,iev+1
         eta_prime(i,j) = eta(i,j)
@@ -4987,24 +4987,46 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     Z_to_H = GV%Z_to_H ; if (.not.GV%Boussinesq) Z_to_H = GV%RZ_to_H * CS%Rho_BT_lin
 
     Mean_SL = G%Z_ref
-    do j=js,je ; do I=is-1,ie
-      CS%D_u_Cor(I,j) = 0.5 * (max(Mean_SL+G%bathyT(i+1,j),0.0) + max(Mean_SL+G%bathyT(i,j),0.0)) * Z_to_H
-    enddo ; enddo
-    do J=js-1,je ; do i=is,ie
-      CS%D_v_Cor(i,J) = 0.5 * (max(Mean_SL+G%bathyT(i,j+1),0.0) + max(Mean_SL+G%bathyT(i,j),0.0)) * Z_to_H
-    enddo ; enddo
-    do J=js-1,je ; do I=is-1,ie
-      if (G%mask2dT(i,j)+G%mask2dT(i,j+1)+G%mask2dT(i+1,j)+G%mask2dT(i+1,j+1)>0.) then
-        CS%q_D(I,J) = 0.25 * (CS%BT_Coriolis_scale * G%CoriolisBu(I,J)) * &
-           ((G%areaT(i,j) + G%areaT(i+1,j+1)) + (G%areaT(i+1,j) + G%areaT(i,j+1))) / &
-           (Z_to_H * max((((G%areaT(i,j) * max(Mean_SL+G%bathyT(i,j),0.0)) + &
-                           (G%areaT(i+1,j+1) * max(Mean_SL+G%bathyT(i+1,j+1),0.0))) + &
-                          ((G%areaT(i+1,j) * max(Mean_SL+G%bathyT(i+1,j),0.0)) + &
-                           (G%areaT(i,j+1) * max(Mean_SL+G%bathyT(i,j+1),0.0)))), GV%H_subroundoff) )
-      else ! All four h points are masked out so q_D(I,J) will is meaningless
-        CS%q_D(I,J) = 0.
-      endif
-    enddo ; enddo
+
+    if (CS%use_pormed) then
+      do j=js,je ; do I=is-1,ie
+        CS%D_u_Cor(I,j) = 0.5 * (max(Mean_SL+G%depc_ave(i+1,j),0.0) + max(Mean_SL+G%depc_ave(i,j),0.0)) * Z_to_H
+      enddo ; enddo
+      do J=js-1,je ; do i=is,ie
+        CS%D_v_Cor(i,J) = 0.5 * (max(Mean_SL+G%depc_ave(i,j+1),0.0) + max(Mean_SL+G%depc_ave(i,j),0.0)) * Z_to_H
+      enddo ; enddo
+      do J=js-1,je ; do I=is-1,ie
+        if (G%mask2dT(i,j)+G%mask2dT(i,j+1)+G%mask2dT(i+1,j)+G%mask2dT(i+1,j+1)>0.) then
+          CS%q_D(I,J) = 0.25 * (CS%BT_Coriolis_scale * G%CoriolisBu(I,J)) * &
+            ((G%areaT(i,j) + G%areaT(i+1,j+1)) + (G%areaT(i+1,j) + G%areaT(i,j+1))) / &
+            (Z_to_H * max((((G%areaT(i,j) * max(Mean_SL+G%depc_ave(i,j),0.0)) + &
+                            (G%areaT(i+1,j+1) * max(Mean_SL+G%depc_ave(i+1,j+1),0.0))) + &
+                            ((G%areaT(i+1,j) * max(Mean_SL+G%depc_ave(i+1,j),0.0)) + &
+                            (G%areaT(i,j+1) * max(Mean_SL+G%depc_ave(i,j+1),0.0)))), GV%H_subroundoff) )
+        else ! All four h points are masked out so q_D(I,J) will is meaningless
+          CS%q_D(I,J) = 0.
+        endif
+      enddo ; enddo
+    else
+      do j=js,je ; do I=is-1,ie
+        CS%D_u_Cor(I,j) = 0.5 * (max(Mean_SL+G%bathyT(i+1,j),0.0) + max(Mean_SL+G%bathyT(i,j),0.0)) * Z_to_H
+      enddo ; enddo
+      do J=js-1,je ; do i=is,ie
+        CS%D_v_Cor(i,J) = 0.5 * (max(Mean_SL+G%bathyT(i,j+1),0.0) + max(Mean_SL+G%bathyT(i,j),0.0)) * Z_to_H
+      enddo ; enddo
+      do J=js-1,je ; do I=is-1,ie
+        if (G%mask2dT(i,j)+G%mask2dT(i,j+1)+G%mask2dT(i+1,j)+G%mask2dT(i+1,j+1)>0.) then
+          CS%q_D(I,J) = 0.25 * (CS%BT_Coriolis_scale * G%CoriolisBu(I,J)) * &
+            ((G%areaT(i,j) + G%areaT(i+1,j+1)) + (G%areaT(i+1,j) + G%areaT(i,j+1))) / &
+            (Z_to_H * max((((G%areaT(i,j) * max(Mean_SL+G%bathyT(i,j),0.0)) + &
+                            (G%areaT(i+1,j+1) * max(Mean_SL+G%bathyT(i+1,j+1),0.0))) + &
+                            ((G%areaT(i+1,j) * max(Mean_SL+G%bathyT(i+1,j),0.0)) + &
+                            (G%areaT(i,j+1) * max(Mean_SL+G%bathyT(i,j+1),0.0)))), GV%H_subroundoff) )
+        else ! All four h points are masked out so q_D(I,J) will is meaningless
+          CS%q_D(I,J) = 0.
+        endif
+      enddo ; enddo
+    endif
     ! With very wide halos, q and D need to be calculated on the available data
     ! domain and then updated onto the full computational domain.
     call create_group_pass(pass_q_D_Cor, CS%q_D, CS%BT_Domain, To_All, position=CORNER)
