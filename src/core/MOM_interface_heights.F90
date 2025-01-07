@@ -950,7 +950,7 @@ subroutine h_to_hprime_3d(h, tv, G, GV, US, halo_size, h_prime, dz_prime)
       ! hp(i,j,k) = max(G%depc_low(i,j) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
       ! hp(i,j,k) = G%depc_low(i,j)
       hp(i,j,k) = max((eta - eb(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
-      dz(i,j,k) = eta - eb(i,j)
+      dz(i,j,k) = max(eta - eb(i,j), GV%Angstrom_Z)
 
     !   if (eta - eb(i,j)<0) then
     !     ig = i + G%HI%idg_offset ! Global i-index
