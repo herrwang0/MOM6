@@ -608,7 +608,6 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%debug) then
     call uvchksum("before vertvisc: up", up, vp, G%HI, haloshift=0, symmetric=sym, unscale=US%L_T_to_m_s)
   endif
-  call hchksum(dz, "before bt vertvisc: dz", G%HI, haloshift=1, unscale=GV%H_to_MKS)
   ! For porous medium, dz has been calculated.
   ! if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
