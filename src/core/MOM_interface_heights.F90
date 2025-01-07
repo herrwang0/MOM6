@@ -919,6 +919,8 @@ subroutine h_to_hprime_3d(h, tv, G, GV, US, halo_size, h_prime, dz_prime)
   real :: eta ! [Z ~> m]
   integer :: is, ie, js, je, nz, halo
   integer :: i, j, k
+  ! character(len=1000) :: msg
+  ! integer :: ig, jg
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
   is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo
@@ -949,6 +951,18 @@ subroutine h_to_hprime_3d(h, tv, G, GV, US, halo_size, h_prime, dz_prime)
       ! hp(i,j,k) = G%depc_low(i,j)
       hp(i,j,k) = max((eta - eb(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
       dz(i,j,k) = eta - eb(i,j)
+
+    !   if (eta - eb(i,j)<0) then
+    !     ig = i + G%HI%idg_offset ! Global i-index
+    !     jg = j + G%HI%jdg_offset ! Global j-index
+    !     write(msg,'(3(a,i3,x),3(a,f12.4,x),3(a,e10.4), a, 50(x,e10.4))') &
+    !     'Negative thickness: i=',ig,'j=',jg, 'k=',k,&
+    !     'Dlow=',G%depc_low(i,j), 'Dave=',G%depc_ave(i,j), 'Dhgh=',G%depc_hgh(i,j), &
+    !     'eta=', eta, 'eb=', eb(i,j), 'dz=', dz(i,j,k), &
+    !     'h=', h(i,j,:)
+
+    ! call MOM_error(FATAL, trim(msg), all_print=.true.)
+    !   endif
       eb(i,j) = eta
     else
       hp(i,j,k) = h(i,j,k)
@@ -1046,7 +1060,9 @@ subroutine adjust_h_subgrid_topo(h, dz, G, GV)
       et(i,j) = et(i,j) + dz(i,j,k)
       call vol_from_height_monomial(vol, do_I(i,j), et(i,j), G%depc_m(i,j), &
                                     (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
-      h(i,j,k) = min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      ! h(i,j,k) = min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      h(i,j,k) = max( min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k), &
+                      GV%Angstrom_H )
       ! h(i,j,k) = min(G%depc_ave(i,j) / (G%depc_low(i,j) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
       ! h(i,j,k) = G%depc_ave(i,j)
       vol_below(i,j) = vol
