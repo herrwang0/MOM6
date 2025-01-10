@@ -291,6 +291,8 @@ type, public :: barotropic_CS ; private
                              !! used within the barotropic solver
   logical :: wt_uv_bug = .true. !< If true, recover a bug that wt_[uv] that is not normalized.
   logical :: hydr_ctrl = .false. !< If true, use hydraulic control theory to curb BT velocity.
+  real    :: hc_coef !< Coefficient for the critical velocity from hydraulic control.
+                     !! [sqrt(L2 Z-1 T-2) ~> sqrt(m s-2)]
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -714,6 +716,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   real :: h_neglect            ! A thickness that is so small it is usually lost
                                ! in roundoff and can be neglected [H ~> m or kg m-2].
   real :: Idtbt       ! The inverse of the barotropic time step [T-1 ~> s-1]
+  real :: force_temp, vel_hc, Ibt_rem ! Temporary variables for hydraulic control
 
   real, allocatable :: wt_vel(:)    ! The raw or relative weights of each of the barotropic timesteps
                                     ! in determining the average velocities [nondim]
@@ -2063,11 +2066,31 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$OMP end do nowait
       endif
 
+      if (CS%hydr_ctrl) then
+        !$OMP do schedule(static)
+        do J=jsv-1,jev ; do i=isv-1,iev+1 ; if (bt_rem_v(i,J)/=0) then
+          Ibt_rem = 1.0 / bt_rem_v(i,J)
+          force_temp = BT_force_v(i,J) + Cor_v(i,J) + PFv(i,J)
+          if (vbt(i,J)>=0.0) then
+            vel_hc =  Ibt_rem * CS%hc_coef * (max(eta(i,j) + GV%Z_to_H * G%bathyT(i,j), 0.0)**0.5)
+            HCv(i,J) = min(0.0, (vel_hc - vbt(i,J)) * Idtbt - force_temp)
+          else
+            vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i,j+1) + GV%Z_to_H * G%bathyT(i,j+1), 0.0)**0.5)
+            HCv(i,J) = max(0.0, (vel_hc - vbt(i,J)) * Idtbt - force_temp)
+          endif
+        else
+          HCv(i,J) = 0.0
+        endif ; enddo ; enddo
+        !$OMP end do nowait
+      else
+        do J=jsv-1,jev ; do i=isv-1,iev+1 ; HCv(i,J) = 0.0 ; enddo ; enddo
+      endif
+
       !$OMP do schedule(static)
       do J=jsv-1,jev ; do i=isv-1,iev+1
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
-             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
+             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J) + HCv(i,J)))
         if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
         vbt_trans(i,J) = trans_wt1*vbt(i,J) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2076,12 +2099,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv-1,iev+1
           v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * &
-              ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
+              ((Cor_v(i,J) + PFv(i,J) + HCv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
         enddo ; enddo
       else
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv-1,iev+1
-          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
+          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J) + HCv(i,J))
         enddo ; enddo
       endif
 
@@ -2140,11 +2163,32 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$OMP end do nowait
       endif
 
+      if (CS%hydr_ctrl) then
+        !$OMP do schedule(static)
+        do j=jsv,jev ; do I=isv-1,iev ; if (bt_rem_u(I,j)/=0) then
+          Ibt_rem = 1.0 / bt_rem_u(I,j)
+          force_temp = BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j)
+          if (ubt(I,j)>=0.0) then
+            vel_hc =  Ibt_rem * CS%hc_coef * (max(eta(i,j) + GV%Z_to_H * G%bathyT(i,j), 0.0)**0.5)
+            HCu(I,j) = min(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
+          else
+            vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i+1,j) + GV%Z_to_H * G%bathyT(i+1,j), 0.0)**0.5)
+            HCu(I,j) = max(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
+          endif
+          else
+            HCu(I,j) = 0.0
+          endif
+        enddo ; enddo
+        !$OMP end do nowait
+      else
+        do j=jsv,jev ; do I=isv-1,iev ; HCu(I,j) = 0.0 ; enddo ; enddo
+      endif
+
       !$OMP do schedule(static)
       do j=jsv,jev ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
-             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
+             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j) + HCu(I,j)))
         if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2154,13 +2198,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$OMP do schedule(static)
         do j=jsv,jev ; do I=isv-1,iev
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
-             ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
+             ((Cor_u(I,j) + PFu(I,j) + HCu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
         enddo ; enddo
         !$OMP end do nowait
       else
         !$OMP do schedule(static)
         do j=jsv,jev ; do I=isv-1,iev
-          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
+          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j) + HCu(I,j))
         enddo ; enddo
         !$OMP end do nowait
       endif
@@ -2218,11 +2262,32 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
       endif
 
+      if (CS%hydr_ctrl) then
+        !$OMP do schedule(static)
+        do j=jsv,jev ; do I=isv-1,iev ; if (bt_rem_u(I,j)/=0) then
+          Ibt_rem = 1.0 / bt_rem_u(I,j)
+          force_temp = BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j)
+          if (ubt(I,j)>=0.0) then
+            vel_hc =  Ibt_rem * CS%hc_coef * (max(eta(i,j) + GV%Z_to_H * G%bathyT(i,j), 0.0)**0.5)
+            HCu(I,j) = min(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
+          else
+            vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i+1,j) + GV%Z_to_H * G%bathyT(i+1,j), 0.0)**0.5)
+            HCu(I,j) = max(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
+          endif
+          else
+            HCu(I,j) = 0.0
+          endif
+        enddo ; enddo
+        !$OMP end do nowait
+      else
+        do j=jsv,jev ; do I=isv-1,iev ; HCu(I,j) = 0.0 ; enddo ; enddo
+      endif
+
       !$OMP do schedule(static)
       do j=jsv-1,jev+1 ; do I=isv-1,iev
         vel_prev = ubt(I,j)
         ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
-             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
+             dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j) + HCu(I,j)))
         if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
         ubt_trans(I,j) = trans_wt1*ubt(I,j) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2231,12 +2296,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$OMP do schedule(static)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * &
-              ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
+              ((Cor_u(I,j) + PFu(I,j) + HCu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
         enddo ; enddo
       else
         !$OMP do schedule(static)
         do j=jsv-1,jev+1 ; do I=isv-1,iev
-          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
+          u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j) + HCu(I,j))
         enddo ; enddo
       endif
 
@@ -2306,11 +2371,31 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
       endif
 
+      if (CS%hydr_ctrl) then
+        !$OMP do schedule(static)
+        do J=jsv-1,jev ; do i=isv,iev ; if (bt_rem_v(i,J)/=0) then
+          Ibt_rem = 1.0 / bt_rem_v(i,J)
+          force_temp = BT_force_v(i,J) + Cor_v(i,J) + PFv(i,J)
+          if (vbt(i,J)>=0.0) then
+            vel_hc =  Ibt_rem * CS%hc_coef * (max(eta(i,j) + GV%Z_to_H * G%bathyT(i,j), 0.0)**0.5)
+            HCv(i,J) = min(0.0, (vel_hc - vbt(i,J)) * Idtbt - force_temp)
+          else
+            vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i,j+1) + GV%Z_to_H * G%bathyT(i,j+1), 0.0)**0.5)
+            HCv(i,J) = max(0.0, (vel_hc - vbt(i,J)) * Idtbt - force_temp)
+          endif
+        else
+          HCv(i,J) = 0.0
+        endif ; enddo ; enddo
+        !$OMP end do nowait
+      else
+        do J=jsv-1,jev ; do i=isv,iev ; HCv(i,J) = 0.0 ; enddo ; enddo
+      endif
+
       !$OMP do schedule(static)
       do J=jsv-1,jev ; do i=isv,iev
         vel_prev = vbt(i,J)
         vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
-             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
+             dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J) + HCv(i,J)))
         if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
         vbt_trans(i,J) = trans_wt1*vbt(i,J) + trans_wt2*vel_prev
       enddo ; enddo
@@ -2320,13 +2405,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv,iev
           v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * &
-             ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
+             ((Cor_v(i,J) + PFv(i,J) + HCv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
         enddo ; enddo
         !$OMP end do nowait
       else
         !$OMP do schedule(static)
         do J=jsv-1,jev ; do i=isv,iev
-          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J))
+          v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel(n) * (Cor_v(i,J) + PFv(i,J) + HCv(i,J))
         enddo ; enddo
         !$OMP end do nowait
       endif
@@ -4540,6 +4625,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   logical :: use_BT_cont_type
   logical :: use_tides
   logical :: visc_rem_bug ! Stores the value of runtime paramter VISC_REM_BUG.
+  logical :: hydr_ctrl_froude ! If true, use grid Froude number in hydraulic control.
   character(len=48) :: thickness_units, flux_units
   character*(40) :: hvel_str
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
@@ -4858,6 +4944,15 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
 
   call get_param(param_file, mdl, "BT_HYDRAULIC_CONTROL", CS%hydr_ctrl, &
                  "If true, use hydraulic control to curb barotropic velocity", default=.false.)
+  if (CS%hydr_ctrl) then
+    call get_param(param_file, mdl, "BT_HYDRAULIC_CONTROL_FROUDE", hydr_ctrl_froude, &
+                   "If true, use grid Froude number to curb barotropic velocity", default=.false.)
+    if (hydr_ctrl_froude) then
+      CS%hc_coef = GV%g_Earth**0.5
+    else
+      CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
+    endif
+  endif
 
   ! Initialize a version of the MOM domain that is specific to the barotropic solver.
   call clone_MOM_domain(G%Domain, CS%BT_Domain, min_halo=wd_halos, symmetric=.true.)
