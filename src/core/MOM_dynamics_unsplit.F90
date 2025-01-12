@@ -132,6 +132,7 @@ type, public :: MOM_dyn_unsplit_CS ; private
   integer :: id_uh = -1, id_vh = -1
   integer :: id_ueffA = -1, id_veffA = -1
   integer :: id_PFu = -1, id_PFv = -1, id_CAu = -1, id_CAv = -1
+  integer :: id_h_av = -1, id_h_prime = -1, id_dz = -1
   !>@}
 
   type(diag_ctrl), pointer :: diag => NULL() !< A structure that is used to
@@ -319,7 +320,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   if (CS%debug) then
     call hchksum(h_prime, "Predictor 1 h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
-    call hchksum(dz, "Predictor 1 dz (from h_av)", G%HI, haloshift=1)
+    call hchksum(dz, "Predictor 1 dz (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_m)
   endif
 
   ! CAu = -(f+zeta)/h_av vh + d/dx KE
@@ -450,7 +451,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   endif
 
   if (CS%debug) then
-    call hchksum(dz, "Predictor 2 dz (from hp)", G%HI, haloshift=1)
+    call hchksum(dz, "Predictor 2 dz (from hp)", G%HI, haloshift=1, unscale=GV%H_to_m)
   endif
 
   ! if (.not. CS%use_pormed) call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
@@ -520,7 +521,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   if (CS%debug) then
     call hchksum(h_prime, "Corrector h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
-    call hchksum(dz, "Corrector force dz (from h_av)", G%HI, haloshift=1)
+    call hchksum(dz, "Corrector force dz (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_m)
   endif
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)
@@ -583,6 +584,10 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   if (CS%id_PFv > 0) call post_data(CS%id_PFv, CS%PFv, CS%diag)
   if (CS%id_CAu > 0) call post_data(CS%id_CAu, CS%CAu, CS%diag)
   if (CS%id_CAv > 0) call post_data(CS%id_CAv, CS%CAv, CS%diag)
+
+  if (CS%id_h_av > 0) call post_data(CS%id_h_av, h_av, CS%diag)
+  if (CS%id_h_prime > 0) call post_data(CS%id_h_prime, h_prime, CS%diag)
+  if (CS%id_dz > 0) call post_data(CS%id_dz, dz, CS%diag)
 
 end subroutine step_MOM_dyn_unsplit
 
@@ -690,6 +695,7 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
   logical :: test_value  ! This is used to determine whether a logical parameter is being set explicitly.
   logical :: explicit_bug, explicit_fix ! These indicate which parameters are set explicitly.
   integer :: isd, ied, jsd, jed, nz, IsdB, IedB, JsdB, JedB
+  character(len=48) :: thickness_units ! Thickness units logged in diagnostics
   isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed ; nz = GV%ke
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
 
@@ -798,6 +804,17 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
   CS%id_veffA = register_diag_field('ocean_model', 'veffA', diag%axesCvL, Time, &
        'Effective V Face Area', 'm^2', conversion=GV%H_to_m*US%L_to_m, &
        x_cell_method='sum', v_extensive=.true.)
+
+  thickness_units = get_thickness_units(GV)
+  CS%id_h_av = register_diag_field('ocean_model', 'h_av', diag%axesTL, Time, &
+      'Averaged layer Thickness over a dynamics step', thickness_units, conversion=GV%H_to_MKS, &
+      v_extensive=.true.)
+  CS%id_h_prime = register_diag_field('ocean_model', 'h_prime', diag%axesTL, Time, &
+      'h_prime from corrector h_av', thickness_units, conversion=GV%H_to_MKS, &
+      v_extensive=.true.)
+  CS%id_dz = register_diag_field('ocean_model', 'dz', diag%axesTL, Time, &
+      'Geometric dz from corrector h_av', 'm', conversion=GV%H_to_m, &
+      v_extensive=.true.)
 
   id_clock_Cor = cpu_clock_id('(Ocean Coriolis & mom advection)', grain=CLOCK_MODULE)
   id_clock_continuity = cpu_clock_id('(Ocean continuity equation)', grain=CLOCK_MODULE)
