@@ -75,7 +75,7 @@ use MOM_barotropic, only : barotropic_CS
 use MOM_boundary_update, only : update_OBC_data, update_OBC_CS
 use MOM_continuity, only : continuity, continuity_init, continuity_CS, continuity_stencil
 use MOM_CoriolisAdv, only : CorAdCalc, CoriolisAdv_init, CoriolisAdv_CS
-use MOM_debugging, only : check_redundant
+use MOM_debugging, only : check_redundant, hchksum
 use MOM_grid, only : ocean_grid_type
 use MOM_hor_index, only : hor_index_type
 use MOM_hor_visc, only : horizontal_viscosity, hor_visc_init, hor_visc_CS
@@ -317,6 +317,11 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
     call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   endif
 
+  if (CS%debug) then
+    call hchksum(h_prime, "Predictor 1 h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
+    call hchksum(dz, "Predictor 1 dz (from h_av)", G%HI, haloshift=1, unscale=GV%Z_to_MKS)
+  endif
+
   ! CAu = -(f+zeta)/h_av vh + d/dx KE
   call cpu_clock_begin(id_clock_Cor)
   call CorAdCalc(u, v, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
@@ -393,6 +398,10 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
     enddo ; enddo ; enddo
   endif
 
+  if (CS%debug) then
+    call hchksum(h_prime, "Predictor 2 h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
+  endif
+
 ! CAu = -(f+zeta(up))/h_av vh + d/dx KE(up)
   call cpu_clock_begin(id_clock_Cor)
   call CorAdCalc(up, vp, h_av, uh, vh, CS%CAu, CS%CAv, CS%OBC, CS%ADp, &
@@ -439,6 +448,11 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   else
     call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
   endif
+
+  if (CS%debug) then
+    call hchksum(dz, "Predictor 2 dz (from hp)", G%HI, haloshift=1, unscale=GV%Z_to_MKS)
+  endif
+
   ! if (.not. CS%use_pormed) call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
   call vertvisc_coef(upp, vpp, hp, dz, forces, visc, tv, dt*0.5, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(upp, vpp, hp, forces, visc, dt*0.5, CS%OBC, CS%ADp, CS%CDp, &
@@ -502,6 +516,11 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
       h_prime(i,j,k) = h_av(i,j,k)
     enddo ; enddo ; enddo
     call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  endif
+
+  if (CS%debug) then
+    call hchksum(h_prime, "Corrector h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
+    call hchksum(dz, "Corrector force dz (from h_av)", G%HI, haloshift=1, unscale=GV%Z_to_MKS)
   endif
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)
