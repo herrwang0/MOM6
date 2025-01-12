@@ -937,6 +937,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     enddo ; enddo
   endif
 
+  if (CS%debug) &
+    call hchksum(eta_in_prime, "BT eta_in_prime", CS%debug_BT_HI, &
+                 haloshift=max(CS%iedw-ie, CS%jedw-je), unscale=GV%H_to_MKS)
+
 !   Calculate the constant coefficients for the Coriolis force terms in the
 ! barotropic momentum equations.  This has to be done quite early to start
 ! the halo update that needs to be completed before the next calculations.
@@ -2024,6 +2028,14 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         eta_prime(i,j) = eta(i,j)
         eta_pred_prime(i,j) = eta_pred(i,j)
       enddo ; enddo
+    endif
+
+    if (CS%debug_bt) then
+      write(mesg,'("BT eta_prime pre-step ",I4)') n
+      call hchksum(eta_prime, trim(mesg)//" eta_in_prime", CS%debug_BT_HI, &
+                   haloshift=max(iev-ie+1, jev-je+1), unscale=GV%H_to_MKS)
+      call hchksum(eta_pred_prime, trim(mesg)//" eta_pred_prime", CS%debug_BT_HI, &
+                   haloshift=max(iev-ie+1, jev-je+1), unscale=GV%H_to_MKS)
     endif
 
     ! Recall that just outside the do n loop, there is code like...

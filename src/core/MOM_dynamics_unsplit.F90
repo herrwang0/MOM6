@@ -521,7 +521,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   if (CS%debug) then
     call hchksum(h_prime, "Corrector h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
-    call hchksum(dz, "Corrector force dz (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_m)
+    call hchksum(dz, "Corrector dz (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_m)
   endif
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)
