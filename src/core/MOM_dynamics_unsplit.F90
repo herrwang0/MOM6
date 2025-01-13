@@ -320,7 +320,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   if (CS%debug) then
     call hchksum(h_prime, "Predictor 1 h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
-    call hchksum(dz, "Predictor 1 dz (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_m)
+    call hchksum(dz, "Predictor 1 dz (from h_av)", G%HI, haloshift=1, unscale=US%Z_to_m)
   endif
 
   ! CAu = -(f+zeta)/h_av vh + d/dx KE
@@ -451,7 +451,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   endif
 
   if (CS%debug) then
-    call hchksum(dz, "Predictor 2 dz (from hp)", G%HI, haloshift=1, unscale=GV%H_to_m)
+    call hchksum(dz, "Predictor 2 dz (from hp)", G%HI, haloshift=1, unscale=US%Z_to_m)
   endif
 
   ! if (.not. CS%use_pormed) call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
@@ -521,7 +521,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
   if (CS%debug) then
     call hchksum(h_prime, "Corrector h_prime (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
-    call hchksum(dz, "Corrector dz (from h_av)", G%HI, haloshift=1, unscale=GV%H_to_m)
+    call hchksum(dz, "Corrector dz (from h_av)", G%HI, haloshift=1, unscale=US%Z_to_m)
   endif
 
 ! CAu = -(f+zeta(upp))/h_av vh + d/dx KE(upp)

@@ -499,6 +499,11 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   endif
 
+  if (CS%debug) then
+    call hchksum(h_prime, "Predictor h_prime (from h)", G%HI, haloshift=1, unscale=GV%H_to_MKS)
+    call hchksum(dz, "Predictor dz (from h)", G%HI, haloshift=1, unscale=US%Z_to_m)
+  endif
+
 ! PFu = d/dx M(h,T,S)
 ! pbce = dM/deta
   if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
@@ -834,6 +839,11 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
       enddo ; enddo ; enddo
     endif
 
+    if (CS%debug) then
+      call hchksum(h_prime, "Corrector backward Euler h_prime (from hp)", G%HI, &
+                   haloshift=1, unscale=GV%H_to_MKS)
+    endif
+
     ! PFu = d/dx M(hp,T,S)
     ! pbce = dM/deta
     call cpu_clock_begin(id_clock_pres)
@@ -845,7 +855,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
       Use_Stokes_PGF = associated(Waves)
       if (Use_Stokes_PGF) Use_Stokes_PGF = Waves%Stokes_PGF
       if (Use_Stokes_PGF) then
-        if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+        ! Should it be hp instead? Otherwise, since h is not yet updated, there is no need to recalculate dz.
+        ! if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
         call Stokes_PGF(G, GV, US, dz, u_inst, v_inst, CS%PFu_Stokes, CS%PFv_Stokes, Waves)
         if (.not.Waves%Passive_Stokes_PGF) then
           do k=1,nz
