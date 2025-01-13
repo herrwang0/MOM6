@@ -1082,7 +1082,7 @@ subroutine height_from_vol_monomial(eta, do_next, vol_below, m, topo_stat, hmin,
 
  ! local variables
   real :: vol_topo ! [Z ~> m]
-  real :: zeta, feta, dfeta ! [nondim]
+  real :: zeta, zeta_new, feta, dfeta ! [nondim]
   real :: tol ! [nondim]
   integer :: max_iter, it ! [nondim]
 
@@ -1106,10 +1106,11 @@ subroutine height_from_vol_monomial(eta, do_next, vol_below, m, topo_stat, hmin,
       it = 1
       do while (it<=max_iter)
         feta = (zeta - m) + m * ((1 - zeta) ** (1.0 / m)) - vol_below / (topo_stat(3) - topo_stat(1))
-        if (abs(feta) < tol) &
-          exit
         dfeta = 1.0 - (1.0 - zeta) ** ((1.0 - m) / m)
-        zeta = zeta - feta / dfeta
+        zeta_new = zeta - feta / dfeta
+        if ((abs(feta)<tol) .or. (zeta==zeta_new)) &
+          exit
+        zeta = zeta_new
         it = it + 1
       enddo
     endif
