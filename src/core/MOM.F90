@@ -3547,6 +3547,8 @@ subroutine finish_MOM_initialization(Time, dirs, CS)
     if (CS%use_pormed) then
       allocate(h_prime(SZI_(G),SZJ_(G),SZK_(GV)))
       call h_to_hprime(CS%h, CS%tv, G, GV, US, halo_size=1, h_prime=h_prime)
+      call register_restart_field(h_prime, "h_prime", .true., restart_CSp_tmp, &
+          "h_prime", "meter")
       call find_eta(h_prime, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
       deallocate(h_prime)
     else
