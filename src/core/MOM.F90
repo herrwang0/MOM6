@@ -3550,7 +3550,6 @@ subroutine finish_MOM_initialization(Time, dirs, CS)
       call register_restart_field(h_prime, "h_prime", .true., restart_CSp_tmp, &
           "h_prime", "meter")
       call find_eta(h_prime, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
-      deallocate(h_prime)
     else
       call find_eta(CS%h, CS%tv, G, GV, US, z_interface, dZref=G%Z_ref)
     endif
@@ -3559,6 +3558,7 @@ subroutine finish_MOM_initialization(Time, dirs, CS)
     ! NOTE: write_ic=.true. routes routine to fms2 IO write_initial_conditions interface
     call save_restart(dirs%output_directory, Time, CS%G_in, &
                       restart_CSp_tmp, filename=CS%IC_file, GV=GV, write_ic=.true.)
+    if (CS%use_pormed) deallocate(h_prime)
     deallocate(z_interface)
     deallocate(restart_CSp_tmp)
   endif
