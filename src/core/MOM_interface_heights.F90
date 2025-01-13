@@ -945,7 +945,7 @@ subroutine h_to_hprime_3d(h, tv, G, GV, US, halo_size, h_prime, dz_prime)
       vol_below(i,j) = vol_below(i,j) + dz(i,j,k)
 
       call height_from_vol_monomial(eta, do_I(i,j), vol_below(i,j), G%depc_m(i,j), &
-                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
+                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/), hmin=GV%dZ_subroundoff)
 
       ! hp(i,j,k) = max(G%depc_low(i,j) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
       ! hp(i,j,k) = G%depc_low(i,j)
@@ -1008,7 +1008,7 @@ subroutine h_to_hprime_2d(eta, G, GV, eta_prime, spv_avg, halo_size)
       vol = eta(i,j) + GV%Z_to_H * G%bathyT(i,j)
       ! vol = GV%H_to_Z * eta(i,j) + G%bathyT(i,j)
       call height_from_vol_monomial(e_top, dummy, vol, G%depc_m(i,j), &
-                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
+                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/), hmin=GV%dZ_subroundoff)
       ! eta_prime(i,j) = GV%Z_to_H * max(e_top, vol - G%depc_low(i,j))
       ! The following expression is bitwise accurate (zero PF) for a trivial test case. The parethesis is needed (FMA?).
       eta_prime(i,j) = (max((e_top + G%depc_low(i,j)) / (vol + GV%dZ_subroundoff), 1.0) * vol) - GV%Z_to_H * G%bathyT(i,j)
@@ -1022,7 +1022,7 @@ subroutine h_to_hprime_2d(eta, G, GV, eta_prime, spv_avg, halo_size)
       ! convert thickness to dz
       vol = GV%H_to_RZ * eta(i,j) * spv_avg(i,j)
       call height_from_vol_monomial(e_top, dummy, vol, G%depc_m(i,j), &
-                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
+                                    (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/), hmin=GV%dZ_subroundoff)
       eta_prime(i,j) = max((e_top + G%depc_low(i,j)) / (vol + GV%dZ_subroundoff), 1.0) * eta(i,j)
     else
       eta_prime(i,j) = eta(i,j)
