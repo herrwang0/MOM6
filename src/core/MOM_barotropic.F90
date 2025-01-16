@@ -2175,10 +2175,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
             vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i+1,j) + GV%Z_to_H * G%bathyT(i+1,j), 0.0)**0.5)
             HCu(I,j) = max(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
           endif
-          else
-            HCu(I,j) = 0.0
-          endif
-        enddo ; enddo
+        else
+          HCu(I,j) = 0.0
+        endif ; enddo ; enddo
         !$OMP end do nowait
       else
         do j=jsv,jev ; do I=isv-1,iev ; HCu(I,j) = 0.0 ; enddo ; enddo
@@ -2260,11 +2259,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         do j=jsv,jev ; do I=isv-1,iev ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
           PFu(I,j) = 0.0
         endif ; enddo ; enddo
+        !$OMP end do nowait
       endif
 
       if (CS%hydr_ctrl) then
         !$OMP do schedule(static)
-        do j=jsv,jev ; do I=isv-1,iev ; if (bt_rem_u(I,j)/=0) then
+        do j=jsv-1,jev+1 ; do I=isv-1,iev ; if (bt_rem_u(I,j)/=0) then
           Ibt_rem = 1.0 / bt_rem_u(I,j)
           force_temp = BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j)
           if (ubt(I,j)>=0.0) then
@@ -2274,10 +2274,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
             vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i+1,j) + GV%Z_to_H * G%bathyT(i+1,j), 0.0)**0.5)
             HCu(I,j) = max(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
           endif
-          else
-            HCu(I,j) = 0.0
-          endif
-        enddo ; enddo
+        else
+          HCu(I,j) = 0.0
+        endif ; enddo ; enddo
         !$OMP end do nowait
       else
         do j=jsv,jev ; do I=isv-1,iev ; HCu(I,j) = 0.0 ; enddo ; enddo
