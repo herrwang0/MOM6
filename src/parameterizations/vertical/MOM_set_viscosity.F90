@@ -19,7 +19,7 @@ use MOM_file_parser,   only : get_param, log_param, log_version, param_file_type
 use MOM_forcing_type,  only : forcing, mech_forcing, find_ustar
 use MOM_grid,          only : ocean_grid_type
 use MOM_hor_index,     only : hor_index_type
-use MOM_interface_heights, only : thickness_to_dz
+use MOM_interface_heights, only : thickness_to_dz, h_to_hprime
 use MOM_intrinsic_functions, only : cuberoot
 use MOM_io,            only : slasher, MOM_read_data, vardesc, var_desc
 use MOM_kappa_shear,   only : kappa_shear_is_used, kappa_shear_at_vertex
@@ -131,7 +131,7 @@ end type set_visc_CS
 contains
 
 !> Calculates the thickness of the bottom boundary layer and the viscosity within that layer.
-subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
+subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv, use_porous_medium)
   type(ocean_grid_type),    intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type),  intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),    intent(in)    :: US   !< A dimensional unit scaling type
@@ -149,6 +149,7 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
   type(set_visc_CS),        intent(inout) :: CS   !< The control structure returned by a previous
                                                   !! call to set_visc_init.
   type(porous_barrier_type),intent(in)    :: pbv  !< porous barrier fractional cell metrics
+  logical, intent(in) :: use_porous_medium
 
   ! Local variables
   real, dimension(SZIB_(G)) :: &
@@ -347,7 +348,11 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
   K2 = max(nkmb+1, 2)
 
   ! Find the vertical distances across layers.
-  call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  if (use_porous_medium) then
+    call h_to_hprime(h, tv, G, GV, US, dz_prime=dz, halo_size=1)
+  else
+    call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  endif
 
 !  With a linear drag law, the friction velocity is already known.
 !  if (CS%linear_drag) ustar(:) = cdrag_sqrt_H*CS%drag_bg_vel
