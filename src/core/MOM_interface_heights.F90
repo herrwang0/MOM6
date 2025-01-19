@@ -1114,7 +1114,7 @@ subroutine height_from_vol_monomial(eta, do_next, vol_below, m, topo_stat, hmin,
         it = it + 1
       enddo
     endif
-    eta = zeta * (topo_stat(3) - topo_stat(1)) + topo_stat(1)
+    eta = max(zeta, 0.0) * (topo_stat(3) - topo_stat(1)) + topo_stat(1)
   endif
 end subroutine height_from_vol_monomial
 
