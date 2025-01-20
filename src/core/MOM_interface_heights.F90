@@ -1088,7 +1088,7 @@ subroutine height_from_vol_monomial(eta, do_next, vol_below, m, topo_stat, hmin,
   real :: tol ! [nondim]
   integer :: max_iter, it ! [nondim]
 
-  max_iter = 200
+  max_iter = 20
   if (present(maxitt)) max_iter = maxitt
 
   tol = 1e-10 / (topo_stat(3) - topo_stat(1))
