@@ -1064,7 +1064,7 @@ subroutine adjust_h_subgrid_topo(h, dz, G, GV)
       ! h(i,j,k) = max( min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k), &
       !                 GV%Angstrom_H )
       h(i,j,k) = max( min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k), &
-                      GV%Angstrom_H )
+                      0.0 )
       ! h(i,j,k) = min(G%depc_ave(i,j) / (G%depc_low(i,j) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
       ! h(i,j,k) = G%depc_ave(i,j)
       vol_below(i,j) = vol
