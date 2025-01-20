@@ -1061,6 +1061,8 @@ subroutine adjust_h_subgrid_topo(h, dz, G, GV)
       call vol_from_height_monomial(vol, do_I(i,j), et(i,j), G%depc_m(i,j), &
                                     (/-G%depc_low(i,j), -G%depc_ave(i,j), -G%depc_hgh(i,j)/))
       ! h(i,j,k) = min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
+      ! h(i,j,k) = max( min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k), &
+      !                 GV%Angstrom_H )
       h(i,j,k) = max( min((vol - vol_below(i,j)) / (dz(i,j,k) + GV%dZ_subroundoff), 1.0) * h(i,j,k), &
                       GV%Angstrom_H )
       ! h(i,j,k) = min(G%depc_ave(i,j) / (G%depc_low(i,j) + GV%dZ_subroundoff), 1.0) * h(i,j,k)
