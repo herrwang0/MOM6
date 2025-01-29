@@ -154,8 +154,9 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   logical :: split_bottom_stress  !< If true, provide the bottom stress
                                   !! calculated by the vertical viscosity to the
                                   !! barotropic solver.
-  logical :: calc_dtbt            !< If true, calculate the barotropic time-step
-                                  !! dynamically.
+  ! logical :: calc_dtbt            !< If true, calculate the barotropic time-step
+  !                                 !! dynamically.
+  logical :: dtbt_use_bt_cont = .false. !< If true, use BT_cont to calcullate DTBT.
   logical :: store_CAu            !< If true, store the Coriolis and advective accelerations at the
                                   !! end of the timestep for use in the next predictor step.
   logical :: CAu_pred_stored      !< If true, the Coriolis and advective accelerations at the
@@ -648,7 +649,13 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   endif
 
   call cpu_clock_begin(id_clock_btstep)
-  if (calc_dtbt) call set_dtbt(G, GV, US, CS%barotropic_CSp, eta, CS%pbce)
+  if (calc_dtbt) then
+    if (CS%dtbt_use_bt_cont .and. associated(CS%BT_cont)) then
+      call set_dtbt(G, GV, US, CS%barotropic_CSp, eta, CS%pbce, BT_cont=CS%BT_cont)
+    else
+      call set_dtbt(G, GV, US, CS%barotropic_CSp, eta, CS%pbce)
+    endif
+  endif
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
   ! This is the predictor step call to btstep.
   ! The CS%ADp argument here stores the weights for certain integrated diagnostics.
@@ -1410,7 +1417,8 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
                  "If SPLIT is false and USE_RK2 is true, BEGW can be "//&
                  "between 0 and 0.5 to damp gravity waves.", &
                  units="nondim", default=0.0)
-
+  call get_param(param_file, mdl, "SET_DTBT_USE_BT_CONT", CS%dtbt_use_bt_cont, &
+                 "If true, use BT_CONT to calculate DTBT.", default=.false.)
   call get_param(param_file, mdl, "SPLIT_BOTTOM_STRESS", CS%split_bottom_stress, &
                  "If true, provide the bottom stress calculated by the "//&
                  "vertical viscosity to the barotropic solver.", default=.false.)
