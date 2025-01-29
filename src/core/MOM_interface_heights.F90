@@ -1104,7 +1104,7 @@ subroutine height_from_vol_monomial(eta, do_next, vol_below, m, D, hmin, maxitt)
     if (m <= 0.5) then
       eta = max( (vol_below / (D(3) - D(2))) ** (1.0 - m), 0.0 ) * (D(3) - D(1)) + D(1)
     else
-      if (vol_below<1.0e-5) then ! For small dz, use Taylor expansion to approximate.
+      if (vol_below<1.0e-10) then ! For small dz, use Taylor expansion to approximate.
         eta = ( 2.0 * vol_below * (D(3) - D(1)) * (D(2) - D(1)) / (D(3) - D(2))) ** 0.5 + D(1)
       else ! Newton's method
         I_m = (D(3) - D(1)) / (D(2) - D(1))
