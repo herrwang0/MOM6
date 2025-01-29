@@ -1073,60 +1073,68 @@ subroutine adjust_h_subgrid_topo(h, dz, G, GV)
 end subroutine adjust_h_subgrid_topo
 
 ! Calculate interface height given a total volume below, using the monomial sub-grid topo
-subroutine height_from_vol_monomial(eta, do_next, vol_below, m, topo_stat, hmin, maxitt)
+subroutine height_from_vol_monomial(eta, do_next, vol_below, m, D, hmin, maxitt)
   real,    intent(out) :: eta ! [Z ~> m]
   logical, intent(out) :: do_next
   real,    intent(in)  :: vol_below ! [H ~> m]
   real,    intent(in)  :: m ! [nondim]
-  real,    intent(in)  :: topo_stat(3) ! (/low, mean, high/) [Z ~> m]
+  real,    intent(in)  :: D(3) ! (/low, mean, high/) [Z ~> m]
   real,    optional, intent(in) :: hmin ! [H ~> m]
   integer, optional, intent(in) :: maxitt ! [nondim]
 
  ! local variables
   real :: vol_topo ! [Z ~> m]
-  real :: zeta, zeta_new, feta, dfeta ! [nondim]
-  real :: tol ! [nondim]
+  real :: eta_new, feta, dfeta ! [nondim]
+  real :: tol, coef, coef1, coef2, I_m ! [nondim]
   integer :: max_iter, it ! [nondim]
 
   max_iter = 20
   if (present(maxitt)) max_iter = maxitt
 
-  tol = 1e-10 / (topo_stat(3) - topo_stat(1))
-  if (present(hmin)) tol = hmin / (topo_stat(3) - topo_stat(1))
+  tol = 1e-10 / (D(3) - D(1))
+  if (present(hmin)) tol = hmin / (D(3) - D(1))
 
-  vol_topo = topo_stat(3) - topo_stat(2)
+  vol_topo = D(3) - D(2)
 
   do_next = .True.
   if (vol_below >= vol_topo .or. m==0.0) then
-    eta = vol_below + topo_stat(2)
+    eta = vol_below + D(2)
     do_next = .False.
   else
     if (m <= 0.5) then
-      zeta = (vol_below / (topo_stat(3) - topo_stat(2))) ** (1.0 - m)
+      eta = max( (vol_below / (D(3) - D(2))) ** (1.0 - m), 0.0 ) * (D(3) - D(1)) + D(1)
     else
-      zeta = 1.0
-      it = 1
-      do while (it<=max_iter)
-        feta = (zeta - m) + m * ((1 - zeta) ** (1.0 / m)) - vol_below / (topo_stat(3) - topo_stat(1))
-        dfeta = 1.0 - (1.0 - zeta) ** ((1.0 - m) / m)
-        zeta_new = zeta - feta / dfeta
-        if ((abs(feta)<tol) .or. (zeta==zeta_new)) &
-          exit
-        zeta = zeta_new
-        it = it + 1
-      enddo
+      if (vol_below<1.0e-4) then ! For small dz, use Taylor expansion to approximate.
+        eta = ( 2.0 * vol_below * (D(3) - D(1)) * (D(2) - D(1)) / (D(3) - D(2))) ** 0.5 + D(1)
+      else ! Newton's method
+        I_m = (D(3) - D(1)) / (D(2) - D(1))
+        coef = (D(3) - D(1)) ** (-I_m)
+        coef1 = (D(2) - D(1)) * coef
+        coef2 = (D(3) - D(1)) * coef
+        it = 1
+        eta = D(3)
+        do while (it<=max_iter)
+          feta = (eta - D(2)) + coef1 * ((D(3) - eta) ** I_m) - vol_below
+          dfeta = 1.0 - coef2 * ((D(3) - eta) ** (I_m - 1.0))
+          eta_new = eta - feta / dfeta
+          if ((abs(feta)<tol) .or. (eta==eta_new)) &
+            exit
+          eta = eta_new
+          it = it + 1
+        enddo
+        eta = max(eta, D(1))
+      endif
     endif
-    eta = max(zeta, 0.0) * (topo_stat(3) - topo_stat(1)) + topo_stat(1)
   endif
 end subroutine height_from_vol_monomial
 
 ! Calculate total volume below a certain interface height, using the monomial sub-grid topo
-subroutine vol_from_height_monomial(vol_below, do_next, eta, m, topo_stat)
+subroutine vol_from_height_monomial(vol_below, do_next, eta, m, D)
   real,    intent(out) :: vol_below !< frac. open face area of below eta_layer [H ~> m]
   logical, intent(out) :: do_next   !< False if eta_layer>D_max
   real,    intent(in)  :: eta       !< height of interface [Z ~> m]
   real,    intent(in)  :: m         !< [nondim]
-  real, dimension(3), intent(in) :: topo_stat ! (/low, mean, high/) [Z ~> m]
+  real, dimension(3), intent(in) :: D ! (/low, mean, high/) [Z ~> m]
 
   ! local variables
   real :: zeta   ! normalized vertical coordinate [nondim]
@@ -1134,20 +1142,24 @@ subroutine vol_from_height_monomial(vol_below, do_next, eta, m, topo_stat)
   do_next = .True.
 
   if (m==0.0) then ! special case
-    vol_below = max(eta - topo_stat(2), 0.0)
+    vol_below = max(eta - D(2), 0.0)
     return
   endif
-  if (eta <= topo_stat(1)) then
+  if (eta <= D(1)) then
     vol_below = 0.0
-  elseif (eta >= topo_stat(3)) then
-    vol_below = eta - topo_stat(2)
+  elseif (eta >= D(3)) then
+    vol_below = eta - D(2)
     do_next = .False.
   else
-    zeta = (eta - topo_stat(1)) / (topo_stat(3) - topo_stat(1))
+    zeta = (eta - D(1)) / (D(3) - D(1))
     if (m<=0.5) then
-      vol_below = (topo_stat(3) - topo_stat(2)) * (zeta ** (1.0 / (1.0 - m)))
+      vol_below = (D(3) - D(2)) * (zeta ** (1.0 / (1.0 - m)))
     else
-      vol_below = (eta - topo_stat(2)) + (topo_stat(2) - topo_stat(1)) * ((1.0 - zeta) ** (1.0 / m))
+      if (eta-D(1)<1.0e-4) then ! For small dz, use Taylor expansion to approximate.
+        vol_below = 0.5 * (D(3) - D(2)) * ( (eta - D(1))**2 ) / ( (D(3) - D(1)) * (D(2) - D(1)) )
+      else
+        vol_below = (eta - D(2)) + (D(2) - D(1)) * ((1.0 - zeta) ** (1.0 / m))
+      endif
     endif
   endif
 end subroutine vol_from_height_monomial
