@@ -10,7 +10,7 @@ use MOM_dyn_horgrid, only : dyn_horgrid_type
 use MOM_file_parser, only : get_param, log_version, param_file_type
 use MOM_get_input, only : directories
 use MOM_grid, only : ocean_grid_type
-use MOM_open_boundary, only : ocean_OBC_type, OBC_NONE
+use MOM_open_boundary, only : ocean_OBC_type, OBC_NONE, OBC_segment_type
 use MOM_open_boundary, only : OBC_DIRECTION_E, OBC_DIRECTION_W, OBC_DIRECTION_N
 use MOM_open_boundary, only : OBC_DIRECTION_S
 use MOM_sponge, only : set_up_sponge_field, initialize_sponge, sponge_CS
@@ -197,6 +197,24 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
 !   "USER_initialization.F90, USER_set_OBC_data: " // &
 !   "Unmodified user routine called - you must edit the routine to use it")
 
+  type(OBC_segment_type), pointer :: segment => NULL()
+  integer :: is, ie, js, je, i, j, k, nz
+  real, dimension(SZK_(GV)) :: trans
+
+  segment => OBC%segment(1)
+  if (.not. segment%on_pe) return
+  if (.not. segment%is_E_or_W) return
+
+  call get_param(param_file, '', "OBC_USER_TRANSPORT", trans, &
+  "Transport.", default=0.0, units="m^3/s")
+
+  is = segment%HI%isdB ; ie = segment%HI%iedB
+  js = segment%HI%jsd ; je = segment%HI%jed
+  nz = GV%ke
+
+  do k=1,nz ; do j=js,je ; do I=is,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
+    segment%normal_trans(I,j,k) = trans(k)
+  endif ; enddo ; enddo ; enddo
   if (first_call) call write_user_log(param_file)
 
 end subroutine USER_set_OBC_data
