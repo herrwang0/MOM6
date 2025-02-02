@@ -199,7 +199,7 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
 
   type(OBC_segment_type), pointer :: segment => NULL()
   integer :: is, ie, js, je, i, j, k, nz
-  real, dimension(SZK_(GV)) :: trans
+  real, dimension(SZK_(GV)) :: trans, vel
 
   segment => OBC%segment(1)
   if (.not. segment%on_pe) return
@@ -207,6 +207,8 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
 
   call get_param(param_file, '', "OBC_USER_TRANSPORT", trans, &
   "Transport.", default=0.0, units="m^3/s")
+  call get_param(param_file, '', "OBC_USER_VELOCITY", vel, &
+  "Velocity.", default=0.0, units="m/s")
 
   is = segment%HI%isdB ; ie = segment%HI%iedB
   js = segment%HI%jsd ; je = segment%HI%jed
@@ -214,6 +216,7 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
 
   do k=1,nz ; do j=js,je ; do I=is,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
     segment%normal_trans(I,j,k) = trans(k)
+    segment%normal_vel(I,j,k) = vel(k)
   endif ; enddo ; enddo ; enddo
   if (first_call) call write_user_log(param_file)
 
