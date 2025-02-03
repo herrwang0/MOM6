@@ -4,6 +4,7 @@ use MOM_coms_infra,    only : sum_across_PEs
 use MOM_coms,          only : reproducing_sum
 use MOM_cpu_clock,     only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, &
                               CLOCK_MODULE, CLOCK_ROUTINE, CLOCK_LOOP
+use MOM_domains,       only : pass_var
 use MOM_error_handler, only : MOM_error, FATAL
 use MOM_file_parser,   only : get_param, log_version, param_file_type
 use MOM_grid,          only : ocean_grid_type
@@ -291,6 +292,13 @@ subroutine spherical_harmonics_init(G, param_file, CS)
       CS%Pmm(i,j,m+1) = Pmm_coef * (sin_clatT(i,j)**m)
     enddo ; enddo
   enddo
+
+  call pass_var(CS%cos_lonT, G%Domain)
+  call pass_var(CS%sin_lonT, G%Domain)
+  call pass_var(CS%cos_lonT_wtd, G%Domain)
+  call pass_var(CS%sin_lonT_wtd, G%Domain)
+  call pass_var(CS%cos_clatT, G%Domain)
+  call pass_var(CS%Pmm, G%Domain)
 
   id_clock_sht = cpu_clock_id('(Ocean spherical harmonics)', grain=CLOCK_MODULE)
   id_clock_sht_forward = cpu_clock_id('(Ocean SHT forward)', grain=CLOCK_ROUTINE)
