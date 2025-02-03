@@ -71,7 +71,7 @@ subroutine spherical_harmonics_forward(G, CS, var, Snm_Re, Snm_Im, Nd, tmp_scale
   real :: sum_tot ! The total of all components output by the reproducing sum in the same
                   ! arbitrary units as var, [a] or [A ~> a]
   integer :: i, j, k
-  integer :: is, ie, js, je, isd, ied, jsd, jed
+  integer :: is, ie, js, je
   integer :: m, n, l
 
   if (.not.CS%initialized) call MOM_error(FATAL, "MOM_spherical_harmonics " // &
@@ -84,9 +84,8 @@ subroutine spherical_harmonics_forward(G, CS, var, Snm_Re, Snm_Im, Nd, tmp_scale
   Ltot = calc_lmax(Nmax)
 
   is  = G%isc ; ie  = G%iec ; js  = G%jsc ; je  = G%jec
-  isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
 
-  do j=jsd,jed ; do i=isd,ied
+  do j=js,je ; do i=is,ie
     pmn(i,j) = 0.0 ; pmnm1(i,j) = 0.0 ; pmnm2(i,j) = 0.0
   enddo ; enddo
 
