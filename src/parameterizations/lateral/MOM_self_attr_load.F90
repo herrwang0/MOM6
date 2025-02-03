@@ -103,9 +103,7 @@ subroutine calc_SAL(eta, eta_sal, G, CS, tmp_scale)
       enddo
     enddo
 
-    call spherical_harmonics_inverse(G, CS%sht, CS%Snm_Re, CS%Snm_Im, eta_sal, CS%sal_sht_Nd)
-    ! Halo was not calculated in spherical harmonic transforms.
-    call pass_var(eta_sal, G%domain)
+    call spherical_harmonics_inverse(G, CS%sht, CS%Snm_Re, CS%Snm_Im, eta_sal, CS%sal_sht_Nd, halo_size=1)
 
   else
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
