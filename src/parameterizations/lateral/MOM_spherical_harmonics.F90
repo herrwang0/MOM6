@@ -152,7 +152,7 @@ subroutine spherical_harmonics_forward(G, CS, var, Snm_Re, Snm_Im, Nd, tmp_scale
 end subroutine spherical_harmonics_forward
 
 !> Calculates inverse spherical harmonics transforms
-subroutine spherical_harmonics_inverse(G, CS, Snm_Re, Snm_Im, var, Nd)
+subroutine spherical_harmonics_inverse(G, CS, Snm_Re, Snm_Im, var, Nd, halo_size)
   type(ocean_grid_type), intent(in)  :: G            !< The ocean's grid structure.
   type(sht_CS),          intent(in)  :: CS           !< Control structure for SHT
   real,                  intent(in)  :: Snm_Re(:)    !< SHT coefficients for the real modes (cosine)
@@ -164,6 +164,7 @@ subroutine spherical_harmonics_inverse(G, CS, Snm_Re, Snm_Im, var, Nd)
                                                      !! as Snm_Re and Snm_Im [a] or [A ~> a]
   integer,     optional, intent(in)  :: Nd           !< Maximum degree of the spherical harmonics
                                                      !! overriding ndegree in the CS [nondim]
+  integer,     optional, intent(in)  :: halo_size    !< Width of halo points on which to calculate var.
   ! local variables
   integer :: Nmax ! Local copy of the maximum degree of the spherical harmonics [nondim]
   real    :: mFac ! A constant multiplier. mFac = 1 (if m==0) or 2 (if m>0) [nondim]
@@ -171,8 +172,7 @@ subroutine spherical_harmonics_inverse(G, CS, Snm_Re, Snm_Im, var, Nd)
     pmn,   & ! Current associated Legendre polynomials of degree n and order m [nondim]
     pmnm1, & ! Associated Legendre polynomials of degree n-1 and order m [nondim]
     pmnm2    ! Associated Legendre polynomials of degree n-2 and order m [nondim]
-  integer :: i, j, k
-  integer :: is, ie, js, je, isd, ied, jsd, jed
+  integer i, j, k, isv, iev, jsv, jev, halo
   integer :: m, n, l
 
   if (.not.CS%initialized) call MOM_error(FATAL, "MOM_spherical_harmonics " // &
@@ -182,11 +182,11 @@ subroutine spherical_harmonics_inverse(G, CS, Snm_Re, Snm_Im, var, Nd)
   if (id_clock_sht_inverse>0) call cpu_clock_begin(id_clock_sht_inverse)
 
   Nmax = CS%ndegree ; if (present(Nd)) Nmax = Nd
+  halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
 
-  is  = G%isc ; ie  = G%iec ; js  = G%jsc ; je  = G%jec
-  isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
+  isv = G%isc-halo ; iev = G%iec+halo ; jsv = G%jsc-halo ; jev = G%jec+halo
 
-  do j=jsd,jed ; do i=isd,ied
+  do j=jsv,jev ; do i=isv,iev
     pmn(i,j) = 0.0 ; pmnm1(i,j) = 0.0 ; pmnm2(i,j) = 0.0
     var(i,j) = 0.0
   enddo ; enddo
@@ -195,7 +195,7 @@ subroutine spherical_harmonics_inverse(G, CS, Snm_Re, Snm_Im, var, Nd)
     mFac = sign(1.0, m-0.5)*0.5 + 1.5
     l = order2index(m, Nmax)
 
-    do j=js,je ; do i=is,ie
+    do j=jsv,jev ; do i=isv,iev
       var(i,j) = var(i,j) &
         + mFac * CS%Pmm(i,j,m+1) * (  Snm_Re(l) * CS%cos_lonT(i,j,m+1) &
                                     + Snm_Im(l) * CS%sin_lonT(i,j,m+1))
@@ -203,7 +203,7 @@ subroutine spherical_harmonics_inverse(G, CS, Snm_Re, Snm_Im, var, Nd)
       pmnm1(i,j) = CS%Pmm(i,j,m+1)
     enddo ; enddo
 
-    do n=m+1,Nmax ; do j=js,je ; do i=is,ie
+    do n=m+1,Nmax ; do j=jsv,jev ; do i=isv,iev
       pmn(i,j) = &
         CS%a_recur(n+1,m+1) * CS%cos_clatT(i,j) * pmnm1(i,j) - CS%b_recur(n+1,m+1) * pmnm2(i,j)
       var(i,j) = var(i,j) &
