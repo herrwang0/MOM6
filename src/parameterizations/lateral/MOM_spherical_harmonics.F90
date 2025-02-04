@@ -230,7 +230,7 @@ subroutine spherical_harmonics_init(G, param_file, CS)
   real, parameter :: RADIAN = PI / 180.0 ! Degree to Radian constant [rad/degree]
   real, dimension(SZI_(G),SZJ_(G)) :: sin_clatT ! sine of colatitude at the t-cells [nondim].
   real :: Pmm_coef ! = sqrt{ 1.0/(4.0*PI) * prod[(2k+1)/2k)] } [nondim].
-  integer :: is, ie, js, je
+  integer :: is, ie, js, je, isd, ied, jsd, jed
   integer :: i, j, k
   integer :: m, n
   integer :: Nd_SAL ! Maximum degree for SAL
@@ -242,6 +242,7 @@ subroutine spherical_harmonics_init(G, param_file, CS)
   CS%initialized = .True.
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
+  isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
 
   call log_version(param_file, mdl, version, "")
   call get_param(param_file, mdl, "SAL_HARMONICS_DEGREE", Nd_SAL, "", default=0, do_not_log=.true.)
@@ -262,10 +263,10 @@ subroutine spherical_harmonics_init(G, param_file, CS)
   enddo ; enddo
 
   ! Calculate complex exponential factors
-  allocate(CS%cos_lonT_wtd(is:ie, js:je, CS%ndegree+1), source=0.0)
-  allocate(CS%sin_lonT_wtd(is:ie, js:je, CS%ndegree+1), source=0.0)
-  allocate(CS%cos_lonT(is:ie, js:je, CS%ndegree+1), source=0.0)
-  allocate(CS%sin_lonT(is:ie, js:je, CS%ndegree+1), source=0.0)
+  allocate(CS%cos_lonT_wtd(isd:ied, jsd:jed, CS%ndegree+1), source=0.0)
+  allocate(CS%sin_lonT_wtd(isd:ied, jsd:jed, CS%ndegree+1), source=0.0)
+  allocate(CS%cos_lonT(isd:ied, jsd:jed, CS%ndegree+1), source=0.0)
+  allocate(CS%sin_lonT(isd:ied, jsd:jed, CS%ndegree+1), source=0.0)
   do m=0,CS%ndegree
     do j=js,je ; do i=is,ie
       CS%cos_lonT(i,j,m+1)     = cos(real(m) * (G%geolonT(i,j)*RADIAN))
@@ -276,14 +277,14 @@ subroutine spherical_harmonics_init(G, param_file, CS)
   enddo
 
   ! Calculate sine and cosine of colatitude
-  allocate(CS%cos_clatT(is:ie, js:je), source=0.0)
+  allocate(CS%cos_clatT(isd:ied, jsd:jed), source=0.0)
   do j=js,je ; do i=is,ie
     CS%cos_clatT(i,j) = cos(0.5*PI - G%geolatT(i,j)*RADIAN)
     sin_clatT(i,j)    = sin(0.5*PI - G%geolatT(i,j)*RADIAN)
   enddo ; enddo
 
   ! Calculate the diagonal elements of the associated Legendre polynomials (n=m)
-  allocate(CS%Pmm(is:ie,js:je,m+1), source=0.0)
+  allocate(CS%Pmm(isd:ied,jsd:jed,m+1), source=0.0)
   do m=0,CS%ndegree
     Pmm_coef = 1.0/(4.0*PI)
     do k=1,m ; Pmm_coef = Pmm_coef * (real(2*k+1) / real(2*k)) ; enddo
