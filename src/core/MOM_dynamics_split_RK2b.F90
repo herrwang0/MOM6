@@ -35,8 +35,8 @@ use MOM_restart,           only : register_restart_field, register_restart_pair
 use MOM_restart,           only : query_initialized, set_initialized, save_restart
 use MOM_restart,           only : only_read_from_restarts
 use MOM_restart,           only : restart_init, is_new_run, MOM_restart_CS
-use MOM_time_manager,      only : time_type, time_type_to_real, operator(+)
-use MOM_time_manager,      only : operator(-), operator(>), operator(*), operator(/)
+use MOM_time_manager,      only : time_type, real_to_time
+use MOM_time_manager,      only : operator(+), operator(>)
 
 use MOM_ALE,                   only : ALE_CS, ALE_remap_velocities
 use MOM_barotropic,            only : barotropic_init, btstep, btcalc, bt_mass_source
@@ -159,6 +159,8 @@ type, public :: MOM_dyn_split_RK2b_CS ; private
                                   !! barotropic solver.
   logical :: dtbt_use_bt_cont     !< If true, use BT_cont to calculate DTBT.
   logical :: calculate_SAL        !< If true, calculate self-attraction and loading.
+  type(time_type) :: sal_recalc_interval !< Time interval bewteen SAL calculations.
+  type(time_type) :: sal_recalc_time     !< Time to calculate SAL.
   logical :: use_tides            !< If true, tidal forcing is enabled.
   logical :: remap_aux            !< If true, apply ALE remapping to all of the auxiliary 3-D
                                   !! variables that are needed to reproduce across restarts,
@@ -393,6 +395,7 @@ subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forc
   logical :: BT_cont_BT_thick ! If true, use the BT_cont_type to estimate the
                               ! relative weightings of the layers in calculating
                               ! the barotropic accelerations.
+  logical :: update_SAL ! If true, (re)calculate self-attraction and loading (SAL).
   !---For group halo pass
   logical :: showCallTree, sym
 
@@ -425,6 +428,14 @@ subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forc
       call check_redundant("Start predictor u ", u_av, v_av, G, unscale=US%L_T_to_m_s)
       call check_redundant("Start predictor uh ", uh, vh, G, unscale=GV%H_to_MKS*US%L_to_m**2*US%s_to_T)
     endif
+  endif
+
+  ! Check if SAL needs an update.
+  if (CS%calculate_SAL .and. (Time_local>CS%sal_recalc_time)) then
+    CS%sal_recalc_time = CS%sal_recalc_time + CS%sal_recalc_interval
+    update_SAL = .True.
+  else
+    update_SAL = .False.
   endif
 
   dyn_p_surf = associated(p_surf_begin) .and. associated(p_surf_end)
@@ -504,7 +515,7 @@ subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forc
   if (CS%begw == 0.0) call enable_averages(dt, Time_local, CS%diag)
   call cpu_clock_begin(id_clock_pres)
   call PressureForce(h, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+                     CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF, update_SAL=update_SAL)
   if (dyn_p_surf) then
     pres_to_eta = 1.0 / (GV%g_Earth * GV%H_to_RZ)
     !$OMP parallel do default(shared)
@@ -827,7 +838,7 @@ subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forc
     ! pbce = dM/deta
     call cpu_clock_begin(id_clock_pres)
     call PressureForce(hp, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, &
-                       CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF)
+                       CS%ALE_CSp, p_surf, CS%pbce, CS%eta_PF, update_SAL=update_SAL)
     ! Stokes shear force contribution to pressure gradient
     if (present(Waves)) then ; if (associated(Waves)) then ; if (Waves%Stokes_PGF) then
       call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
@@ -1303,6 +1314,7 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
   logical :: debug_truncations
   logical :: read_uv, read_h2
   logical :: visc_rem_bug ! Stores the value of runtime paramter VISC_REM_BUG.
+  real :: dt_sal_recalc ! Stores the value of runtime parameter SAL_RECALC_PERIOD.
 
   integer :: i, j, k, is, ie, js, je, isd, ied, jsd, jed, nz
   integer :: IsdB, IedB, JsdB, JedB
@@ -1326,6 +1338,16 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
                  "If true, apply tidal momentum forcing.", default=.false.)
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
+  if (CS%calculate_SAL) then
+    call get_param(param_file, mdl, "SAL_RECALC_PERIOD", dt_sal_recalc, &
+                  "Time interval between recalculations of self-attraction and loading (SAL)."//&
+                  "If 0 (default), SAL is recalculated every dynamics time step.", units="s", &
+                  default=0.0, scale=US%s_to_T)
+    if (dt_sal_recalc<0.0) &
+      call MOM_error(FATAL, "SAL_RECALC_PERIOD needs to be larger than or equal to zero.")
+    CS%sal_recalc_interval = real_to_time(US%T_to_s * dt_sal_recalc)
+    CS%sal_recalc_time = Time
+  endif
   call get_param(param_file, mdl, "BE", CS%be, &
                  "If SPLIT is true, BE determines the relative weighting "//&
                  "of a  2nd-order Runga-Kutta baroclinic time stepping "//&

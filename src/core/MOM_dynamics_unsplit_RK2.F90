@@ -66,7 +66,7 @@ use MOM_error_handler, only : MOM_error, MOM_mesg, FATAL, WARNING, is_root_pe
 use MOM_error_handler, only : MOM_set_verbosity
 use MOM_file_parser, only : get_param, log_param, log_version, param_file_type
 use MOM_get_input, only : directories
-use MOM_time_manager, only : time_type, time_type_to_real, operator(+)
+use MOM_time_manager, only : time_type, real_to_time, operator(+)
 use MOM_time_manager, only : operator(-), operator(>), operator(*), operator(/)
 
 use MOM_ALE, only : ALE_CS
@@ -125,6 +125,8 @@ type, public :: MOM_dyn_unsplit_RK2_CS ; private
                             !! this is true, an older incorrect setting is used.
   logical :: debug          !< If true, write verbose checksums for debugging purposes.
   logical :: calculate_SAL  !< If true, calculate self-attraction and loading.
+  type(time_type) :: sal_recalc_interval !< Time interval bewteen SAL calculations.
+  type(time_type) :: sal_recalc_time     !< Time to calculate SAL.
   logical :: use_tides      !< If true, tidal forcing is enabled.
 
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
@@ -249,6 +251,7 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   real :: dt_pred   ! The time step for the predictor part of the baroclinic time stepping [T ~> s]
   real :: dt_visc   ! The time step for a part of the update due to viscosity [T ~> s]
   logical :: dyn_p_surf
+  logical :: update_SAL ! If true, (re)calculate self-attraction and loading (SAL).
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -257,6 +260,14 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   h_av(:,:,:) = 0; hp(:,:,:) = 0
   up(:,:,:) = 0
   vp(:,:,:) = 0
+
+  ! Check if SAL needs an update.
+  if (CS%calculate_SAL .and. (Time_local>CS%sal_recalc_time)) then
+    CS%sal_recalc_time = CS%sal_recalc_time + CS%sal_recalc_interval
+    update_SAL = .True.
+  else
+    update_SAL = .False.
+  endif
 
   dyn_p_surf = associated(p_surf_begin) .and. associated(p_surf_end)
   if (dyn_p_surf) then
@@ -311,7 +322,8 @@ subroutine step_MOM_dyn_unsplit_RK2(u_in, v_in, h_in, tv, visc, Time_local, dt, 
   if (dyn_p_surf) then ; do j=js-2,je+2 ; do i=is-2,ie+2
     p_surf(i,j) = 0.5*p_surf_begin(i,j) + 0.5*p_surf_end(i,j)
   enddo ; enddo ; endif
-  call PressureForce(h_in, tv, CS%PFu, CS%PFv, G, GV, US, CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
+  call PressureForce(h_in, tv, CS%PFu, CS%PFv, G, GV, US, &
+                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf, update_SAL=update_SAL)
   call cpu_clock_end(id_clock_pres)
   call pass_vector(CS%PFu, CS%PFv, G%Domain, clock=id_clock_pass)
   call pass_vector(CS%CAu, CS%CAv, G%Domain, clock=id_clock_pass)
@@ -581,6 +593,7 @@ subroutine initialize_dyn_unsplit_RK2(u, v, h, Time, G, GV, US, param_file, diag
   logical :: use_correct_dt_visc
   logical :: test_value  ! This is used to determine whether a logical parameter is being set explicitly.
   logical :: explicit_bug, explicit_fix ! These indicate which parameters are set explicitly.
+  real :: dt_sal_recalc ! Stores the value of runtime parameter SAL_RECALC_PERIOD.
   integer :: isd, ied, jsd, jed, nz, IsdB, IedB, JsdB, JedB
   isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed ; nz = GV%ke
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
@@ -655,6 +668,16 @@ subroutine initialize_dyn_unsplit_RK2(u, v, h, Time, G, GV, US, param_file, diag
                  "If true, apply tidal momentum forcing.", default=.false.)
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
+  if (CS%calculate_SAL) then
+    call get_param(param_file, mdl, "SAL_RECALC_PERIOD", dt_sal_recalc, &
+                  "Time interval between recalculations of self-attraction and loading (SAL)."//&
+                  "If 0 (default), SAL is recalculated every dynamics time step.", units="s", &
+                  default=0.0, scale=US%s_to_T)
+    if (dt_sal_recalc<0.0) &
+      call MOM_error(FATAL, "SAL_RECALC_PERIOD needs to be larger than or equal to zero.")
+    CS%sal_recalc_interval = real_to_time(US%T_to_s * dt_sal_recalc)
+    CS%sal_recalc_time = Time
+  endif
 
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
