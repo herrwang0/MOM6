@@ -8,7 +8,7 @@ use MOM_error_handler, only : MOM_error, MOM_mesg, FATAL, WARNING, is_root_pe
 use MOM_file_parser, only : get_param, log_version, param_file_type
 use MOM_grid, only : ocean_grid_type
 use MOM_PressureForce_FV, only : PressureForce_FV_Bouss, PressureForce_FV_nonBouss
-use MOM_PressureForce_FV, only : PressureForce_FV_init
+use MOM_PressureForce_FV, only : PressureForce_FV_init, PressureForce_FV_end
 use MOM_PressureForce_FV, only : PressureForce_FV_CS
 use MOM_PressureForce_Mont, only : PressureForce_Mont_Bouss, PressureForce_Mont_nonBouss
 use MOM_PressureForce_Mont, only : PressureForce_Mont_init
@@ -23,7 +23,7 @@ implicit none ; private
 
 #include <MOM_memory.h>
 
-public PressureForce, PressureForce_init
+public PressureForce, PressureForce_init, PressureForce_end
 
 !> Pressure force control structure
 type, public :: PressureForce_CS ; private
@@ -38,7 +38,7 @@ end type PressureForce_CS
 contains
 
 !> A thin layer between the model and the Boussinesq and non-Boussinesq pressure force routines.
-subroutine PressureForce(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta)
+subroutine PressureForce(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta, update_SAL)
   type(ocean_grid_type),   intent(in)  :: G    !< The ocean's grid structure
   type(verticalGrid_type), intent(in)  :: GV   !< The ocean's vertical grid structure
   type(unit_scale_type),   intent(in)  :: US   !< A dimensional unit scaling type
@@ -59,14 +59,15 @@ subroutine PressureForce(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, e
   real, dimension(SZI_(G),SZJ_(G)), &
                  optional, intent(out) :: eta  !< The bottom mass used to calculate PFu and PFv,
                                                !! [H ~> m or kg m-2], with any tidal contributions.
+  logical,       optional, intent(in)  :: update_SAL !< If true, recalculate SAL.
 
   if (CS%Analytic_FV_PGF) then
     if (GV%Boussinesq) then
       call PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS%PressureForce_FV, &
-                                   ALE_CSp, p_atm, pbce, eta)
+                                   ALE_CSp, p_atm, pbce, eta, update_SAL)
     else
       call PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS%PressureForce_FV, &
-                                      ALE_CSp, p_atm, pbce, eta)
+                                      ALE_CSp, p_atm, pbce, eta, update_SAL)
     endif
   else
     if (GV%Boussinesq) then
@@ -111,6 +112,17 @@ subroutine PressureForce_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp, ti
              CS%PressureForce_Mont, SAL_CSp, tides_CSp)
   endif
 end subroutine PressureForce_init
+
+!> Deallocate the pressure force control structure
+subroutine PressureForce_end(CS)
+  type(PressureForce_CS), intent(inout) :: CS  !< Pressure force control structure
+
+  if (CS%Analytic_FV_PGF) then
+    call PressureForce_FV_end(CS%PressureForce_FV)
+  ! else
+  !   call PressureForce_Mont_end(CS%PressureForce_Mont_CSp)
+  endif
+end subroutine PressureForce_end
 
 !> \namespace mom_pressureforce
 !!

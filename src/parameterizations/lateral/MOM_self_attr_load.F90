@@ -43,7 +43,7 @@ type, public :: SAL_CS ; private
     !< Reference bottom pressure scaled by Rho_0 and G_Earth[Z ~> m]
   real, allocatable :: Love_scaling(:)
     !< Dimensional coefficients for harmonic SAL, which are functions of Love numbers
-    !! [nondim] or [Z T2 L-2 R-1 ~> m Pa-1], depending on the value of use_ppa.
+    !! [nondim] or [Z T2 L-2 R-1 ~> m Pa-1], depending on the value of use_bpa.
   real, allocatable :: Snm_Re(:), &    !< Real SHT coefficient for SHT SAL [Z ~> m]
                        Snm_Im(:)       !< Imaginary SHT coefficient for SHT SAL [Z ~> m]
 end type SAL_CS
