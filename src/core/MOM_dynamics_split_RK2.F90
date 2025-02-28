@@ -166,6 +166,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   logical :: calculate_SAL        !< If true, calculate self-attraction and loading.
   logical :: use_tides            !< If true, tidal forcing is enabled.
   logical :: use_pormed = .False. !< If true, use porous media.
+  logical :: use_pormed_dz = .False. !< If true, use porous media.
   logical :: remap_aux            !< If true, apply ALE remapping to all of the auxiliary 3-D
                                   !! variables that are needed to reproduce across restarts,
                                   !! similarly to what is done with the primary state variables.
@@ -490,8 +491,11 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   !--- end set up for group halo pass
 
   ! subgrid topo
-  if (CS%use_pormed) then
+  if (CS%use_pormed .and. CS%use_pormed_dz) then
     call h_to_hprime(h, tv, G, GV, US, halo_size=1, h_prime=h_prime, dz_prime=dz)
+  elseif (CS%use_pormed .and. (.not.CS%use_pormed_dz)) then
+    call h_to_hprime(h, tv, G, GV, US, halo_size=1, h_prime=h_prime)
+    call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   else
     do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
       h_prime(i,j,k) = h(i,j,k)
@@ -1438,6 +1442,8 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
   call get_param(param_file, mdl, "USE_POROUS_MEDIUM", CS%use_pormed, &
                  default=.false., do_not_log=.true.)
+  call get_param(param_file, mdl, "USE_PM_DZ", CS%use_pormed_dz, &
+                 default=CS%use_pormed, do_not_log=.true.)
   call get_param(param_file, mdl, "BE", CS%be, &
                  "If SPLIT is true, BE determines the relative weighting "//&
                  "of a  2nd-order Runga-Kutta baroclinic time stepping "//&

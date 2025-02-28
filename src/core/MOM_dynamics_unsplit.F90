@@ -125,6 +125,7 @@ type, public :: MOM_dyn_unsplit_CS ; private
   logical :: calculate_SAL  !< If true, calculate self-attraction and loading.
   logical :: use_tides      !< If true, tidal forcing is enabled.
   logical :: use_pormed     !< If true, use porous media.
+  logical :: use_pormed_dz     !< If true, use porous media.
 
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
 
@@ -309,8 +310,11 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   call pass_vector(u, v, G%Domain, clock=id_clock_pass)
 
   ! subgrid topo
-  if (CS%use_pormed) then
+  if (CS%use_pormed .and. CS%use_pormed_dz) then
     call h_to_hprime(h_av, tv, G, GV, US, halo_size=1, h_prime=h_prime, dz_prime=dz)
+  elseif (CS%use_pormed .and. (.not.CS%use_pormed_dz)) then
+    call h_to_hprime(h_av, tv, G, GV, US, halo_size=1, h_prime=h_prime)
+    call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   else
     do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
       h_prime(i,j,k) = h_av(i,j,k)
@@ -444,7 +448,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
 ! upp <- upp + dt/2 d/dz visc d/dz upp
   call cpu_clock_begin(id_clock_vertvisc)
-  if (CS%use_pormed) then ! update dz
+  if (CS%use_pormed_dz) then ! update dz
     call h_to_hprime(hp, tv, G, GV, US, halo_size=1, dz_prime=dz)
   else
     call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
@@ -510,8 +514,11 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   enddo
 
   ! subgrid topo
-  if (CS%use_pormed) then
+  if (CS%use_pormed .and. CS%use_pormed_dz) then
     call h_to_hprime(h_av, tv, G, GV, US, halo_size=1, h_prime=h_prime, dz_prime=dz)
+  elseif (CS%use_pormed .and. (.not.CS%use_pormed_dz)) then
+    call h_to_hprime(h_av, tv, G, GV, US, halo_size=1, h_prime=h_prime)
+    call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
   else
     do k=1,nz ; do j=js-2,je+2 ; do i=is-2,ie+2
       h_prime(i,j,k) = h_av(i,j,k)
@@ -755,6 +762,8 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
   call get_param(param_file, mdl, "USE_POROUS_MEDIUM", CS%use_pormed, &
                  default=.false., do_not_log=.true.)
+  call get_param(param_file, mdl, "USE_PM_DZ", CS%use_pormed_dz, &
+                 default=CS%use_pormed, do_not_log=.true.)
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
 

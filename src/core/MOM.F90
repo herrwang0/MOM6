@@ -455,6 +455,7 @@ type, public :: MOM_control_struct ; private
   logical :: use_porbar !< If true, use porous barrier to constrain the widths and face areas
                         !! at the edges of the grid cells.
   logical :: use_pormed !< If true, use porous medium to adjust cell-averaged interface heights.
+  logical :: use_pormed_dz !< If true, use porous medium to adjust cell-averaged interface heights.
   type(porous_barrier_type) :: pbv !< porous barrier fractional cell metrics
   type(particles), pointer :: particles => NULL() !<Lagrangian particles
   type(stochastic_CS), pointer :: stoch_CS => NULL() !< a pointer to the stochastics control structure
@@ -788,7 +789,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       ! Update wave information, which is presently kept static over each call to step_mom
       call enable_averages(time_interval, Time_start + real_to_time(US%T_to_s*time_interval), CS%diag)
       call find_ustar(forces, CS%tv, U_star, G, GV, US, halo=1)
-      if (CS%use_pormed) then
+      if (CS%use_pormed .and. CS%use_pormed_dz) then
         call h_to_hprime(h, CS%tv, G, GV, US, halo_size=1, dz_prime=dz)
       else
         call thickness_to_dz(h, CS%tv, dz, G, GV, US, halo_size=1)
@@ -799,7 +800,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
   else ! not do_dyn.
     if (CS%UseWaves) then ! Diagnostics are not enabled in this call.
       call find_ustar(fluxes, CS%tv, U_star, G, GV, US, halo=1)
-      if (CS%use_pormed) then
+      if (CS%use_pormed .and. CS%use_pormed_dz) then
         call h_to_hprime(h, CS%tv, G, GV, US, halo_size=1, dz_prime=dz)
       else
         call thickness_to_dz(h, CS%tv, dz, G, GV, US, halo_size=1)
@@ -1245,7 +1246,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_thermo, &
     ! Calculate the BBL properties and store them inside visc (u,h).
     call cpu_clock_begin(id_clock_BBL_visc)
     call set_viscous_BBL(CS%u, CS%v, CS%h, CS%tv, CS%visc, G, GV, US, CS%set_visc_CSp, CS%pbv, &
-                         use_porous_medium=CS%use_pormed)
+                         use_porous_medium=(CS%use_pormed .and. CS%use_pormed_dz))
     call cpu_clock_end(id_clock_BBL_visc)
     if (showCallTree) call callTree_wayPoint("done with set_viscous_BBL (step_MOM)")
     call disable_averaging(CS%diag)
@@ -1628,7 +1629,7 @@ subroutine step_MOM_thermo(CS, G, GV, US, u, v, h, tv, fluxes, dtdia, &
       call pass_vector(CS%pbv%por_layer_widthU, CS%pbv%por_layer_widthV, &
                       G%Domain, direction=To_ALL+SCALAR_PAIR, clock=id_clock_pass, halo=CS%cont_stencil)
     endif
-    call set_viscous_BBL(u, v, h, tv, CS%visc, G, GV, US, CS%set_visc_CSp, CS%pbv, use_porous_medium=CS%use_pormed)
+    call set_viscous_BBL(u, v, h, tv, CS%visc, G, GV, US, CS%set_visc_CSp, CS%pbv, use_porous_medium=(CS%use_pormed .and. CS%use_pormed_dz))
     call cpu_clock_end(id_clock_BBL_visc)
     if (showCallTree) call callTree_wayPoint("done with set_viscous_BBL (step_MOM_thermo)")
   endif
@@ -2353,6 +2354,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                  "If true, use cell-center sub-grid scale topography (porous medium) to adjust "//&
                  "interface heights.", &
                  default=.false.)
+  call get_param(param_file, "MOM", "USE_PM_DZ", CS%use_pormed_dz, &
+                 "If true, sub-grid topography is counted for by vertical viscosity.", &
+                 default=CS%use_pormed)
   call get_param(param_file, "MOM", "BATHYMETRY_AT_VEL", bathy_at_vel, &
                  "If true, there are separate values for the basin depths "//&
                  "at velocity points.  Otherwise the effects of topography "//&
