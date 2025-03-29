@@ -16,7 +16,7 @@ use MOM_tidal_forcing, only : calc_tidal_forcing_legacy
 use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : thermo_var_ptrs
 use MOM_verticalGrid, only : verticalGrid_type
-use MOM_EOS, only : calculate_density, calculate_spec_vol, EOS_domain
+use MOM_EOS, only : calculate_density, calculate_spec_vol, EOS_domain, calculate_compress
 use MOM_density_integrals, only : int_density_dz, int_specific_vol_dp
 use MOM_density_integrals, only : int_density_dz_generic_plm, int_density_dz_generic_ppm
 use MOM_density_integrals, only : int_spec_vol_dp_generic_plm
@@ -98,6 +98,9 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_p_stanley = -1 !< Diagnostic identifier
   integer :: id_MassWt_u = -1 !< Diagnostic identifier
   integer :: id_MassWt_v = -1 !< Diagnostic identifier
+  integer :: id_pf1u = -1, id_pf1v = -1, id_pf2u = -1, id_pf2v = -1, id_pf3u = -1, id_pf3v = -1
+  real :: tref, sref
+  logical :: test_pf_log, test_pf_simple
   type(SAL_CS), pointer :: SAL_CSp => NULL() !< SAL control structure
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
@@ -263,6 +266,10 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   integer, dimension(2) :: EOSdom_u ! The i-computational domain for the equation of state at u-velocity points
   integer, dimension(2) :: EOSdom_v ! The i-computational domain for the equation of state at v-velocity points
   integer :: i, j, k, m
+
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: PF1u, PF2u
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: PF1v, PF2v
+  real :: rho_eos, drho_dp
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -813,6 +820,9 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
   endif ! intx_za and inty_za have now been reset to reflect the properties of an unimpeded interface.
 
+  if (use_EOS) &
+    call calculate_compress(CS%tref, CS%sref, 0.0, rho_eos, drho_dp, tv%eqn_of_state)
+
   !$OMP parallel do default(shared) private(dp)
   do k=1,nz
     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -828,6 +838,53 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
                      ((dp(i+1,j) - dp(i,j)) * intx_za(I,j,K+1) - &
                       (p(i+1,j,K) - p(i,j,K)) * intx_dza(I,j,k)) ) * &
                    (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+
+      ! PF1u(I,j,k) = ( ( za(i,j,K)*dp(i,j) - za(i+1,j,K)*dp(i+1,j) ) + &
+      !                 ( (dp(i+1,j) - dp(i,j)) * intx_za(I,j,K) ) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF2u(I,j,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i+1,j,k)*dp(i+1,j) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i+1,j,k)) - &
+      !                 (dp(i+1,j) - dp(i,j)) * intx_dza(I,j,k) - &
+      !                 (p(i+1,j,K) - p(i,j,K)) * intx_dza(I,j,k) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF2u(I,j,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i+1,j,k)*dp(i+1,j) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i+1,j,k)) - &
+      !                 (dp(i+1,j) - dp(i,j)) * intx_dza(I,j,k) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF2u(I,j,k) = -( dza(i,j,k)*dp(i+1,j) -  dza(i+1,j,k)*dp(i,j) ) * &
+      !               (G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF2u(I,j,k) = (-0.5*( dza(i,j,k)*dp(i,j) -  dza(i+1,j,k)*dp(i+1,j) ) - &
+      !                 (dp(i+1,j) - dp(i,j)) * intx_dza(I,j,k) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF2u(I,j,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i+1,j,k)*dp(i+1,j) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i+1,j,k)) - &
+      !                 (dp(i+1,j) - dp(i,j)) * 0.5 * (dza(i,j,k)+dza(i+1,j,k)) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF2u(I,j,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i+1,j,k)*dp(i+1,j) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i+1,j,k)) - &
+      !                 (dp(i+1,j) - dp(i,j)) * 0.5 * (dza(i,j,k)+dza(i+1,j,k)) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF2u(I,j,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i+1,j,k)*dp(i+1,j) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i+1,j,k)) - &
+      !                 (dp(i+1,j) - dp(i,j)) * 2 * (dza(i,j,k)*dza(i+1,j,k)) / (dza(i,j,k)+dza(i+1,j,k)) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+      ! PF3u(I,j,k) = (-(p(i+1,j,K) - p(i,j,K)) * intx_dza(I,j,k) ) * &
+      !               (2.0*G%IdxCu(I,j) / ((dp(i,j) + dp(i+1,j)) + dp_neglect))
+
+      ! if (CS%test_pf) PFu(I,j,k) = PF1u(I,j,k)
+      ! if (CS%test_pf_simple) PFu(I,j,k) = (za(i,j,K) - za(i+1,j,K)) *G%IdxCu(I,j)
+
+      PF1u(I,j,k) = ((G%bathyT(i+1,j) - G%bathyT(i,j)) + (1.0/rho_eos) * (h(i,j,1) - h(i+1,j,1)) + &
+                     (e_sal(i+1,j) - e_sal(i,j)) + (e_tidal_eq(i+1,j) - e_tidal_eq(i,j))) * G%IdxCu(I,j) * GV%g_Earth
+
+      if (CS%test_pf_log) then
+        PF2u(I,j,k) = -(1.0/rho_eos) * (h(i,j+1,1) - h(i,j,1)) * G%IdxCu(I,j) * GV%g_Earth + &
+                  (1.0/drho_dp) * (log(1.0+(1.0/rho_eos)*drho_dp*h(i,j,1)) - log(1.0+(1.0/rho_eos)*drho_dp*h(i+1,j,1))) * G%IdxCu(I,j)
+      else
+        PF2u(I,j,k) = -(1.0/rho_eos) * (1.0/rho_eos) * drho_dp * (h(i,j,1) - h(i+1,j,1)) * (h(i,j,1) + h(i+1,j,1)) * G%IdxCu(I,j)
+      endif
+
+      if (CS%test_pf_simple) PFu(I,j,k) = PF1u(I,j,k)
     enddo ; enddo
 
     do J=Jsq,Jeq ; do i=is,ie
@@ -836,9 +893,71 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
                     ((dp(i,j+1) - dp(i,j)) * inty_za(i,J,K+1) - &
                      (p(i,j+1,K) - p(i,j,K)) * inty_dza(i,J,k))) * &
                     (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+
+      ! PF1v(i,J,k) = ( ( za(i,j,K)*dp(i,j) - za(i,j+1,K)*dp(i,j+1) ) + &
+      !                 ( (dp(i,j+1) - dp(i,j)) * inty_za(i,J,K) ) ) * &
+      !               (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+
+      ! PF2v(i,J,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i,j+1,k)*dp(i,j+1) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i,j+1,k)) - &
+      !                 (dp(i,j+1) - dp(i,j)) * inty_dza(i,J,k) - &
+      !                 (p(i,j+1,K) - p(i,j,K)) * inty_dza(i,J,k) ) * &
+      !               (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+      ! PF2v(i,J,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i,j+1,k)*dp(i,j+1) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i,j+1,k)) - &
+      !                 (dp(i,j+1) - dp(i,j)) * inty_dza(i,J,k) ) * &
+      !               (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+      ! PF2v(i,J,k) = -( dza(i,j,k)*dp(i,j+1) -  dza(i,j+1,k)*dp(i,j) ) * &
+      !               (G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+      ! PF2v(i,J,k) = (-0.5*( dza(i,j,k)*dp(i,j) -  dza(i,j+1,k)*dp(i,j+1) ) - &
+      !                 (dp(i,j+1) - dp(i,j)) * inty_dza(i,J,k) ) * &
+      !               (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+      ! PF2v(i,J,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i,j+1,k)*dp(i,j+1) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i,j+1,k)) - &
+      !                  (dp(i,j+1) - dp(i,j)) * 0.5 * (dza(i,j,k) + dza(i,j+1,k)) ) * &
+      !               (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+      ! PF2v(i,J,k) = (-( dza(i,j,k)*dp(i,j) -  dza(i,j+1,k)*dp(i,j+1) ) + &
+      !                 (intp_dza(i,j,k) - intp_dza(i,j+1,k)) - &
+      !                  (dp(i,j+1) - dp(i,j)) * 2 * (dza(i,j,k)*dza(i,j+1,k)) / (dza(i,j,k) + dza(i,j+1,k)) ) * &
+      !               (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+      ! PF3v(i,J,k) = (-(p(i,j+1,K) - p(i,j,K)) * inty_dza(i,J,k) ) * &
+      !               (2.0*G%IdyCv(i,J) / ((dp(i,j) + dp(i,j+1)) + dp_neglect))
+
+      ! if (CS%test_pf) PFv(i,J,k) = PF1v(i,J,k)
+      ! if (CS%test_pf_simple) PFv(i,J,k) = (za(i,j,K) - za(i,j+1,K)) *G%IdyCv(i,J)
+
+      PF1v(i,J,k) = ((G%bathyT(i,j+1) - G%bathyT(i,j)) + (1.0/rho_eos) * (h(i,j,1) - h(i,j+1,1)) + &
+                     (e_sal(i,j+1) - e_sal(i,j)) + (e_tidal_eq(i,j+1) - e_tidal_eq(i,j))) * G%IdyCv(i,J) * GV%g_Earth
+
+      if (CS%test_pf_log) then
+        PF2v(i,J,k) = -(1.0/rho_eos) * (h(i,j,1) - h(i,j+1,1)) * G%IdyCv(i,J) * GV%g_Earth + &
+                  (1.0/drho_dp) * (log(1.0+(1.0/rho_eos)*drho_dp*h(i,j,1)) - log(1.0+(1.0/rho_eos)*drho_dp*h(i,j+1,1))) * G%IdyCv(i,J)
+      else
+        PF2v(i,J,k) = -(1.0/rho_eos) * (1.0/rho_eos) * drho_dp * (h(i,j,1) - h(i,j+1,1)) * (h(i,j,1) + h(i,j+1,1)) * G%IdyCv(i,J)
+      endif
+
+      if (CS%test_pf_simple) PFv(i,J,k) = PF1v(i,J,k)
+
     enddo ; enddo
   enddo
 
+  ! call hchksum(za(:,:,1) - alpha_ref*p(:,:,nz+1) - (h(:,:,1)-G%bathyT + e_sal + e_tidal_eq)*GV%g_Earth, "za diff", G%HI, haloshift=1, unscale=US%R_to_kg_m3)
+  ! call hchksum(h(:,:,1)/rho_eos-G%bathyT, "za diff", G%HI, haloshift=0)
+
+  ! call hchksum(h(:,:,1)* GV%g_Earth-dp, "za diff", G%HI, haloshift=0)
+  ! call hchksum(h(:,:,1) / rho_eos - G%bathyT, "za diff", G%HI, haloshift=0)
+  ! if (CS%id_eta>0) call post_data(CS%id_eta, h(:,:,1) / 1035, CS%diag)
+
+  if (CS%debug) then
+  call uvchksum("PF", PFu, PFv, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  call uvchksum("PF1", PF1u, PF1v, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  call uvchksum("PF2", PF2u, PF2v, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  call uvchksum("diff", PF1u+PF2u-PFu, PF1v+PF2v-PFv, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  endif
   if (CS%GFS_scale < 1.0) then
     ! Adjust the Montgomery potential to make this a reduced gravity model.
     if (use_EOS) then
@@ -901,6 +1020,15 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   if (CS%id_e_tidal_sal>0) call post_data(CS%id_e_tidal_sal, e_tidal_sal, CS%diag)
   if (CS%id_MassWt_u>0) call post_data(CS%id_MassWt_u, MassWt_u, CS%diag)
   if (CS%id_MassWt_v>0) call post_data(CS%id_MassWt_v, MassWt_v, CS%diag)
+
+  if (CS%id_pf1u>0) call post_data(CS%id_pf1u, PF1u, CS%diag)
+  if (CS%id_pf1v>0) call post_data(CS%id_pf1v, PF1v, CS%diag)
+
+  if (CS%id_pf2u>0) call post_data(CS%id_pf2u, PF2u, CS%diag)
+  if (CS%id_pf2v>0) call post_data(CS%id_pf2v, PF2v, CS%diag)
+
+  ! if (CS%id_pf3u>0) call post_data(CS%id_pf3u, PF3u, CS%diag)
+  ! if (CS%id_pf3v>0) call post_data(CS%id_pf3v, PF3v, CS%diag)
 
 end subroutine PressureForce_FV_nonBouss
 
@@ -1073,6 +1201,10 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   integer, dimension(2) :: EOSdom_v ! The i-computational domain for the equation of state at v-velocity points
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer :: i, j, k, m, k2
+
+  real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: PF1u, PF2u
+  real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: PF1v, PF2v
+  real :: rho_eos, drho_dp
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -1757,6 +1889,9 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     enddo ; enddo ; enddo
   endif ! intx_pa and inty_pa have now been reset to reflect the properties of an unimpeded interface.
 
+  if (use_EOS) &
+    call calculate_compress(CS%tref, CS%sref, 0.0, rho_eos, drho_dp, tv%eqn_of_state)
+
   ! Compute pressure gradient in x direction
   !$OMP parallel do default(shared)
   do k=1,nz ; do j=js,je ; do I=Isq,Ieq
@@ -1766,6 +1901,25 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                    (e(i+1,j,K+1) - e(i,j,K+1)) * intx_dpa(I,j,k) * GV%Z_to_H)) * &
                  ((2.0*I_Rho0*G%IdxCu(I,j)) / &
                   ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+
+    ! PF1u(I,j,k) = ( ( pa(i,j,K)*h(i,j,k)  - pa(i+1,j,K)*h(i+1,j,k) ) + &
+    !                 (h(i+1,j,k) - h(i,j,k)) * intx_pa(I,j,K) - &
+    !                 ( (e(i+1,j,K) - e(i,j,K)) * intx_dpa(I,j,k) * GV%Z_to_H ) ) * &
+    !               ((2.0*I_Rho0*G%IdxCu(I,j)) / ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+    ! PF2u(I,j,k) = ( ( intz_dpa(i,j,k) - intz_dpa(i+1,j,k) ) + &
+    !                 (h(i+1,j,k) - h(i,j,k)) * intx_dpa(I,j,k) * GV%Z_to_H ) * &
+    !               ((2.0*I_Rho0*G%IdxCu(I,j)) / ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+    ! PF2u(I,j,k) = ( dpa(i,j,k) * h(i+1,j,k) -  dpa(i+1,j,k)*h(i,j,k) ) * &
+    !               ((I_Rho0*G%IdxCu(I,j)) / ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+
+    ! if (CS%test_pf) PFu(I,j,k) = PF1u(I,j,k)
+    ! if (CS%test_pf_simple) PFu(I,j,k) = (e(i,j,K) - e(i+1,j,K)) * Gv%g_Earth *G%IdxCu(I,j)
+
+    PF1u(I,j,k) = (e(i,j,1) - e(i+1,j,1)) * Gv%g_Earth * G%IdxCu(I,j)
+    PF2u(I,j,k) = -(e(i,j,1) - e(i+1,j,1)) * Gv%g_Earth * G%IdxCu(I,j) * (1.0/3.0) * Gv%g_Earth * drho_dp * &
+      ((e(i,j,1) + e(i+1,j,1) )+ (e(i,j,1) * h(i,j,1) + e(i+1,j,1) * h(i+1,j,1)) / ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+
+    if (CS%test_pf_simple) PFu(I,j,k) = PF1u(I,j,k)
   enddo ; enddo ; enddo
 
   ! Compute pressure gradient in y direction
@@ -1777,8 +1931,37 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                    (e(i,j+1,K+1) - e(i,j,K+1)) * inty_dpa(i,J,k) * GV%Z_to_H)) * &
                  ((2.0*I_Rho0*G%IdyCv(i,J)) / &
                   ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+
+    ! PF1v(i,J,k) = ( ( pa(i,j,K)*h(i,j,k) - pa(i,j+1,K)*h(i,j+1,k) ) + &
+    !                 (h(i,j+1,k) - h(i,j,k)) * inty_pa(i,J,K) - &
+    !                 ( (e(i,j+1,K) - e(i,j,K)) * inty_dpa(i,J,k) * GV%Z_to_H ) ) * &
+    !               ((2.0*I_Rho0*G%IdyCv(i,J)) / ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+    ! PF2v(i,J,k) = ( ( intz_dpa(i,j,k) - intz_dpa(i,j+1,k) ) + &
+    !                 (h(i,j+1,k) - h(i,j,K)) * inty_dpa(i,J,k) * GV%Z_to_H ) * &
+    !               ((2.0*I_Rho0*G%IdyCv(i,J)) / ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+    ! PF2v(i,J,k) = ( dpa(i,j,k) * h(i,j+1,k) -  dpa(i,j+1,k)*h(i,j,k) ) * &
+    !               ((I_Rho0*G%IdxCu(I,j)) / ((h(i,j,k) + h(i+1,j,k)) + h_neglect))
+
+    ! if (CS%test_pf) PFv(i,J,k) = PF1v(i,J,k)
+    ! if (CS%test_pf_simple) PFv(i,J,k) = (e(i,j,K) - e(i,j+1,K)) * Gv%g_Earth *G%IdyCv(i,J)
+
+    PF1v(i,J,k) = (e(i,j,1) - e(i,j+1,1)) * Gv%g_Earth * G%IdyCv(i,J)
+    PF2v(i,J,k) = -(e(i,j,1) - e(i,j+1,1)) * Gv%g_Earth * G%IdyCv(i,J) * (1.0/3.0) * Gv%g_Earth * drho_dp * &
+      ((e(i,j,1) + e(i,j+1,1) )+ (e(i,j,1) * h(i,j,1) + e(i,j+1,1) * h(i,j+1,1)) / ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
+
+    if (CS%test_pf_simple) PFv(i,J,k) = PF1v(i,J,k)
   enddo ; enddo ; enddo
 
+  if (CS%debug) then
+  call uvchksum("PF", PFu, PFv, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  call uvchksum("PF1", PF1u, PF1v, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  call uvchksum("PF2", PF2u, PF2v, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  call uvchksum("diff", PF1u+PF2u-PFu, PF1v+PF2v-PFv, G%HI, haloshift=0, &
+  symmetric=G%Domain%symmetric, scalar_pair=.true., unscale=US%RL2_T2_to_Pa)
+  endif
   ! Calculate SAL geopotential anomaly and add its gradient to pressure gradient force
   if (CS%calculate_SAL .and. CS%tides_answer_date>20230630 .and. CS%bq_sal_tides) then
     !$OMP parallel do default(shared)
@@ -1928,6 +2111,12 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   if (CS%id_rho_stanley_pgf>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
   if (CS%id_p_stanley>0) call post_data(CS%id_p_stanley, p_stanley, CS%diag)
 
+  if (CS%id_pf1u>0) call post_data(CS%id_pf1u, PF1u, CS%diag)
+  if (CS%id_pf1v>0) call post_data(CS%id_pf1v, PF1v, CS%diag)
+
+  if (CS%id_pf2u>0) call post_data(CS%id_pf2u, PF2u, CS%diag)
+  if (CS%id_pf2v>0) call post_data(CS%id_pf2v, PF2v, CS%diag)
+
 end subroutine PressureForce_FV_Bouss
 
 !> Initializes the finite volume pressure gradient control structure
@@ -2043,6 +2232,14 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
                  "If true, use mass weighting when interpolating T/S for integrals "//&
                  "only if one side is vanished according to RESET_INTXPA_H_NONVANISHED. ", &
                  default=.false.)
+  call get_param(param_file, mdl, "TEST_PF_INCOMPRES", CS%test_pf_simple, &
+                 "If true,  use simple", &
+                 default=.false.)
+  call get_param(param_file, mdl, "TEST_PF_USE_LOG", CS%test_pf_log, &
+                 "If true,  use log.", &
+                 default=.false.)
+  call get_param(param_file, mdl, "T_TOP", CS%tref, "If true,  use log.", default=0.0, units="", do_not_log=.true.)
+  call get_param(param_file, mdl, "S_TOP", CS%sref, "If true,  use log.", default=0.0, units="", do_not_log=.true.)
 
   CS%MassWghtInterp = 0
   if (useMassWghtInterp) &
@@ -2126,6 +2323,21 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
   CS%id_MassWt_v = register_diag_field('ocean_model', 'MassWt_v', diag%axesCvL, Time, &
         'The fractional mass weighting at v-point PGF calculations', 'nondim')
 
+  CS%id_pf1u = register_diag_field('ocean_model', 'PF1u', diag%axesCuL, Time, &
+        'pf', 'nondim')
+  CS%id_pf1v = register_diag_field('ocean_model', 'PF1v', diag%axesCvL, Time, &
+        'pf', 'nondim')
+  CS%id_pf2u = register_diag_field('ocean_model', 'PF2u', diag%axesCuL, Time, &
+        'pf', 'nondim')
+  CS%id_pf2v = register_diag_field('ocean_model', 'PF2v', diag%axesCvL, Time, &
+        'pf', 'nondim')
+  CS%id_pf3u = register_diag_field('ocean_model', 'PF3u', diag%axesCuL, Time, &
+        'pf', 'nondim')
+  CS%id_pf3v = register_diag_field('ocean_model', 'PF3v', diag%axesCvL, Time, &
+        'pf', 'nondim')
+
+    ! CS%id_eta = register_diag_field('ocean_model', 'ediff', diag%axesT1, Time, &
+    !     'eta diff', 'meter', conversion=US%Z_to_m)
   CS%GFS_scale = 1.0
   if (GV%g_prime(1) /= GV%g_Earth) CS%GFS_scale = GV%g_prime(1) / GV%g_Earth
 
