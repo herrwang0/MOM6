@@ -122,7 +122,7 @@ type, public :: diagnostics_CS ; private
   integer   :: num_time_deriv = 0 !< The number of time derivative diagnostics
 
   type(group_pass_type) :: pass_KE_uv !< A handle used for group halo passes
-
+  logical :: rigid_nb
 end type diagnostics_CS
 
 
@@ -307,7 +307,7 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
 
   ! Find the interface heights, relative either to a reference height or to the bottom [Z ~> m].
   if (CS%id_e > 0) then
-    call find_eta(h, tv, G, GV, US, eta, dZref=G%Z_ref)
+    call find_eta(h, tv, G, GV, US, eta, dZref=G%Z_ref, test_pf_simple=CS%rigid_nb)
     if (CS%id_e > 0) call post_data(CS%id_e, eta, CS%diag)
     if (CS%id_e_D > 0) then
       do k=1,nz+1 ; do j=js,je ; do i=is,ie
@@ -874,7 +874,7 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
   endif
 
   if (CS%id_col_ht > 0) then
-    call find_eta(h, tv, G, GV, US, z_top)
+    call find_eta(h, tv, G, GV, US, z_top, test_pf_simple=CS%rigid_nb)
     do j=js,je ; do i=is,ie
       z_bot(i,j) = z_top(i,j) + G%bathyT(i,j)
     enddo ; enddo
@@ -1635,6 +1635,8 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
   if (.not.GV%Boussinesq) remap_answer_date = max(remap_answer_date, 20230701)
 
   call get_param(param_file, mdl, "SPLIT", split, default=.true., do_not_log=.true.)
+  call get_param(param_file, mdl, "RIGID_NONBOUSSINESQ", CS%rigid_nb, &
+                 "If true", default=.false.)
 
   thickness_units = get_thickness_units(GV)
   flux_units = get_flux_units(GV)

@@ -45,7 +45,7 @@ contains
 !! form for consistency with the calculation of the pressure gradient forces.
 !! Additionally, these height may be dilated for consistency with the
 !! corresponding time-average quantity from the barotropic calculation.
-subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
+subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_simple)
   type(ocean_grid_type),                      intent(in)  :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                    intent(in)  :: GV  !< The ocean's vertical grid structure.
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -62,6 +62,7 @@ subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
                                                                  !! which to calculate eta.
   real,                             optional, intent(in)  :: dZref !< The difference in the
                     !! reference height between G%bathyT and eta [Z ~> m]. The default is 0.
+  logical, optional, intent(in) :: test_pf_simple
 
   ! Local variables
   real :: p(SZI_(G),SZJ_(G),SZK_(GV)+1)   ! Hydrostatic pressure at each interface [R L2 T-2 ~> Pa]
@@ -74,6 +75,9 @@ subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
   real :: dZ_ref    ! The difference in the reference height between G%bathyT and eta [Z ~> m].
                     ! dZ_ref is 0 unless the optional argument dZref is present.
   integer i, j, k, isv, iev, jsv, jev, nz, halo
+  logical :: test_pf
+
+  test_pf = .false. ; if (present(test_pf_simple)) test_pf = test_pf_simple
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
 
@@ -111,7 +115,7 @@ subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
       enddo
     endif
   else
-    if (associated(tv%eqn_of_state)) then
+    if (associated(tv%eqn_of_state) .and. (.not.test_pf)) then
       !$OMP do
       do j=jsv,jev
         if (associated(tv%p_surf)) then
@@ -163,7 +167,7 @@ end subroutine find_eta_3d
 !! with the calculation of the pressure gradient forces.  Additionally, the sea
 !! surface height may be adjusted for consistency with the corresponding
 !! time-average quantity from the barotropic calculation.
-subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
+subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_simple)
   type(ocean_grid_type),                      intent(in)  :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                    intent(in)  :: GV  !< The ocean's vertical grid structure.
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -180,6 +184,7 @@ subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
                                                                  !! which to calculate eta.
   real,                             optional, intent(in)  :: dZref !< The difference in the
                     !! reference height between G%bathyT and eta [Z ~> m]. The default is 0.
+  logical, optional, intent(in) :: test_pf_simple
 
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: &
@@ -192,6 +197,9 @@ subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
   real :: dZ_ref    ! The difference in the reference height between G%bathyT and eta [Z ~> m].
                     ! dZ_ref is 0 unless the optional argument dZref is present.
   integer i, j, k, is, ie, js, je, nz, halo
+  logical :: test_pf
+
+  test_pf = .false. ; if (present(test_pf_simple)) test_pf = test_pf_simple
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
   is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo
@@ -217,7 +225,7 @@ subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref)
       enddo ; enddo ; enddo
     endif
   else
-    if (associated(tv%eqn_of_state)) then
+    if (associated(tv%eqn_of_state) .and. (.not.test_pf)) then
       !$OMP do
       do j=js,je
         if (associated(tv%p_surf)) then
