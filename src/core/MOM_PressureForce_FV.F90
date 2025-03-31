@@ -100,7 +100,7 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_MassWt_v = -1 !< Diagnostic identifier
   integer :: id_pf1u = -1, id_pf1v = -1, id_pf2u = -1, id_pf2v = -1, id_pf3u = -1, id_pf3v = -1
   real :: tref, sref
-  logical :: test_pf_log, test_pf_simple
+  logical :: test_pf_log, test_pf_simple, fake_nb
   type(SAL_CS), pointer :: SAL_CSp => NULL() !< SAL control structure
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
@@ -427,6 +427,11 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     enddo ; enddo
   enddo
 
+  rho_eos = 1035.0
+  drho_dp = 1.0
+  if (use_EOS) &
+    call calculate_compress(CS%tref, CS%sref, 0.0, rho_eos, drho_dp, tv%eqn_of_state)
+
   ! Calculate and add self-attraction and loading (SAL) geopotential height anomaly to interface height.
   if (CS%calculate_SAL) then
     if (CS%sal_use_bpa) then
@@ -436,11 +441,19 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
       enddo ; enddo
       call calc_SAL(pbot, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
     else
+      if (CS%fake_nb) then
+      !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          SSH(i,j) = (-G%bathyT(i,j) + h(i,j,1) / rho_eos)- G%Z_ref &
+                    - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
+        enddo ; enddo
+      else
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref &
                   - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
       enddo ; enddo
+      endif
       call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
     endif
 
@@ -823,11 +836,6 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     endif
 
   endif ! intx_za and inty_za have now been reset to reflect the properties of an unimpeded interface.
-
-  rho_eos = 1035.0
-  drho_dp = 1.0
-  if (use_EOS) &
-    call calculate_compress(CS%tref, CS%sref, 0.0, rho_eos, drho_dp, tv%eqn_of_state)
 
   !$OMP parallel do default(shared) private(dp)
   do k=1,nz
@@ -2273,6 +2281,8 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
   call get_param(param_file, mdl, "TEST_PF_USE_LOG", CS%test_pf_log, &
                  "If true,  use log.", &
                  default=.false.)
+  call get_param(param_file, mdl, "FAKE_NB", CS%fake_nb, &
+                 "If true", default=.false.)
   call get_param(param_file, mdl, "T_TOP", CS%tref, "If true,  use log.", default=0.0, units="", do_not_log=.true.)
   call get_param(param_file, mdl, "S_TOP", CS%sref, "If true,  use log.", default=0.0, units="", do_not_log=.true.)
 
