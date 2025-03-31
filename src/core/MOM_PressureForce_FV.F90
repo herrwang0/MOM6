@@ -2220,7 +2220,7 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
   if (CS%calculate_SAL) &
     call get_param(param_file, '', "SAL_USE_BPA", CS%sal_use_bpa, default=.false., &
                    do_not_log=.true.)
-  if ((CS%tides .or. CS%calculate_SAL) .and. GV%Boussinesq) &
+  if ((CS%tides .or. CS%calculate_SAL)) &
     call get_param(param_file, mdl, "BOUSSINESQ_SAL_TIDES", CS%bq_sal_tides, "If true, "//&
                    "in Boussinesq mode, use an alternative method to include self-attraction "//&
                    "and loading (SAL) and tidal forcings in pressure gradient, in which their "//&
