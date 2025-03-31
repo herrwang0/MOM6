@@ -133,6 +133,7 @@ type, public :: set_visc_CS ; private
   integer :: id_Ray_lin_u = -1, id_Ray_lin_v = -1
   integer :: id_nkml_visc_u = -1, id_nkml_visc_v = -1
   !>@}
+  logical :: fake_nb
 end type set_visc_CS
 
 contains
@@ -354,7 +355,7 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
   K2 = max(nkmb+1, 2)
 
   ! Find the vertical distances across layers.
-  call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1, fake_nb=CS%fake_nb)
 
 !  With a linear drag law, the friction velocity is already known.
 !  if (CS%linear_drag) ustar(:) = cdrag_sqrt_H*CS%drag_bg_vel
@@ -3204,7 +3205,8 @@ subroutine set_visc_init(Time, G, GV, US, param_file, diag, visc, CS, restart_CS
                    do_not_log=.not.CS%Bottom_wave_drag)
     CS%H_lindrag = CS%H_lindrag * GV%m_to_H                   ! Rescale
   endif
-
+  call get_param(param_file, mdl, "FAKE_NB", CS%fake_nb, &
+                 "If true", default=.false.)
   if (CS%RiNo_mix .and. kappa_shear_at_vertex(param_file)) then
     ! This is necessary for reproducibility across restarts in non-symmetric mode.
     call pass_var(visc%Kv_shear_Bu, G%Domain, position=CORNER, complete=.true.)

@@ -185,6 +185,7 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
 # include "version_variable.h"
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
+  logical :: fake_nb
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -253,6 +254,9 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
              "If true, initialize the layer thicknesses, temperatures, and "//&
              "salinities from a Z-space file on a latitude-longitude grid.", &
              default=.false., do_not_log=just_read)
+
+  call get_param(PF, mdl, "FAKE_NB", fake_nb, &
+                 "If true", default=.false.)
 
   convert = new_sim  ! Thicknesses are initialized in height units in most cases.
   if (from_Z_file) then
@@ -437,7 +441,13 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
     call fill_temp_salt_segments(G, GV, US, OBC, tv)
 
   ! Convert thicknesses from geometric distances in depth units to thickness units or mass-per-unit-area.
-  if (new_sim .and. convert) call dz_to_thickness(dz, tv, h, G, GV, US)
+  if (new_sim .and. convert) then
+    if (fake_nb) then
+      call dz_to_thickness_simple(dz, h, G, GV, US)
+    else
+      call dz_to_thickness(dz, tv, h, G, GV, US)
+    endif
+  endif
 
   ! Handle the initial surface displacement under ice shelf
   call get_param(PF, mdl, "DEPRESS_INITIAL_SURFACE", depress_sfc, &

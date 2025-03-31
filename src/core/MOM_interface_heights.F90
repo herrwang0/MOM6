@@ -45,7 +45,7 @@ contains
 !! form for consistency with the calculation of the pressure gradient forces.
 !! Additionally, these height may be dilated for consistency with the
 !! corresponding time-average quantity from the barotropic calculation.
-subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_simple)
+subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, fake_nb)
   type(ocean_grid_type),                      intent(in)  :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                    intent(in)  :: GV  !< The ocean's vertical grid structure.
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -62,7 +62,7 @@ subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_
                                                                  !! which to calculate eta.
   real,                             optional, intent(in)  :: dZref !< The difference in the
                     !! reference height between G%bathyT and eta [Z ~> m]. The default is 0.
-  logical, optional, intent(in) :: test_pf_simple
+  logical, optional, intent(in) :: fake_nb
 
   ! Local variables
   real :: p(SZI_(G),SZJ_(G),SZK_(GV)+1)   ! Hydrostatic pressure at each interface [R L2 T-2 ~> Pa]
@@ -75,9 +75,9 @@ subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_
   real :: dZ_ref    ! The difference in the reference height between G%bathyT and eta [Z ~> m].
                     ! dZ_ref is 0 unless the optional argument dZref is present.
   integer i, j, k, isv, iev, jsv, jev, nz, halo
-  logical :: test_pf
+  logical :: fake_nb_test
 
-  test_pf = .false. ; if (present(test_pf_simple)) test_pf = test_pf_simple
+  fake_nb_test = .false. ; if (present(fake_nb)) fake_nb_test = fake_nb
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
 
@@ -115,7 +115,7 @@ subroutine find_eta_3d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_
       enddo
     endif
   else
-    if (associated(tv%eqn_of_state) .and. (.not.test_pf)) then
+    if (associated(tv%eqn_of_state) .and. (.not.fake_nb_test)) then
       !$OMP do
       do j=jsv,jev
         if (associated(tv%p_surf)) then
@@ -167,7 +167,7 @@ end subroutine find_eta_3d
 !! with the calculation of the pressure gradient forces.  Additionally, the sea
 !! surface height may be adjusted for consistency with the corresponding
 !! time-average quantity from the barotropic calculation.
-subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_simple)
+subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, fake_nb)
   type(ocean_grid_type),                      intent(in)  :: G   !< The ocean's grid structure.
   type(verticalGrid_type),                    intent(in)  :: GV  !< The ocean's vertical grid structure.
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -184,7 +184,7 @@ subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_
                                                                  !! which to calculate eta.
   real,                             optional, intent(in)  :: dZref !< The difference in the
                     !! reference height between G%bathyT and eta [Z ~> m]. The default is 0.
-  logical, optional, intent(in) :: test_pf_simple
+  logical, optional, intent(in) :: fake_nb
 
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: &
@@ -197,9 +197,9 @@ subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_
   real :: dZ_ref    ! The difference in the reference height between G%bathyT and eta [Z ~> m].
                     ! dZ_ref is 0 unless the optional argument dZref is present.
   integer i, j, k, is, ie, js, je, nz, halo
-  logical :: test_pf
+  logical :: fake_nb_test
 
-  test_pf = .false. ; if (present(test_pf_simple)) test_pf = test_pf_simple
+  fake_nb_test = .false. ; if (present(fake_nb)) fake_nb_test = fake_nb
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
   is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo
@@ -225,7 +225,7 @@ subroutine find_eta_2d(h, tv, G, GV, US, eta, eta_bt, halo_size, dZref, test_pf_
       enddo ; enddo ; enddo
     endif
   else
-    if (associated(tv%eqn_of_state) .and. (.not.test_pf)) then
+    if (associated(tv%eqn_of_state) .and. (.not.fake_nb_test)) then
       !$OMP do
       do j=js,je
         if (associated(tv%p_surf)) then
@@ -795,7 +795,7 @@ end subroutine dz_to_thickness_simple
 !> Converts layer thicknesses in thickness units to the vertical distance between edges in height
 !! units, perhaps by multiplication by the precomputed layer-mean specific volume stored in an
 !! array in the thermo_var_ptrs type when in non-Boussinesq mode.
-subroutine thickness_to_dz_3d(h, tv, dz, G, GV, US, halo_size)
+subroutine thickness_to_dz_3d(h, tv, dz, G, GV, US, halo_size, fake_nb)
   type(ocean_grid_type),   intent(in)    :: G  !< The ocean's grid structure
   type(verticalGrid_type), intent(in)    :: GV !< The ocean's vertical grid structure
   type(unit_scale_type),   intent(in)    :: US !< A dimensional unit scaling type
@@ -809,14 +809,19 @@ subroutine thickness_to_dz_3d(h, tv, dz, G, GV, US, halo_size)
                                                !! inout to preserve any initialized values in halo points.
   integer,       optional, intent(in)    :: halo_size !< Width of halo within which to
                                                !! calculate thicknesses
+  logical, optional, intent(in) :: fake_nb
+
   ! Local variables
   character(len=128) :: mesg    ! A string for error messages
   integer :: i, j, k, is, ie, js, je, halo, nz
+  logical :: fake_nb_test
+
+  fake_nb_test = .false. ; if (present(fake_nb)) fake_nb_test = fake_nb
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
   is = G%isc-halo ; ie = G%iec+halo ; js = G%jsc-halo ; je = G%jec+halo ; nz = GV%ke
 
-  if ((.not.GV%Boussinesq) .and. allocated(tv%SpV_avg))  then
+  if ((.not.GV%Boussinesq) .and. allocated(tv%SpV_avg) .and. (.not.fake_nb_test))  then
     if ((allocated(tv%SpV_avg)) .and. (tv%valid_SpV_halo < halo)) then
       if (tv%valid_SpV_halo < 0) then
         mesg = "invalid values of SpV_avg."
@@ -842,7 +847,7 @@ end subroutine thickness_to_dz_3d
 !> Converts a vertical i- / k- slice of layer thicknesses in thickness units to the vertical
 !! distance between edges in height units, perhaps by multiplication by the precomputed layer-mean
 !! specific volume stored in an array in the thermo_var_ptrs type when in non-Boussinesq mode.
-subroutine thickness_to_dz_jslice(h, tv, dz, j, G, GV, halo_size)
+subroutine thickness_to_dz_jslice(h, tv, dz, j, G, GV, halo_size, fake_nb)
   type(ocean_grid_type),   intent(in)    :: G  !< The ocean's grid structure
   type(verticalGrid_type), intent(in)    :: GV !< The ocean's vertical grid structure
    real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
@@ -856,14 +861,19 @@ subroutine thickness_to_dz_jslice(h, tv, dz, j, G, GV, halo_size)
   integer,                 intent(in)    :: j  !< The second (j-) index of the input thicknesses to work with
   integer,       optional, intent(in)    :: halo_size !< Width of halo within which to
                                                !! calculate thicknesses
+  logical, optional, intent(in) :: fake_nb
+
   ! Local variables
   character(len=128) :: mesg    ! A string for error messages
   integer :: i, k, is, ie, halo, nz
+  logical :: fake_nb_test
+
+  fake_nb_test = .false. ; if (present(fake_nb)) fake_nb_test = fake_nb
 
   halo = 0 ; if (present(halo_size)) halo = max(0,halo_size)
   is = G%isc-halo ; ie = G%iec+halo ; nz = GV%ke
 
-  if ((.not.GV%Boussinesq) .and. allocated(tv%SpV_avg))  then
+  if ((.not.GV%Boussinesq) .and. allocated(tv%SpV_avg) .and. (.not.fake_nb_test))  then
     if ((allocated(tv%SpV_avg)) .and. (tv%valid_SpV_halo < halo)) then
       if (tv%valid_SpV_halo < 0) then
         mesg = "invalid values of SpV_avg."

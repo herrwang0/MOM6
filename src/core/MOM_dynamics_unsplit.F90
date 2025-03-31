@@ -169,7 +169,7 @@ type, public :: MOM_dyn_unsplit_CS ; private
      ! nullified.  Flather OBCs use open boundary_CS as well.
   !> A pointer to the update_OBC control structure
   type(update_OBC_CS),    pointer :: update_OBC_CSp => NULL()
-
+  logical :: fake_nb
 end type MOM_dyn_unsplit_CS
 
 public step_MOM_dyn_unsplit, register_restarts_dyn_unsplit
@@ -351,7 +351,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   call disable_averaging(CS%diag)
 
   dt_visc = dt_pred ; if (CS%dt_visc_bug) dt_visc = 0.5*dt
-  call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1, fake_nb=CS%fake_nb)
   call vertvisc_coef(up, vp, h_av, dz, forces, visc, tv, dt_visc, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(up, vp, h_av, forces, visc, dt_visc, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -412,7 +412,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
 ! upp <- upp + dt/2 d/dz visc d/dz upp
   call cpu_clock_begin(id_clock_vertvisc)
-  call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1)
+  call thickness_to_dz(hp, tv, dz, G, GV, US, halo_size=1, fake_nb=CS%fake_nb)
   call vertvisc_coef(upp, vpp, hp, dz, forces, visc, tv, dt*0.5, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(upp, vpp, hp, forces, visc, dt*0.5, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, Waves=Waves)
@@ -497,7 +497,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 
 ! u <- u + dt d/dz visc d/dz u
   call cpu_clock_begin(id_clock_vertvisc)
-  call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1)
+  call thickness_to_dz(h_av, tv, dz, G, GV, US, halo_size=1, fake_nb=CS%fake_nb)
   call vertvisc_coef(u, v, h_av, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix)
   call vertvisc(u, v, h_av, forces, visc, dt, CS%OBC, CS%ADp, CS%CDp, &
                 G, GV, US, CS%vertvisc_CSp, CS%taux_bot, CS%tauy_bot, Waves=Waves)
@@ -691,6 +691,8 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
                  "If true, apply tidal momentum forcing.", default=.false.)
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
+  call get_param(param_file, mdl, "FAKE_NB", CS%fake_nb, &
+                 "If true", default=.false.)
 
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
