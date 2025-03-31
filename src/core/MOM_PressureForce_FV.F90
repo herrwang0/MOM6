@@ -446,10 +446,12 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
     ! This gives new answers after the change of separating SAL from tidal forcing module.
     if ((CS%tides_answer_date>20230630) .or. (.not.GV%semi_Boussinesq) .or. (.not.CS%tides)) then
-      !$OMP parallel do default(shared)
+      if (.not.CS%bq_sal_tides) then
+        !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         za(i,j,1) = za(i,j,1) - GV%g_Earth * e_sal(i,j)
       enddo ; enddo
+      endif
     endif
   endif
 
@@ -457,10 +459,12 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   if (CS%tides) then
     if ((CS%tides_answer_date>20230630) .or. (.not.GV%semi_Boussinesq)) then
       call calc_tidal_forcing(CS%Time, e_tidal_eq, e_tidal_sal, G, US, CS%tides_CSp)
+      if (.not.CS%bq_sal_tides) then
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         za(i,j,1) = za(i,j,1) - GV%g_Earth * (e_tidal_eq(i,j) + e_tidal_sal(i,j))
       enddo ; enddo
+      endif
     else  ! This block recreates older answers with tides.
       if (.not.CS%calculate_SAL) e_sal(:,:) = 0.0
       call calc_tidal_forcing_legacy(CS%Time, e_sal, e_sal_and_tide, e_tidal_eq, e_tidal_sal, &
@@ -943,6 +947,33 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     enddo ; enddo
   enddo
 
+  ! Calculate SAL geopotential anomaly and add its gradient to pressure gradient force
+  if (CS%calculate_SAL .and. CS%tides_answer_date>20230630 .and. CS%bq_sal_tides) then
+    !$OMP parallel do default(shared)
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        PFu(I,j,k) = PFu(I,j,k) + (e_sal(i+1,j) - e_sal(i,j)) * GV%g_Earth * G%IdxCu(I,j)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        PFv(i,J,k) = PFv(i,J,k) + (e_sal(i,j+1) - e_sal(i,j)) * GV%g_Earth * G%IdyCv(i,J)
+      enddo ; enddo
+    enddo
+  endif
+
+  ! Calculate tidal geopotential anomaly and add its gradient to pressure gradient force
+  if (CS%tides .and. CS%tides_answer_date>20230630 .and. CS%bq_sal_tides) then
+    !$OMP parallel do default(shared)
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        PFu(I,j,k) = PFu(I,j,k) + ((e_tidal_eq(i+1,j) + e_tidal_sal(i+1,j)) &
+          - (e_tidal_eq(i,j) + e_tidal_sal(i,j))) * GV%g_Earth * G%IdxCu(I,j)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        PFv(i,J,k) = PFv(i,J,k) + ((e_tidal_eq(i,j+1) + e_tidal_sal(i,j+1)) &
+          - (e_tidal_eq(i,j) + e_tidal_sal(i,j))) * GV%g_Earth * G%IdyCv(i,J)
+      enddo ; enddo
+    enddo
+  endif
   ! call hchksum(za(:,:,1) - alpha_ref*p(:,:,nz+1) - (h(:,:,1)-G%bathyT + e_sal + e_tidal_eq)*GV%g_Earth, "za diff", G%HI, haloshift=1, unscale=US%R_to_kg_m3)
   ! call hchksum(h(:,:,1)/rho_eos-G%bathyT, "za diff", G%HI, haloshift=0)
 
