@@ -820,6 +820,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
   endif ! intx_za and inty_za have now been reset to reflect the properties of an unimpeded interface.
 
+  rho_eos = 1035.0
+  drho_dp = 1.0
   if (use_EOS) &
     call calculate_compress(CS%tref, CS%sref, 0.0, rho_eos, drho_dp, tv%eqn_of_state)
 
@@ -1889,6 +1891,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     enddo ; enddo ; enddo
   endif ! intx_pa and inty_pa have now been reset to reflect the properties of an unimpeded interface.
 
+  rho_eos = 1035.0
+  drho_dp = 1.0
   if (use_EOS) &
     call calculate_compress(CS%tref, CS%sref, 0.0, rho_eos, drho_dp, tv%eqn_of_state)
 
