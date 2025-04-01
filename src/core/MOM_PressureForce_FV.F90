@@ -893,7 +893,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
       if (CS%test_pf_log) then
         PF2u(I,j,k) = -(1.0/rho_eos) * (h(i,j+1,1) - h(i,j,1)) * G%IdxCu(I,j) * GV%g_Earth + &
-                  (1.0/drho_dp) * (log(1.0+(1.0/rho_eos)*drho_dp*h(i,j,1)) - log(1.0+(1.0/rho_eos)*drho_dp*h(i+1,j,1))) * G%IdxCu(I,j)
+                  (1.0/drho_dp) * (log(1.0+(1.0/rho_eos)*drho_dp*h(i,j,1)*GV%g_Earth) - &
+                                   log(1.0+(1.0/rho_eos)*drho_dp*h(i+1,j,1)*GV%g_Earth)) * G%IdxCu(I,j)
       else
         PF2u(I,j,k) = -(1.0/rho_eos) * (1.0/rho_eos) * drho_dp * (h(i,j,1) - h(i+1,j,1)) * (h(i,j,1) + h(i+1,j,1)) * G%IdxCu(I,j)
       endif
@@ -945,7 +946,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
       if (CS%test_pf_log) then
         PF2v(i,J,k) = -(1.0/rho_eos) * (h(i,j,1) - h(i,j+1,1)) * G%IdyCv(i,J) * GV%g_Earth + &
-                  (1.0/drho_dp) * (log(1.0+(1.0/rho_eos)*drho_dp*h(i,j,1)) - log(1.0+(1.0/rho_eos)*drho_dp*h(i,j+1,1))) * G%IdyCv(i,J)
+                  (1.0/drho_dp) * (log(1.0+(1.0/rho_eos)*drho_dp*h(i,j,1)*GV%g_Earth) - &
+                                   log(1.0+(1.0/rho_eos)*drho_dp*h(i,j+1,1)*GV%g_Earth)) * G%IdyCv(i,J)
       else
         PF2v(i,J,k) = -(1.0/rho_eos) * (1.0/rho_eos) * drho_dp * (h(i,j,1) - h(i,j+1,1)) * (h(i,j,1) + h(i,j+1,1)) * G%IdyCv(i,J)
       endif
