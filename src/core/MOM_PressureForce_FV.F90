@@ -892,7 +892,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
                      (e_sal(i+1,j) - e_sal(i,j)) + (e_tidal_eq(i+1,j) - e_tidal_eq(i,j))) * G%IdxCu(I,j) * GV%g_Earth
 
       if (CS%test_pf_log) then
-        PF2u(I,j,k) = -(1.0/rho_eos) * (h(i+1,j,1) - h(i,j,1)) * G%IdxCu(I,j) * GV%g_Earth + &
+        PF2u(I,j,k) = -(1.0/rho_eos) * (h(i,j,1) - h(i+1,j,1)) * G%IdxCu(I,j) * GV%g_Earth + &
                   (1.0/drho_dp) * (log(1.0+(1.0/rho_eos)*drho_dp*h(i,j,1)*GV%g_Earth) - &
                                    log(1.0+(1.0/rho_eos)*drho_dp*h(i+1,j,1)*GV%g_Earth)) * G%IdxCu(I,j)
       else
