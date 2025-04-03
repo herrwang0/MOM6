@@ -894,7 +894,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
       ! if (CS%test_pf_simple) PFu(I,j,k) = (za(i,j,K) - za(i+1,j,K)) *G%IdxCu(I,j)
 
       PF1u(I,j,k) = ((G%bathyT(i+1,j) - G%bathyT(i,j)) + (1.0/rho_eos) * (h(i,j,1) - h(i+1,j,1)) + &
-                     (e_sal(i+1,j) - e_sal(i,j)) + (e_tidal_eq(i+1,j) - e_tidal_eq(i,j))) * G%IdxCu(I,j) * GV%g_Earth
+                     (CS%e_sal(i+1,j) - CS%e_sal(i,j)) + (e_tidal_eq(i+1,j) - e_tidal_eq(i,j))) * G%IdxCu(I,j) * GV%g_Earth
 
       if (CS%test_pf_log) then
         PF2u(I,j,k) = -(1.0/rho_eos) * (h(i,j,1) - h(i+1,j,1)) * G%IdxCu(I,j) * GV%g_Earth + &
@@ -947,7 +947,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
       ! if (CS%test_pf_simple) PFv(i,J,k) = (za(i,j,K) - za(i,j+1,K)) *G%IdyCv(i,J)
 
       PF1v(i,J,k) = ((G%bathyT(i,j+1) - G%bathyT(i,j)) + (1.0/rho_eos) * (h(i,j,1) - h(i,j+1,1)) + &
-                     (e_sal(i,j+1) - e_sal(i,j)) + (e_tidal_eq(i,j+1) - e_tidal_eq(i,j))) * G%IdyCv(i,J) * GV%g_Earth
+                     (CS%e_sal(i,j+1) - CS%e_sal(i,j)) + (e_tidal_eq(i,j+1) - e_tidal_eq(i,j))) * G%IdyCv(i,J) * GV%g_Earth
 
       if (CS%test_pf_log) then
         PF2v(i,J,k) = -(1.0/rho_eos) * (h(i,j,1) - h(i,j+1,1)) * G%IdyCv(i,J) * GV%g_Earth + &
@@ -967,10 +967,10 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     !$OMP parallel do default(shared)
     do k=1,nz
       do j=js,je ; do I=Isq,Ieq
-        PFu(I,j,k) = PFu(I,j,k) + (e_sal(i+1,j) - e_sal(i,j)) * GV%g_Earth * G%IdxCu(I,j)
+        PFu(I,j,k) = PFu(I,j,k) + (CS%e_sal(i+1,j) - CS%e_sal(i,j)) * GV%g_Earth * G%IdxCu(I,j)
       enddo ; enddo
       do J=Jsq,Jeq ; do i=is,ie
-        PFv(i,J,k) = PFv(i,J,k) + (e_sal(i,j+1) - e_sal(i,j)) * GV%g_Earth * G%IdyCv(i,J)
+        PFv(i,J,k) = PFv(i,J,k) + (CS%e_sal(i,j+1) - CS%e_sal(i,j)) * GV%g_Earth * G%IdyCv(i,J)
       enddo ; enddo
     enddo
   endif
