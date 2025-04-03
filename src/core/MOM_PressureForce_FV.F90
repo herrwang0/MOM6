@@ -28,7 +28,7 @@ implicit none ; private
 
 #include <MOM_memory.h>
 
-public PressureForce_FV_init
+public PressureForce_FV_init, PressureForce_FV_end
 public PressureForce_FV_Bouss, PressureForce_FV_nonBouss
 
 ! A note on unit descriptions in comments: MOM6 uses units that can be rescaled for dimensional
@@ -102,6 +102,7 @@ type, public :: PressureForce_FV_CS ; private
   real :: tref, sref
   logical :: test_pf_log, test_pf_simple, fake_nb
   type(SAL_CS), pointer :: SAL_CSp => NULL() !< SAL control structure
+  real, allocatable :: e_sal(:,:) !< Bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
 
@@ -116,7 +117,7 @@ contains
 !! To work, the following fields must be set outside of the usual (is:ie,js:je)
 !! range before this subroutine is called:
 !!   h(isB:ie+1,jsB:je+1), T(isB:ie+1,jsB:je+1), and S(isB:ie+1,jsB:je+1).
-subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta)
+subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta, update_SAL)
   type(ocean_grid_type),                      intent(in)  :: G   !< Ocean grid structure
   type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -124,7 +125,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   type(thermo_var_ptrs),                      intent(in)  :: tv  !< Thermodynamic variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(out) :: PFu !< Zonal acceleration [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(out) :: PFv !< Meridional acceleration [L T-2 ~> m s-2]
-  type(PressureForce_FV_CS),                  intent(in)  :: CS  !< Finite volume PGF control structure
+  type(PressureForce_FV_CS),                  intent(inout) :: CS  !< Finite volume PGF control structure
   type(ALE_CS),                               pointer     :: ALE_CSp !< ALE control structure
   real, dimension(:,:),                       pointer     :: p_atm !< The pressure at the ice-ocean
                                                            !! or atmosphere-ocean interface [R L2 T-2 ~> Pa].
@@ -133,6 +134,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
                                                            !! [L2 T-2 H-1 ~> m4 s-2 kg-1].
   real, dimension(SZI_(G),SZJ_(G)),          optional, intent(out) :: eta !< The total column mass used to
                                                            !! calculate PFu and PFv [H ~> kg m-2].
+  logical,                                   optional, intent(in)  :: update_SAL !< If true, recalculate SAL.
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: p ! Interface pressure [R L2 T-2 ~> Pa].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), target :: &
@@ -156,7 +158,6 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
                 ! CALCULATE_SAL is True and SAL_USE_BPA is False [Z ~> m].
     pbot, &     ! Total bottom pressure for self-attraction and loading. Used if
                 ! CALCULATE_SAL is True and SAL_USE_BPA is True [R L2 T-2 ~> Pa].
-    e_sal, &    ! The bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
     e_tidal_eq,  & ! The bottom geopotential anomaly due to tidal forces from astronomical sources [Z ~> m].
     e_tidal_sal, & ! The bottom geopotential anomaly due to harmonic self-attraction and loading
                   ! specific to tides [Z ~> m].
@@ -258,13 +259,14 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   real :: SpV5(5)       ! Specific volume anomalies at five quadrature points [R-1 ~> m3 kg-1]
   real :: wt_R          ! A weighting factor [nondim]
 
-!  real :: oneatm       ! 1 standard atmosphere of pressure in [R L2 T-2 ~> Pa]
+  ! real :: oneatm       ! 1 standard atmosphere of pressure in [R L2 T-2 ~> Pa]
   real, parameter :: C1_6 = 1.0/6.0  ! [nondim]
   real, parameter :: C1_90 = 1.0/90.0  ! A rational constant [nondim]
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer, dimension(2) :: EOSdom_u ! The i-computational domain for the equation of state at u-velocity points
   integer, dimension(2) :: EOSdom_v ! The i-computational domain for the equation of state at v-velocity points
+  logical :: recalc_SAL ! If true, calculate self-attraction and loading (SAL).
   integer :: i, j, k, m
 
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: PF1u, PF2u
@@ -289,6 +291,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   use_EOS = associated(tv%eqn_of_state)
   use_ALE = .false.
   if (associated(ALE_CSp)) use_ALE = CS%reconstruct .and. use_EOS
+
+  recalc_SAL = .False. ; if (present(update_SAL)) recalc_SAL = update_SAL
 
   H_to_RL2_T2 = GV%g_Earth*GV%H_to_RZ
   dp_neglect = GV%g_Earth*GV%H_to_RZ * GV%H_subroundoff
@@ -434,12 +438,13 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
 
   ! Calculate and add self-attraction and loading (SAL) geopotential height anomaly to interface height.
   if (CS%calculate_SAL) then
-    if (CS%sal_use_bpa) then
-      !$OMP parallel do default(shared)
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        pbot(i,j) = p(i,j,nz+1)
-      enddo ; enddo
-      call calc_SAL(pbot, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+    if (recalc_SAL) then
+      if (CS%sal_use_bpa) then
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          pbot(i,j) = p(i,j,nz+1)
+        enddo ; enddo
+        call calc_SAL(pbot, CS%e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
     else
       if (CS%fake_nb) then
       !$OMP parallel do default(shared)
@@ -447,14 +452,15 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
           SSH(i,j) = (-G%bathyT(i,j) + h(i,j,1) / rho_eos)- G%Z_ref &
                     - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
         enddo ; enddo
-      else
-      !$OMP parallel do default(shared)
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref &
-                  - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
-      enddo ; enddo
+        else
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref &
+                    - max(-G%bathyT(i,j)-G%Z_ref, 0.0)
+        enddo ; enddo
       endif
-      call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+        call calc_SAL(SSH, CS%e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+      endif
     endif
 
     ! This gives new answers after the change of separating SAL from tidal forcing module.
@@ -462,7 +468,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
       if (.not.CS%bq_sal_tides) then
         !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        za(i,j,1) = za(i,j,1) - GV%g_Earth * e_sal(i,j)
+        za(i,j,1) = za(i,j,1) - GV%g_Earth * CS%e_sal(i,j)
       enddo ; enddo
       endif
     endif
@@ -479,8 +485,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
       enddo ; enddo
       endif
     else  ! This block recreates older answers with tides.
-      if (.not.CS%calculate_SAL) e_sal(:,:) = 0.0
-      call calc_tidal_forcing_legacy(CS%Time, e_sal, e_sal_and_tide, e_tidal_eq, e_tidal_sal, &
+      call calc_tidal_forcing_legacy(CS%Time, CS%e_sal, e_sal_and_tide, e_tidal_eq, e_tidal_sal, &
                                      G, US, CS%tides_CSp)
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1054,11 +1059,11 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   ! New diagnostics are given for each individual field.
   if (CS%id_e_tide>0) then
     if (CS%tides_answer_date>20230630) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      e_sal_and_tide(i,j) = e_sal(i,j) + e_tidal_eq(i,j) + e_tidal_sal(i,j)
+      e_sal_and_tide(i,j) = CS%e_sal(i,j) + e_tidal_eq(i,j) + e_tidal_sal(i,j)
     enddo ; enddo ; endif
     call post_data(CS%id_e_tide, e_sal_and_tide, CS%diag)
   endif
-  if (CS%id_e_sal>0) call post_data(CS%id_e_sal, e_sal, CS%diag)
+  if (CS%id_e_sal>0) call post_data(CS%id_e_sal, CS%e_sal, CS%diag)
   if (CS%id_e_tidal_eq>0) call post_data(CS%id_e_tidal_eq, e_tidal_eq, CS%diag)
   if (CS%id_e_tidal_sal>0) call post_data(CS%id_e_tidal_sal, e_tidal_sal, CS%diag)
   if (CS%id_MassWt_u>0) call post_data(CS%id_MassWt_u, MassWt_u, CS%diag)
@@ -1083,7 +1088,7 @@ end subroutine PressureForce_FV_nonBouss
 !! To work, the following fields must be set outside of the usual (is:ie,js:je)
 !! range before this subroutine is called:
 !!   h(isB:ie+1,jsB:je+1), T(isB:ie+1,jsB:je+1), and S(isB:ie+1,jsB:je+1).
-subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta)
+subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm, pbce, eta, update_SAL)
   type(ocean_grid_type),                      intent(in)  :: G   !< Ocean grid structure
   type(verticalGrid_type),                    intent(in)  :: GV  !< Vertical grid structure
   type(unit_scale_type),                      intent(in)  :: US  !< A dimensional unit scaling type
@@ -1091,7 +1096,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   type(thermo_var_ptrs),                      intent(in)  :: tv  !< Thermodynamic variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), intent(out) :: PFu !< Zonal acceleration [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)), intent(out) :: PFv !< Meridional acceleration [L T-2 ~> m s-2]
-  type(PressureForce_FV_CS),                  intent(in)  :: CS  !< Finite volume PGF control structure
+  type(PressureForce_FV_CS),                  intent(inout) :: CS  !< Finite volume PGF control structure
   type(ALE_CS),                               pointer     :: ALE_CSp !< ALE control structure
   real, dimension(:,:),                       pointer     :: p_atm !< The pressure at the ice-ocean
                                                          !! or atmosphere-ocean interface [R L2 T-2 ~> Pa].
@@ -1101,11 +1106,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   real, dimension(SZI_(G),SZJ_(G)),          optional, intent(out) :: eta !< The sea-surface height used to
                                                          !! calculate PFu and PFv [H ~> m], with any
                                                          !! tidal contributions.
+  logical,                                   optional, intent(in)  :: update_SAL !< If true, recalculate SAL.
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: e ! Interface height in depth units [Z ~> m].
   real, dimension(SZI_(G),SZJ_(G))  :: &
     e_sal_and_tide, & ! The summation of self-attraction and loading and tidal forcing [Z ~> m].
-    e_sal, &      ! The bottom geopotential anomaly due to self-attraction and loading [Z ~> m].
     e_tidal_eq,  & ! The bottom geopotential anomaly due to tidal forces from astronomical sources
                   ! [Z ~> m].
     e_tidal_sal, & ! The bottom geopotential anomaly due to harmonic self-attraction and loading
@@ -1242,6 +1247,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   integer, dimension(2) :: EOSdom_h ! The i-computational domain for the equation of state at tracer points
   integer, dimension(2) :: EOSdom_u ! The i-computational domain for the equation of state at u-velocity points
   integer, dimension(2) :: EOSdom_v ! The i-computational domain for the equation of state at v-velocity points
+  logical :: recalc_SAL ! If true, calculate self-attraction and loading (SAL).
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer :: i, j, k, m, k2
 
@@ -1264,6 +1270,8 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   do i=Isq,Ieq+1 ; p0(i) = 0.0 ; enddo
   use_ALE = .false.
   if (associated(ALE_CSp)) use_ALE = CS%reconstruct .and. use_EOS
+
+  recalc_SAL = .False. ; if (present(update_SAL)) recalc_SAL = update_SAL
 
   h_neglect = GV%H_subroundoff
   dz_neglect = GV%dZ_subroundoff
@@ -1300,21 +1308,23 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   ! Calculate and add SAL geopotential anomaly to interface height (old answers)
   if (CS%calculate_SAL .and. CS%tides_answer_date<=20250131) then
-    !$OMP parallel do default(shared)
-    do j=Jsq,Jeq+1
-      do i=Isq,Ieq+1
-        SSH(i,j) = min(-G%bathyT(i,j) - G%Z_ref, 0.0)
+    if (recalc_SAL) then
+      !$OMP parallel do default(shared)
+      do j=Jsq,Jeq+1
+        do i=Isq,Ieq+1
+          SSH(i,j) = min(-G%bathyT(i,j) - G%Z_ref, 0.0)
+        enddo
+        do k=1,nz ; do i=Isq,Ieq+1
+          SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
+        enddo ; enddo
       enddo
-      do k=1,nz ; do i=Isq,Ieq+1
-        SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z
-      enddo ; enddo
-    enddo
-    call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+      call calc_SAL(SSH, CS%e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+    endif
 
     if (CS%tides_answer_date>20230630) then ! answers_date between [20230701, 20250131]
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        e(i,j,nz+1) = e(i,j,nz+1) - e_sal(i,j)
+        e(i,j,nz+1) = e(i,j,nz+1) - CS%e_sal(i,j)
       enddo ; enddo
     endif
   endif
@@ -1328,8 +1338,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         e(i,j,nz+1) = e(i,j,nz+1) - (e_tidal_eq(i,j) + e_tidal_sal(i,j))
       enddo ; enddo
     else  ! answers_date before 20230701
-      if (.not.CS%calculate_SAL) e_sal(:,:) = 0.0
-      call calc_tidal_forcing_legacy(CS%Time, e_sal, e_sal_and_tide, e_tidal_eq, e_tidal_sal, &
+      call calc_tidal_forcing_legacy(CS%Time, CS%e_sal, e_sal_and_tide, e_tidal_eq, e_tidal_sal, &
                                      G, US, CS%tides_CSp)
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -1488,24 +1497,27 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
 
   ! Calculate and add SAL geopotential anomaly to interface height (new answers)
   if (CS%calculate_SAL .and. CS%tides_answer_date>20250131) then
-    if (CS%sal_use_bpa) then
-      !$OMP parallel do default(shared)
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        pbot(i,j) = pa(i,j,nz+1) - GxRho_ref * (e(i,j,nz+1) - G%Z_ref)
-      enddo ; enddo
-      call calc_SAL(pbot, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
-    else
-      !$OMP parallel do default(shared)
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        SSH(i,j) = e(i,j,1) - max(-G%bathyT(i,j) - G%Z_ref, 0.0) ! Remove topography above sea level
-      enddo ; enddo
-      call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+    if (recalc_SAL) then
+      if (CS%sal_use_bpa) then
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          pbot(i,j) = pa(i,j,nz+1) - GxRho_ref * (e(i,j,nz+1) - G%Z_ref)
+        enddo ; enddo
+        call calc_SAL(pbot, CS%e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+      else
+        !$OMP parallel do default(shared)
+        do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+          SSH(i,j) = e(i,j,1) - max(-G%bathyT(i,j) - G%Z_ref, 0.0) ! Remove topography above sea level
+        enddo ; enddo
+        call calc_SAL(SSH, CS%e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
+      endif
     endif
+
     if (.not.CS%bq_sal_tides) then ; do K=1,nz+1
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        e(i,j,K) = e(i,j,K) - e_sal(i,j)
-        pa(i,j,K) = pa(i,j,K) - GxRho_ref * e_sal(i,j)
+        e(i,j,K) = e(i,j,K) - CS%e_sal(i,j)
+        pa(i,j,K) = pa(i,j,K) - GxRho_ref * CS%e_sal(i,j)
       enddo ; enddo
     enddo ; endif
   endif
@@ -2012,10 +2024,10 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     !$OMP parallel do default(shared)
     do k=1,nz
       do j=js,je ; do I=Isq,Ieq
-        PFu(I,j,k) = PFu(I,j,k) + (e_sal(i+1,j) - e_sal(i,j)) * GV%g_Earth * G%IdxCu(I,j)
+        PFu(I,j,k) = PFu(I,j,k) + (CS%e_sal(i+1,j) - CS%e_sal(i,j)) * GV%g_Earth * G%IdxCu(I,j)
       enddo ; enddo
       do J=Jsq,Jeq ; do i=is,ie
-        PFv(i,J,k) = PFv(i,J,k) + (e_sal(i,j+1) - e_sal(i,j)) * GV%g_Earth * G%IdyCv(i,J)
+        PFv(i,J,k) = PFv(i,J,k) + (CS%e_sal(i,j+1) - CS%e_sal(i,j)) * GV%g_Earth * G%IdyCv(i,J)
       enddo ; enddo
     enddo
   endif
@@ -2096,7 +2108,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     if (CS%calculate_SAL .and. (CS%tides_answer_date>20230630) .and. (.not.CS%bq_sal_tides)) then
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        eta(i,j) = eta(i,j) + e_sal(i,j)*GV%Z_to_H
+        eta(i,j) = eta(i,j) + CS%e_sal(i,j)*GV%Z_to_H
       enddo ; enddo
     endif
   endif
@@ -2142,11 +2154,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
   ! New diagnostics are given for each individual field.
   if (CS%id_e_tide>0) then
     if (CS%tides_answer_date>20230630) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      e_sal_and_tide(i,j) = e_sal(i,j) + e_tidal_eq(i,j) + e_tidal_sal(i,j)
+      e_sal_and_tide(i,j) = CS%e_sal(i,j) + e_tidal_eq(i,j) + e_tidal_sal(i,j)
     enddo ; enddo ; endif
     call post_data(CS%id_e_tide, e_sal_and_tide, CS%diag)
   endif
-  if (CS%id_e_sal>0) call post_data(CS%id_e_sal, e_sal, CS%diag)
+  if (CS%id_e_sal>0) call post_data(CS%id_e_sal, CS%e_sal, CS%diag)
   if (CS%id_e_tidal_eq>0) call post_data(CS%id_e_tidal_eq, e_tidal_eq, CS%diag)
   if (CS%id_e_tidal_sal>0) call post_data(CS%id_e_tidal_sal, e_tidal_sal, CS%diag)
   if (CS%id_MassWt_u>0) call post_data(CS%id_MassWt_u, MassWt_u, CS%diag)
@@ -2190,6 +2202,7 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
 # include "version_variable.h"
   character(len=40)  :: mdl  ! This module's name.
   logical :: use_ALE       ! If true, use the Vertical Lagrangian Remap algorithm
+  integer :: i, j, isd, ied, jsd, jed
 
   CS%initialized = .true.
   CS%diag => diag ; CS%Time => Time
@@ -2197,6 +2210,8 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
     CS%tides_CSp => tides_CSp
   if (present(SAL_CSp)) &
     CS%SAL_CSp => SAL_CSp
+
+  isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
 
   mdl = "MOM_PressureForce_FV"
   call log_version(param_file, mdl, version, "")
@@ -2227,9 +2242,11 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
                   default=20230630, do_not_log=(.not.CS%tides))
   call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
                  "If true, calculate self-attraction and loading.", default=CS%tides)
-  if (CS%calculate_SAL) &
+  if (CS%calculate_SAL) then
     call get_param(param_file, '', "SAL_USE_BPA", CS%sal_use_bpa, default=.false., &
                    do_not_log=.true.)
+    allocate(CS%e_sal(isd:ied, jsd:jed), source=0.0)
+  endif
   if ((CS%tides .or. CS%calculate_SAL)) &
     call get_param(param_file, mdl, "BOUSSINESQ_SAL_TIDES", CS%bq_sal_tides, "If true, "//&
                    "in Boussinesq mode, use an alternative method to include self-attraction "//&
@@ -2391,6 +2408,13 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
   call log_param(param_file, mdl, "GFS / G_EARTH", CS%GFS_scale, units="nondim")
 
 end subroutine PressureForce_FV_init
+
+!> Deallocates the finite volume pressure gradient control structure
+subroutine PressureForce_FV_end(CS)
+  type(PressureForce_FV_CS), intent(inout) :: CS !< Finite volume pressure control structure
+
+  if (allocated(CS%e_sal)) deallocate(CS%e_sal)
+end subroutine PressureForce_FV_end
 
 !> \namespace mom_pressureforce_fv
 !!

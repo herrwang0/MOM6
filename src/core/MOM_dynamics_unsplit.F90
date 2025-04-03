@@ -122,6 +122,8 @@ type, public :: MOM_dyn_unsplit_CS ; private
                             !! setting is used.
   logical :: debug          !< If true, write verbose checksums for debugging purposes.
   logical :: calculate_SAL  !< If true, calculate self-attraction and loading.
+  type(time_type) :: sal_recalc_interval !< Time interval bewteen SAL calculations.
+  type(time_type) :: sal_recalc_time     !< Time to calculate SAL.
   logical :: use_tides      !< If true, tidal forcing is enabled.
 
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
@@ -237,6 +239,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   real :: dt_pred   ! The time step for the predictor part of the baroclinic time stepping [T ~> s].
   real :: dt_visc   ! The time step for a part of the update due to viscosity [T ~> s].
   logical :: dyn_p_surf
+  logical :: update_SAL ! If true, (re)calculate self-attraction and loading (SAL).
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -245,6 +248,14 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   h_av(:,:,:) = 0; hp(:,:,:) = 0
   up(:,:,:) = 0; upp(:,:,:) = 0
   vp(:,:,:) = 0; vpp(:,:,:) = 0
+
+  ! Check if SAL needs an update.
+  if (CS%calculate_SAL .and. (Time_local>CS%sal_recalc_time)) then
+    CS%sal_recalc_time = CS%sal_recalc_time + CS%sal_recalc_interval
+    update_SAL = .True.
+  else
+    update_SAL = .False.
+  endif
 
   dyn_p_surf = associated(p_surf_begin) .and. associated(p_surf_end)
   if (dyn_p_surf) then
@@ -316,7 +327,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
     p_surf(i,j) = 0.75*p_surf_begin(i,j) + 0.25*p_surf_end(i,j)
   enddo ; enddo ; endif
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
-                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
+                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf, update_SAL=update_SAL)
   call cpu_clock_end(id_clock_pres)
 
   if (associated(CS%OBC)) then ; if (CS%OBC%update_OBC) then
@@ -383,7 +394,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
     p_surf(i,j) = 0.25*p_surf_begin(i,j) + 0.75*p_surf_end(i,j)
   enddo ; enddo ; endif
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
-                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
+                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf, update_SAL=update_SAL)
   call cpu_clock_end(id_clock_pres)
 
   if (associated(CS%OBC)) then ; if (CS%OBC%update_OBC) then
@@ -476,7 +487,7 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
 ! PFu = d/dx M(h_av,T,S)
   call cpu_clock_begin(id_clock_pres)
   call PressureForce(h_av, tv, CS%PFu, CS%PFv, G, GV, US, &
-                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf)
+                     CS%PressureForce_CSp, CS%ALE_CSp, p_surf, update_SAL=update_SAL)
   call cpu_clock_end(id_clock_pres)
 
   if (associated(CS%OBC)) then ; if (CS%OBC%update_OBC) then
@@ -573,7 +584,7 @@ subroutine register_restarts_dyn_unsplit(HI, GV, param_file, CS)
 end subroutine register_restarts_dyn_unsplit
 
 !> Initialize parameters and allocate memory associated with the unsplit dynamics module.
-subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS, &
+subroutine initialize_dyn_unsplit(u, v, h, tv, Time, G, GV, US, param_file, diag, CS, &
                                   Accel_diag, Cont_diag, MIS, &
                                   OBC, update_OBC_CSp, ALE_CSp, set_visc, &
                                   visc, dirs, ntrunc, cont_stencil)
@@ -586,6 +597,7 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
                                   intent(inout) :: v          !< The meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
                                   intent(inout) :: h          !< Layer thicknesses [H ~> m or kg m-2]
+  type(thermo_var_ptrs),          intent(in)    :: tv         !< Thermodynamic type
   type(time_type),        target, intent(in)    :: Time       !< The current model time.
   type(param_file_type),          intent(in)    :: param_file !< A structure to parse
                                                               !! for run-time parameters.
@@ -633,8 +645,10 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
   logical :: use_correct_dt_visc
   logical :: test_value  ! This is used to determine whether a logical parameter is being set explicitly.
   logical :: explicit_bug, explicit_fix ! These indicate which parameters are set explicitly.
-  integer :: isd, ied, jsd, jed, nz, IsdB, IedB, JsdB, JedB
-  isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed ; nz = GV%ke
+  real :: dt_sal_recalc ! Stores the value of runtime parameter SAL_RECALC_PERIOD.
+  integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
+
+  isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
 
   if (.not.associated(CS)) call MOM_error(FATAL, &
@@ -693,6 +707,16 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
                  "If true, calculate self-attraction and loading.", default=CS%use_tides)
   call get_param(param_file, mdl, "FAKE_NB", CS%fake_nb, &
                  "If true", default=.false.)
+  if (CS%calculate_SAL) then
+    call get_param(param_file, mdl, "SAL_RECALC_PERIOD", dt_sal_recalc, &
+                  "Time interval between recalculations of self-attraction and loading (SAL)."//&
+                  "If 0 (default), SAL is recalculated every dynamics time step.", units="s", &
+                  default=0.0, scale=US%s_to_T)
+    if (dt_sal_recalc<0.0) &
+      call MOM_error(FATAL, "SAL_RECALC_PERIOD needs to be larger than or equal to zero.")
+    CS%sal_recalc_interval = real_to_time(US%T_to_s * dt_sal_recalc)
+    CS%sal_recalc_time = Time
+  endif
 
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
@@ -709,7 +733,7 @@ subroutine initialize_dyn_unsplit(u, v, h, Time, G, GV, US, param_file, diag, CS
   call continuity_init(Time, G, GV, US, param_file, diag, CS%continuity_CSp)
   cont_stencil = continuity_stencil(CS%continuity_CSp)
   call CoriolisAdv_init(Time, G, GV, US, param_file, diag, CS%ADp, CS%CoriolisAdv)
-  if (CS%calculate_SAL) call SAL_init(G, GV, US, param_file, CS%SAL_CSp)
+  if (CS%calculate_SAL) call SAL_init(h, tv, G, GV, US, param_file, CS%SAL_CSp)
   if (CS%use_tides) call tidal_forcing_init(Time, G, US, param_file, CS%tides_CSp)
   call PressureForce_init(Time, G, GV, US, param_file, diag, CS%PressureForce_CSp, &
                           CS%SAL_CSp, CS%tides_CSp)
