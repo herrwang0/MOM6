@@ -87,7 +87,7 @@ use MOM_open_boundary, only : radiation_open_bdry_conds
 use MOM_open_boundary, only : open_boundary_zero_normal_flow
 use MOM_PressureForce, only : PressureForce, PressureForce_init, PressureForce_CS
 use MOM_set_visc, only : set_viscous_ML, set_visc_CS
-use MOM_self_attr_load, only : SAL_init, SAL_end, SAL_CS
+use MOM_self_attr_load, only : SAL_CS
 use MOM_tidal_forcing, only : tidal_forcing_init, tidal_forcing_end, tidal_forcing_CS
 use MOM_unit_scaling,  only : unit_scale_type
 use MOM_vert_friction, only : vertvisc, vertvisc_coef, vertvisc_init, vertvisc_CS
@@ -121,9 +121,6 @@ type, public :: MOM_dyn_unsplit_CS ; private
                             !! layer properties for viscosity.  If this is true, an older incorrect
                             !! setting is used.
   logical :: debug          !< If true, write verbose checksums for debugging purposes.
-  logical :: calculate_SAL  !< If true, calculate self-attraction and loading.
-  type(time_type) :: sal_recalc_interval !< Time interval bewteen SAL calculations.
-  type(time_type) :: sal_recalc_time     !< Time to calculate SAL.
   logical :: use_tides      !< If true, tidal forcing is enabled.
 
   logical :: module_is_initialized = .false. !< Record whether this module has been initialized.
@@ -158,8 +155,6 @@ type, public :: MOM_dyn_unsplit_CS ; private
   type(vertvisc_CS), pointer :: vertvisc_CSp => NULL()
   !> A pointer to the set_visc control structure
   type(set_visc_CS), pointer :: set_visc_CSp => NULL()
-  !> A pointer to the SAL control structure
-  type(SAL_CS) :: SAL_CSp
   !> A pointer to the tidal forcing control structure
   type(tidal_forcing_CS) :: tides_CSp
   !> A pointer to the ALE control structure.
@@ -191,7 +186,7 @@ contains
 !! 3rd order (for the inviscid momentum equations) order scheme
 subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, G, GV, US, CS, &
-                  VarMix, MEKE, pbv, Waves)
+                  VarMix, MEKE, pbv, Waves, update_SAL)
   type(ocean_grid_type),   intent(inout) :: G      !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV     !< The ocean's vertical grid structure.
   type(unit_scale_type),   intent(in)    :: US     !< A dimensional unit scaling type
@@ -227,7 +222,8 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   type(porous_barrier_type), intent(in) :: pbv     !< porous barrier fractional cell metrics
   type(wave_parameters_CS), optional, pointer :: Waves !< A pointer to a structure containing
                                  !! fields related to the surface wave conditions
-
+  logical,                  optional, intent(in) :: update_SAL   !< If true, (re)calculate self-attraction
+                                                                 !! and loading (SAL).
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: h_av, hp ! Predicted or averaged layer thicknesses [H ~> m or kg m-2]
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)) :: dz       ! Distance between the interfaces around a layer [Z ~> m]
@@ -239,7 +235,6 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   real :: dt_pred   ! The time step for the predictor part of the baroclinic time stepping [T ~> s].
   real :: dt_visc   ! The time step for a part of the update due to viscosity [T ~> s].
   logical :: dyn_p_surf
-  logical :: update_SAL ! If true, (re)calculate self-attraction and loading (SAL).
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -248,14 +243,6 @@ subroutine step_MOM_dyn_unsplit(u, v, h, tv, visc, Time_local, dt, forces, &
   h_av(:,:,:) = 0; hp(:,:,:) = 0
   up(:,:,:) = 0; upp(:,:,:) = 0
   vp(:,:,:) = 0; vpp(:,:,:) = 0
-
-  ! Check if SAL needs an update.
-  if (CS%calculate_SAL .and. (Time_local>CS%sal_recalc_time)) then
-    CS%sal_recalc_time = CS%sal_recalc_time + CS%sal_recalc_interval
-    update_SAL = .True.
-  else
-    update_SAL = .False.
-  endif
 
   dyn_p_surf = associated(p_surf_begin) .and. associated(p_surf_end)
   if (dyn_p_surf) then
@@ -585,7 +572,7 @@ end subroutine register_restarts_dyn_unsplit
 
 !> Initialize parameters and allocate memory associated with the unsplit dynamics module.
 subroutine initialize_dyn_unsplit(u, v, h, tv, Time, G, GV, US, param_file, diag, CS, &
-                                  Accel_diag, Cont_diag, MIS, &
+                                  SAL_CSp, Accel_diag, Cont_diag, MIS, &
                                   OBC, update_OBC_CSp, ALE_CSp, set_visc, &
                                   visc, dirs, ntrunc, cont_stencil)
   type(ocean_grid_type),          intent(inout) :: G          !< The ocean's grid structure.
@@ -605,6 +592,7 @@ subroutine initialize_dyn_unsplit(u, v, h, tv, Time, G, GV, US, param_file, diag
                                                               !! regulate diagnostic output.
   type(MOM_dyn_unsplit_CS),       pointer       :: CS         !< The control structure set up
                                                               !! by initialize_dyn_unsplit.
+  type(SAL_CS)                                  :: SAL_CSp    !< Self-attraction and loading control structure
   type(accel_diag_ptrs),  target, intent(inout) :: Accel_diag !< A set of pointers to the various
                                      !! accelerations in the momentum equations, which can be used
                                      !! for later derived diagnostics, like energy budgets.
@@ -645,7 +633,6 @@ subroutine initialize_dyn_unsplit(u, v, h, tv, Time, G, GV, US, param_file, diag
   logical :: use_correct_dt_visc
   logical :: test_value  ! This is used to determine whether a logical parameter is being set explicitly.
   logical :: explicit_bug, explicit_fix ! These indicate which parameters are set explicitly.
-  real :: dt_sal_recalc ! Stores the value of runtime parameter SAL_RECALC_PERIOD.
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
 
   isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
@@ -703,18 +690,6 @@ subroutine initialize_dyn_unsplit(u, v, h, tv, Time, G, GV, US, param_file, diag
                  default=.false., debuggingParam=.true.)
   call get_param(param_file, mdl, "TIDES", CS%use_tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
-  call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
-                 "If true, calculate self-attraction and loading.", default=CS%use_tides)
-  if (CS%calculate_SAL) then
-    call get_param(param_file, mdl, "SAL_RECALC_PERIOD", dt_sal_recalc, &
-                  "Time interval between recalculations of self-attraction and loading (SAL)."//&
-                  "If 0 (default), SAL is recalculated every dynamics time step.", units="s", &
-                  default=0.0, scale=US%s_to_T)
-    if (dt_sal_recalc<0.0) &
-      call MOM_error(FATAL, "SAL_RECALC_PERIOD needs to be larger than or equal to zero.")
-    CS%sal_recalc_interval = real_to_time(US%T_to_s * dt_sal_recalc)
-    CS%sal_recalc_time = Time
-  endif
 
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
@@ -731,10 +706,9 @@ subroutine initialize_dyn_unsplit(u, v, h, tv, Time, G, GV, US, param_file, diag
   call continuity_init(Time, G, GV, US, param_file, diag, CS%continuity_CSp)
   cont_stencil = continuity_stencil(CS%continuity_CSp)
   call CoriolisAdv_init(Time, G, GV, US, param_file, diag, CS%ADp, CS%CoriolisAdv)
-  if (CS%calculate_SAL) call SAL_init(h, tv, G, GV, US, param_file, CS%SAL_CSp)
   if (CS%use_tides) call tidal_forcing_init(Time, G, US, param_file, CS%tides_CSp)
   call PressureForce_init(Time, G, GV, US, param_file, diag, CS%PressureForce_CSp, &
-                          CS%SAL_CSp, CS%tides_CSp)
+                          SAL_CSp, CS%tides_CSp)
   call hor_visc_init(Time, G, GV, US, param_file, diag, CS%hor_visc)
   call vertvisc_init(MIS, Time, G, GV, US, param_file, diag, CS%ADp, dirs, &
                      ntrunc, CS%vertvisc_CSp)
@@ -786,7 +760,6 @@ subroutine end_dyn_unsplit(CS)
   DEALLOC_(CS%CAu)   ; DEALLOC_(CS%CAv)
   DEALLOC_(CS%PFu)   ; DEALLOC_(CS%PFv)
 
-  if (CS%calculate_SAL) call SAL_end(CS%SAL_CSp)
   if (CS%use_tides) call tidal_forcing_end(CS%tides_CSp)
 
   deallocate(CS)

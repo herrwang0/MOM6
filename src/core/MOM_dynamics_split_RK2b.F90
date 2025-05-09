@@ -64,7 +64,6 @@ use MOM_PressureForce,         only : PressureForce_init
 use MOM_set_visc,              only : set_viscous_ML, set_visc_CS
 use MOM_thickness_diffuse,     only : thickness_diffuse_CS
 use MOM_self_attr_load,        only : SAL_CS
-use MOM_self_attr_load,        only : SAL_init, SAL_end
 use MOM_tidal_forcing,         only : tidal_forcing_CS
 use MOM_tidal_forcing,         only : tidal_forcing_init, tidal_forcing_end
 use MOM_unit_scaling,          only : unit_scale_type
@@ -158,9 +157,6 @@ type, public :: MOM_dyn_split_RK2b_CS ; private
                                   !! calculated by the vertical viscosity to the
                                   !! barotropic solver.
   logical :: dtbt_use_bt_cont     !< If true, use BT_cont to calculate DTBT.
-  logical :: calculate_SAL        !< If true, calculate self-attraction and loading.
-  type(time_type) :: sal_recalc_interval !< Time interval bewteen SAL calculations.
-  type(time_type) :: sal_recalc_time     !< Time to calculate SAL.
   logical :: use_tides            !< If true, tidal forcing is enabled.
   logical :: remap_aux            !< If true, apply ALE remapping to all of the auxiliary 3-D
                                   !! variables that are needed to reproduce across restarts,
@@ -238,8 +234,6 @@ type, public :: MOM_dyn_split_RK2b_CS ; private
   type(set_visc_CS),      pointer :: set_visc_CSp      => NULL()
   !> A pointer to the barotropic stepping control structure
   type(barotropic_CS) :: barotropic_CSp
-  !> A pointer to the SAL control structure
-  type(SAL_CS) :: SAL_CSp
   !> A pointer to the tidal forcing control structure
   type(tidal_forcing_CS) :: tides_CSp
   !> A pointer to the harmonic analysis control structure
@@ -283,8 +277,9 @@ contains
 
 !> RK2 splitting for time stepping MOM adiabatic dynamics
 subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forces, &
-                                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, &
-                                   G, GV, US, CS, calc_dtbt, VarMix, MEKE, thickness_diffuse_CSp, pbv, Waves)
+                                   p_surf_begin, p_surf_end, uh, vh, uhtr, vhtr, eta_av, G, GV, &
+                                   US, CS, calc_dtbt, VarMix, MEKE, thickness_diffuse_CSp, pbv, &
+                                   Waves, update_SAL)
   type(ocean_grid_type),             intent(inout) :: G            !< Ocean grid structure
   type(verticalGrid_type),           intent(in)    :: GV           !< Ocean vertical grid structure
   type(unit_scale_type),             intent(in)    :: US           !< A dimensional unit scaling type
@@ -326,7 +321,8 @@ subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forc
   type(porous_barrier_type),         intent(in)    :: pbv          !< porous barrier fractional cell metrics
   type(wave_parameters_CS), optional, pointer      :: Waves        !< A pointer to a structure containing
                                                                    !! fields related to the surface wave conditions
-
+  logical,                  optional, intent(in)   :: update_SAL   !< If true, (re)calculate self-attraction
+                                                                   !! and loading (SAL).
   ! local variables
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)) :: up  ! Predicted zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G),SZJB_(G),SZK_(GV)) :: vp  ! Predicted meridional velocity [L T-1 ~> m s-1].
@@ -395,7 +391,6 @@ subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forc
   logical :: BT_cont_BT_thick ! If true, use the BT_cont_type to estimate the
                               ! relative weightings of the layers in calculating
                               ! the barotropic accelerations.
-  logical :: update_SAL ! If true, (re)calculate self-attraction and loading (SAL).
   !---For group halo pass
   logical :: showCallTree, sym
 
@@ -428,14 +423,6 @@ subroutine step_MOM_dyn_split_RK2b(u_av, v_av, h, tv, visc, Time_local, dt, forc
       call check_redundant("Start predictor u ", u_av, v_av, G, unscale=US%L_T_to_m_s)
       call check_redundant("Start predictor uh ", uh, vh, G, unscale=GV%H_to_MKS*US%L_to_m**2*US%s_to_T)
     endif
-  endif
-
-  ! Check if SAL needs an update.
-  if (CS%calculate_SAL .and. (Time_local>CS%sal_recalc_time)) then
-    CS%sal_recalc_time = CS%sal_recalc_time + CS%sal_recalc_interval
-    update_SAL = .True.
-  else
-    update_SAL = .False.
   endif
 
   dyn_p_surf = associated(p_surf_begin) .and. associated(p_surf_end)
@@ -1255,10 +1242,9 @@ end subroutine remap_dyn_split_RK2b_aux_vars
 !> This subroutine initializes all of the variables that are used by this
 !! dynamic core, including diagnostics and the cpu clocks.
 subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, param_file, &
-                      diag, CS, HA_CSp, restart_CS, dt, Accel_diag, Cont_diag, MIS, &
-                      VarMix, MEKE, thickness_diffuse_CSp,                  &
-                      OBC, update_OBC_CSp, ALE_CSp, set_visc, &
-                      visc, dirs, ntrunc, pbv, calc_dtbt, cont_stencil)
+                      diag, CS, SAL_CSp, HA_CSp, restart_CS, dt, Accel_diag, Cont_diag, MIS, &
+                      VarMix, MEKE, thickness_diffuse_CSp, OBC, update_OBC_CSp, ALE_CSp, &
+                      set_visc, visc, dirs, ntrunc, pbv, calc_dtbt, cont_stencil)
   type(ocean_grid_type),            intent(inout) :: G          !< ocean grid structure
   type(verticalGrid_type),          intent(in)    :: GV         !< ocean vertical grid structure
   type(unit_scale_type),            intent(in)    :: US         !< A dimensional unit scaling type
@@ -1278,6 +1264,7 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
   type(param_file_type),            intent(in)    :: param_file !< parameter file for parsing
   type(diag_ctrl),          target, intent(inout) :: diag       !< to control diagnostics
   type(MOM_dyn_split_RK2b_CS),      pointer       :: CS         !< module control structure
+  type(SAL_CS)                                    :: SAL_CSp    !< Self-attraction and loading control structure
   type(harmonic_analysis_CS),       pointer       :: HA_CSp     !< A pointer to the control structure of the
                                                                 !! harmonic analysis module
   type(MOM_restart_CS),             intent(inout) :: restart_CS !< MOM restart control structure
@@ -1314,7 +1301,6 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
   logical :: debug_truncations
   logical :: read_uv, read_h2
   logical :: visc_rem_bug ! Stores the value of runtime paramter VISC_REM_BUG.
-  real :: dt_sal_recalc ! Stores the value of runtime parameter SAL_RECALC_PERIOD.
 
   integer :: i, j, k, is, ie, js, je, isd, ied, jsd, jed, nz
   integer :: IsdB, IedB, JsdB, JedB
@@ -1336,18 +1322,6 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
   call log_version(param_file, mdl, version, "")
   call get_param(param_file, mdl, "TIDES", CS%use_tides, &
                  "If true, apply tidal momentum forcing.", default=.false.)
-  call get_param(param_file, mdl, "CALCULATE_SAL", CS%calculate_SAL, &
-                 "If true, calculate self-attraction and loading.", default=CS%use_tides)
-  if (CS%calculate_SAL) then
-    call get_param(param_file, mdl, "SAL_RECALC_PERIOD", dt_sal_recalc, &
-                  "Time interval between recalculations of self-attraction and loading (SAL)."//&
-                  "If 0 (default), SAL is recalculated every dynamics time step.", units="s", &
-                  default=0.0, scale=US%s_to_T)
-    if (dt_sal_recalc<0.0) &
-      call MOM_error(FATAL, "SAL_RECALC_PERIOD needs to be larger than or equal to zero.")
-    CS%sal_recalc_interval = real_to_time(US%T_to_s * dt_sal_recalc)
-    CS%sal_recalc_time = Time
-  endif
   call get_param(param_file, mdl, "BE", CS%be, &
                  "If SPLIT is true, BE determines the relative weighting "//&
                  "of a  2nd-order Runga-Kutta baroclinic time stepping "//&
@@ -1449,7 +1423,6 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
   call continuity_init(Time, G, GV, US, param_file, diag, CS%continuity_CSp)
   cont_stencil = continuity_stencil(CS%continuity_CSp)
   call CoriolisAdv_init(Time, G, GV, US, param_file, diag, CS%ADp, CS%CoriolisAdv)
-  if (CS%calculate_SAL) call SAL_init(h, tv, G, GV, US, param_file, CS%SAL_CSp, restart_CS)
   if (CS%use_tides) then
     call tidal_forcing_init(Time, G, US, param_file, CS%tides_CSp, CS%HA_CSp)
     HA_CSp => CS%HA_CSp
@@ -1457,7 +1430,7 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
     HA_CSp => NULL()
   endif
   call PressureForce_init(Time, G, GV, US, param_file, diag, CS%PressureForce_CSp, &
-                          CS%SAL_CSp, CS%tides_CSp)
+                          SAL_CSp, CS%tides_CSp)
   call hor_visc_init(Time, G, GV, US, param_file, diag, CS%hor_visc, ADp=CS%ADp)
   call vertvisc_init(MIS, Time, G, GV, US, param_file, diag, CS%ADp, dirs, &
                      ntrunc, CS%vertvisc_CSp)
@@ -1493,7 +1466,7 @@ subroutine initialize_dyn_split_RK2b(u, v, h, tv, uh, vh, eta, Time, G, GV, US, 
 
   call barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, &
                        CS%barotropic_CSp, restart_CS, calc_dtbt, CS%BT_cont, &
-                       CS%OBC, CS%SAL_CSp, HA_CSp)
+                       CS%OBC, SAL_CSp, HA_CSp)
 
   flux_units = get_flux_units(GV)
   thickness_units = get_thickness_units(GV)
@@ -1708,7 +1681,6 @@ subroutine end_dyn_split_RK2b(CS)
   deallocate(CS%vertvisc_CSp)
 
   call hor_visc_end(CS%hor_visc)
-  if (CS%calculate_SAL) call SAL_end(CS%SAL_CSp)
   if (CS%use_tides) call tidal_forcing_end(CS%tides_CSp)
   call CoriolisAdv_end(CS%CoriolisAdv)
 

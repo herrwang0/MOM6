@@ -129,6 +129,7 @@ use MOM_sum_output,            only : write_energy, accumulate_net_input
 use MOM_sum_output,            only : MOM_sum_output_init, MOM_sum_output_end
 use MOM_sum_output,            only : sum_output_CS
 use MOM_ALE_sponge,            only : init_ALE_sponge_diags, ALE_sponge_CS
+use MOM_self_attr_load,        only : SAL_CS, SAL_init, SAL_end
 use MOM_thickness_diffuse,     only : thickness_diffuse, thickness_diffuse_init
 use MOM_thickness_diffuse,     only : thickness_diffuse_end, thickness_diffuse_CS
 use MOM_tracer_advect,         only : advect_tracer, tracer_advect_init
@@ -310,6 +311,10 @@ type, public :: MOM_control_struct ; private
   logical :: useWaves                !< If true, update Stokes drift
   logical :: use_diabatic_time_bug   !< If true, uses the wrong calendar time for diabatic processes,
                                      !! as was done in MOM6 versions prior to February 2018.
+  logical :: calculate_SAL           !< If true, calculate self-attraction and loading (SAL).
+  type(time_type) :: sal_recalc_interval !< Time interval bewteen SAL calculations.
+  type(time_type) :: sal_recalc_time     !< Time to calculate SAL.
+  logical :: use_tides               !< If true, tidal forcing is enabled.
   real :: dtbt_reset_period          !< The time interval between dynamic recalculation of the
                                      !! barotropic time step [T ~> s]. If this is negative dtbt is never
                                      !! calculated, and if it is 0, dtbt is calculated every step.
@@ -393,8 +398,10 @@ type, public :: MOM_control_struct ; private
     !< Pointer to the control structure used for the unsplit RK2 dynamics
   type(MOM_dyn_split_RK2_CS),    pointer :: dyn_split_RK2_CSp => NULL()
     !< Pointer to the control structure used for the mode-split RK2 dynamics
-  type(MOM_dyn_split_RK2b_CS),    pointer :: dyn_split_RK2b_CSp => NULL()
+  type(MOM_dyn_split_RK2b_CS),   pointer :: dyn_split_RK2b_CSp => NULL()
     !< Pointer to the control structure used for an alternate version of the mode-split RK2 dynamics
+  type(SAL_CS)                  :: SAL_CSp
+    !> Pointer to the control structure used for self-attraction and loading
   type(harmonic_analysis_CS),    pointer :: HA_CSp => NULL()
     !< Pointer to the control structure for harmonic analysis
   type(thickness_diffuse_CS) :: thickness_diffuse_CSp
@@ -1192,6 +1199,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_tr_adv, &
 
   logical :: calc_dtbt  ! Indicates whether the dynamically adjusted
                         ! barotropic time step needs to be updated.
+  logical :: update_SAL ! If true, self-attraction and loading (SAL) needs to be updated.
   logical :: showCallTree
 
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
@@ -1281,6 +1289,14 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_tr_adv, &
     endif
   endif
 
+  ! Check if SAL needs an update.
+  if (CS%calculate_SAL .and. (Time_local>CS%sal_recalc_time)) then
+    CS%sal_recalc_time = CS%sal_recalc_time + CS%sal_recalc_interval
+    update_SAL = .True.
+  else
+    update_SAL = .False.
+  endif
+
   if (CS%do_dynamics .and. CS%split) then !--------------------------- start SPLIT
     ! This section uses a split time stepping scheme for the dynamic equations,
     ! basically the stacked shallow water equations with viscosity.
@@ -1303,7 +1319,7 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_tr_adv, &
       call step_MOM_dyn_split_RK2(u, v, h, CS%tv, CS%visc, Time_local, dt, forces, &
                   p_surf_begin, p_surf_end, CS%uh, CS%vh, CS%uhtr, CS%vhtr, &
                   CS%eta_av_bc, G, GV, US, CS%dyn_split_RK2_CSp, calc_dtbt, CS%VarMix, &
-                  CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, waves=waves)
+                  CS%MEKE, CS%thickness_diffuse_CSp, CS%pbv, waves=waves, update_SAL=update_SAL)
     endif
     if (showCallTree) call callTree_waypoint("finished step_MOM_dyn_split (step_MOM)")
 
@@ -2288,6 +2304,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                                ! the velocity points.
   logical :: calc_dtbt         ! Indicates whether the dynamically adjusted barotropic
                                ! time step needs to be updated before it is used.
+  real :: dt_sal_recalc        ! Stores the value of runtime parameter SAL_RECALC_PERIOD.
   logical :: debug_truncations ! If true, turn on diagnostics useful for debugging truncations.
   integer :: first_direction   ! An integer that indicates which direction is to be
                                ! updated first in directionally split parts of the
@@ -2458,7 +2475,20 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                  default=.false.)
   call get_param(param_file, "MOM", "USE_WAVES", CS%UseWaves, default=.false., &
                  do_not_log=.true.)
-
+  call get_param(param_file, "MOM", "TIDES", CS%use_tides, &
+                 "If true, apply tidal momentum forcing.", default=.false.)
+  call get_param(param_file, "MOM", "CALCULATE_SAL", CS%calculate_SAL, &
+                 "If true, calculate self-attraction and loading.", default=CS%use_tides)
+  if (CS%calculate_SAL) then
+    call get_param(param_file, "MOM", "SAL_RECALC_PERIOD", dt_sal_recalc, &
+                   "Time interval between recalculations of self-attraction and loading (SAL)."//&
+                   "If 0 (default), SAL is recalculated every dynamics time step.", units="s", &
+                   default=0.0, scale=US%s_to_T)
+    if (dt_sal_recalc<0.0) &
+      call MOM_error(FATAL, "SAL_RECALC_PERIOD needs to be larger than or equal to zero.")
+    CS%sal_recalc_interval = real_to_time(US%T_to_s * dt_sal_recalc)
+    CS%sal_recalc_time = Time
+  endif
   call get_param(param_file, "MOM", "DEBUG", CS%debug, &
                  "If true, write out verbose debugging data.", &
                  default=.false., debuggingParam=.true.)
@@ -3425,18 +3455,21 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   if (CS%use_porbar) &
     call porous_barriers_init(Time, GV, US, param_file, diag, CS%por_bar_CS)
 
+  if (CS%calculate_SAL) &
+    call SAL_init(CS%h, CS%tv, G, GV, US, param_file, CS%SAL_CSp, restart_CSp)
+
   if (CS%split) then
     allocate(eta(SZI_(G),SZJ_(G)), source=0.0)
     if (CS%use_alt_split) then
       call initialize_dyn_split_RK2b(CS%u, CS%v, CS%h, CS%tv, CS%uh, CS%vh, eta, Time, &
-              G, GV, US, param_file, diag, CS%dyn_split_RK2b_CSp, CS%HA_CSp, restart_CSp, &
-              CS%dt, CS%ADp, CS%CDp, MOM_internal_state, CS%VarMix, CS%MEKE, &
+              G, GV, US, param_file, diag, CS%dyn_split_RK2b_CSp, CS%SAL_CSp, CS%HA_CSp, &
+              restart_CSp, CS%dt, CS%ADp, CS%CDp, MOM_internal_state, CS%VarMix, CS%MEKE, &
               CS%thickness_diffuse_CSp, CS%OBC, CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, &
               CS%visc, dirs, CS%ntrunc, CS%pbv, calc_dtbt=calc_dtbt, cont_stencil=CS%cont_stencil)
     else
       call initialize_dyn_split_RK2(CS%u, CS%v, CS%h, CS%tv, CS%uh, CS%vh, eta, Time, &
-              G, GV, US, param_file, diag, CS%dyn_split_RK2_CSp, CS%HA_CSp, restart_CSp, &
-              CS%dt, CS%ADp, CS%CDp, MOM_internal_state, CS%VarMix, CS%MEKE, &
+              G, GV, US, param_file, diag, CS%dyn_split_RK2_CSp, CS%SAL_CSp, CS%HA_CSp, &
+              restart_CSp, CS%dt, CS%ADp, CS%CDp, MOM_internal_state, CS%VarMix, CS%MEKE, &
               CS%thickness_diffuse_CSp, CS%OBC, CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, &
               CS%visc, dirs, CS%ntrunc, CS%pbv, calc_dtbt=calc_dtbt, cont_stencil=CS%cont_stencil)
     endif
@@ -3454,13 +3487,13 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     endif
   elseif (CS%use_RK2) then
     call initialize_dyn_unsplit_RK2(CS%u, CS%v, CS%h, CS%tv, Time, G, GV,  &
-            US, param_file, diag, CS%dyn_unsplit_RK2_CSp,                  &
+            US, param_file, diag, CS%dyn_unsplit_RK2_CSp, CS%SAL_CSp,      &
             CS%ADp, CS%CDp, MOM_internal_state, CS%OBC,                    &
             CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, CS%visc, dirs, &
             CS%ntrunc, cont_stencil=CS%cont_stencil)
   else
     call initialize_dyn_unsplit(CS%u, CS%v, CS%h, CS%tv, Time, G, GV,      &
-            US, param_file, diag, CS%dyn_unsplit_CSp,                      &
+            US, param_file, diag, CS%dyn_unsplit_CSp, CS%SAL_CSp,          &
             CS%ADp, CS%CDp, MOM_internal_state, CS%OBC,                    &
             CS%update_OBC_CSp, CS%ALE_CSp, CS%set_visc_CSp, CS%visc, dirs, &
             CS%ntrunc, cont_stencil=CS%cont_stencil)
@@ -4392,6 +4425,8 @@ subroutine MOM_end(CS)
   call MOM_diagnostics_end(CS%diagnostics_CSp, CS%ADp, CS%CDp)
 
   if (CS%offline_tracer_mode) call offline_transport_end(CS%offline_CSp)
+
+  if (CS%calculate_SAL) call SAL_end(CS%SAL_CSp)
 
   if (CS%split .and. CS%use_alt_split) then
     call end_dyn_split_RK2b(CS%dyn_split_RK2b_CSp)
