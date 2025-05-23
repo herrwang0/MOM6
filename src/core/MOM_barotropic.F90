@@ -291,6 +291,7 @@ type, public :: barotropic_CS ; private
                              !! consistent with tidal self-attraction and loading
                              !! used within the barotropic solver
   logical :: use_pormed = .false. !< If true,
+  logical :: use_pormed_dz = .false.
   logical :: wt_uv_bug = .true. !< If true, recover a bug that wt_[uv] that is not normalized.
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
@@ -1626,6 +1627,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     enddo ; enddo
   endif
   if (CS%linear_wave_drag) then
+    if (CS%use_pormed) then
     !$OMP do
     do j=js,je ; do I=is-1,ie ; if (CS%lin_drag_u(I,j) > 0.0) then
       Htot = 0.5 * (eta(i,j) + eta(i+1,j))
@@ -1644,6 +1646,26 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
       Rayleigh_v(i,J) = CS%lin_drag_v(i,J) / Htot
     endif ; enddo ; enddo
+    else
+    !$OMP do
+    do j=js,je ; do I=is-1,ie ; if (CS%lin_drag_u(I,j) > 0.0) then
+      Htot = 0.5 * (eta(i,j) + eta(i+1,j))
+      if (GV%Boussinesq) &
+        Htot = Htot + 0.5*GV%Z_to_H * (G%depc_ave(i,j) + G%depc_ave(i+1,j))
+      bt_rem_u(I,j) = bt_rem_u(I,j) * (Htot / (Htot + CS%lin_drag_u(I,j) * dtbt))
+
+      Rayleigh_u(I,j) = CS%lin_drag_u(I,j) / Htot
+    endif ; enddo ; enddo
+    !$OMP do
+    do J=js-1,je ; do i=is,ie ; if (CS%lin_drag_v(i,J) > 0.0) then
+      Htot = 0.5 * (eta(i,j) + eta(i,j+1))
+      if (GV%Boussinesq) &
+        Htot = Htot + 0.5*GV%Z_to_H * (G%depc_ave(i,j) + G%depc_ave(i,j+1))
+      bt_rem_v(i,J) = bt_rem_v(i,J) * (Htot / (Htot + CS%lin_drag_v(i,J) * dtbt))
+
+      Rayleigh_v(i,J) = CS%lin_drag_v(i,J) / Htot
+    endif ; enddo ; enddo
+    endif
   endif
 
   ! Here is an example of how the filter equations are time stepped to determine the M2 and K1 velocities.
@@ -4788,6 +4810,8 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     call MOM_error(FATAL, "barotropic_init: BT_THICK_SCHEME FROM_BT_CONT "//&
                            "can only be used if USE_BT_CONT_TYPE is defined.")
 
+  call get_param(param_file, mdl, "USE_PM_DZ", CS%use_pormed_dz, &
+                 default=CS%use_pormed, do_not_log=.true.)
   call get_param(param_file, mdl, "BT_STRONG_DRAG", CS%strong_drag, &
                  "If true, use a stronger estimate of the retarding "//&
                  "effects of strong bottom drag, by making it implicit "//&
