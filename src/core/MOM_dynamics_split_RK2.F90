@@ -335,7 +335,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
                                                                    !! interface height diffusivities
   type(porous_barrier_type),         intent(in)    :: pbv          !< porous barrier fractional cell metrics
   type(stochastic_CS),     optional, intent(inout) :: STOCH        !< Stochastic control structure
-  type(cont_ppm_hatvel),         intent(inout)    :: hatvel          !< porous barrier fractional cell metrics
+  type(cont_ppm_hatvel),   optional, intent(inout) :: hatvel          !< porous barrier fractional cell metrics
   type(wave_parameters_CS), optional, pointer      :: Waves        !< A pointer to a structure containing
                                                                    !! fields related to the surface wave conditions
 

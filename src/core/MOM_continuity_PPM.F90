@@ -87,7 +87,7 @@ contains
 !> Time steps the layer thicknesses, using a monotonically limit, directionally split PPM scheme,
 !! based on Lin (1994).
 subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhbt, vhbt, &
-                          visc_rem_u, visc_rem_v, u_cor, v_cor, BT_cont, du_cor, dv_cor, hatvel)
+                          visc_rem_u, visc_rem_v, u_cor, v_cor, hatvel, BT_cont, du_cor, dv_cor)
   type(ocean_grid_type),   intent(in)    :: G   !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV  !< Vertical grid structure.
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), &
@@ -827,7 +827,7 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
     enddo
   endif
 
-  if ((set_BT_cont .and. allocated(BT_cont%h_u)) .or. present(hatvel)) then
+  if (set_BT_cont) then ; if (allocated(BT_cont%h_u)) then
     if (present(u_cor)) then
       call zonal_flux_thickness(u_cor, h_in, h_W, h_E, dt, G, GV, US, LB, &
                                 CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, h_u=BT_cont%h_u, hatvel=hatvel)
@@ -835,7 +835,7 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
       call zonal_flux_thickness(u, h_in, h_W, h_E, dt, G, GV, US, LB, &
                                 CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaU, visc_rem_u, h_u=BT_cont%h_u, hatvel=hatvel)
     endif
-  endif
+  endif ; endif
 
   if (present(hatvel)) then
     if (present(u_cor)) then
@@ -1762,7 +1762,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
     enddo
   endif
 
-  if ((set_BT_cont .and. allocated(BT_cont%h_v)) .or. present(hatvel)) then
+  if (set_BT_cont) then ; if (allocated(BT_cont%h_v)) then
     if (present(v_cor)) then
       call meridional_flux_thickness(v_cor, h_in, h_S, h_N, dt, G, GV, US, LB, &
                                     CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, h_v=BT_cont%h_v, hatvel=hatvel)
@@ -1770,7 +1770,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
       call meridional_flux_thickness(v, h_in, h_S, h_N, dt, G, GV, US, LB, &
                                     CS%vol_CFL, CS%marginal_faces, OBC, por_face_areaV, visc_rem_v, h_v=BT_cont%h_v, hatvel=hatvel)
     endif
-  endif
+  endif ; endif
 
   if (present(hatvel)) then
     if (present(v_cor)) then
