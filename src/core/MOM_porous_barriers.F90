@@ -56,11 +56,13 @@ integer, parameter :: ETA_INTERP_MIN   = 2
 integer, parameter :: ETA_INTERP_ARITH = 3
 integer, parameter :: ETA_INTERP_HARM  = 4
 integer, parameter :: ETA_INTERP_UPWND = 5
+integer, parameter :: ETA_INTERP_DNWND = 6
 character(len=20), parameter :: ETA_INTERP_MAX_STRING = "MAX"
 character(len=20), parameter :: ETA_INTERP_MIN_STRING = "MIN"
 character(len=20), parameter :: ETA_INTERP_ARITH_STRING = "ARITHMETIC"
 character(len=20), parameter :: ETA_INTERP_HARM_STRING = "HARMONIC"
 character(len=20), parameter :: ETA_INTERP_UPWND_STRING = "UPWIND"
+character(len=20), parameter :: ETA_INTERP_DNWND_STRING = "DOWNWIND"
 integer, parameter :: ETA_CONT_MAR = 1
 integer, parameter :: ETA_CONT_AVG = 2
 integer, parameter :: ETA_CONT_EDG = 3
@@ -412,6 +414,27 @@ subroutine calc_eta_at_uv(eta_u, eta_v, interp, dmask, h, tv, G, GV, US, eta_bt,
           endif
         endif ; enddo ; enddo
       enddo
+    case (ETA_INTERP_DNWND)  ! Downwind
+      do K=ks,nk+1
+        do j=js,je ; do I=Isq,Ieq ; if (G%porous_DavgU(I,j) < dmask) then
+          if (u(I,j,1) < 0.0) then
+            eta_u(I,j,K) = eta(i,j,K)
+          elseif (u(I,j,1) > 0.0) then
+            eta_u(I,j,K) = eta(i+1,j,K)
+          else
+            eta_u(I,j,K) = 0.5 * (eta(i,j,K) + eta(i+1,j,K))
+          endif
+        endif ; enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie ; if (G%porous_DavgV(i,J) < dmask) then
+          if (v(i,J,1) < 0.0) then
+            eta_v(i,J,K) = eta(i,j,K)
+          elseif (v(i,J,1) > 0.0) then
+            eta_v(i,J,K) = eta(i,j+1,K)
+          else
+            eta_v(i,J,K) = 0.5 * (eta(i,j,K) + eta(i,j+1,K))
+          endif
+        endif ; enddo ; enddo
+      enddo
     case default
       call MOM_error(FATAL, "porous_widths::calc_eta_at_uv: "//&
                      "invalid value for eta interpolation method.")
@@ -610,6 +633,7 @@ subroutine porous_barriers_init(Time, GV, US, param_file, diag, CS)
     case (ETA_INTERP_ARITH_STRING) ; CS%eta_interp = ETA_INTERP_ARITH
     case (ETA_INTERP_HARM_STRING) ; CS%eta_interp = ETA_INTERP_HARM
     case (ETA_INTERP_UPWND_STRING) ; CS%eta_interp = ETA_INTERP_UPWND
+    case (ETA_INTERP_DNWND_STRING) ; CS%eta_interp = ETA_INTERP_DNWND
     case default
       call MOM_error(FATAL, "porous_barriers_init: Unrecognized setting "// &
             "#define PORBAR_ETA_INTERP "//trim(interp_method)//" found in input file.")
