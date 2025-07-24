@@ -1322,7 +1322,7 @@ end subroutine vertvisc_remnant
 !> Calculate the coupling coefficients (CS%a_u, CS%a_v, CS%a_u_gl90, CS%a_v_gl90)
 !! and effective layer thicknesses (CS%h_u and CS%h_v) for later use in the
 !! applying the implicit vertical viscosity via vertvisc().
-subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, VarMix)
+subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, VarMix, use_ave_topo)
   type(ocean_grid_type),   intent(in)    :: G      !< Ocean grid structure
   type(verticalGrid_type), intent(in)    :: GV     !< Ocean vertical grid structure
   type(unit_scale_type),   intent(in)    :: US     !< A dimensional unit scaling type
@@ -1342,6 +1342,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
   type(vertvisc_CS),       pointer       :: CS     !< Vertical viscosity control structure
   type(ocean_OBC_type),    pointer       :: OBC    !< Open boundary condition structure
   type(VarMix_CS),         intent(in) :: VarMix !< Variable mixing coefficients
+  logical, optional, intent(in) :: use_ave_topo
   ! Field from forces used in this subroutine:
   !   ustar: the friction velocity [Z T-1 ~> m s-1], used here as the mixing
   !     velocity in the mixed layer if NKML > 1 in a bulk mixed layer.
@@ -1423,6 +1424,9 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
     zi_dir   !  A trinary logical array indicating which thicknesses to use for
              !  finding z_clear.
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
+  real, dimension(SZI_(G),SZJ_(G)) :: topo
+  logical :: ave_topo
+
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB ; nz = GV%ke
 
@@ -1431,6 +1435,18 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
 
   if (.not.CS%initialized) call MOM_error(FATAL,"MOM_vert_friction(coef): "// &
          "Module must be initialized before it is used.")
+
+  ave_topo = .false.
+  if (present(use_ave_topo)) ave_topo = use_ave_topo
+  if (ave_topo) then
+    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      topo(i,j) = G%depc_ave(i,j)
+    enddo ; enddo
+  else
+    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      topo(i,j) = G%bathyT(i,j)
+    enddo ; enddo
+  endif
 
   h_neglect = GV%H_subroundoff
   dz_neglect = GV%dZ_subroundoff
@@ -1484,7 +1500,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
       dz_arith(I,k) = 0.5*(dz(i+1,j,k)+dz(i,j,k))
     endif ; enddo ; enddo
     do I=Isq,Ieq
-      Dmin(I) = min(G%bathyT(i,j), G%bathyT(i+1,j))
+      Dmin(I) = min(topo(i,j), topo(i+1,j))
       zi_dir(I) = 0
     enddo
 
@@ -1496,14 +1512,14 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
             h_harm(I,k) = h(i,j,k) ; h_arith(I,k) = h(i,j,k) ; h_delta(I,k) = 0.
             dz_harm(I,k) = dz(i,j,k) ; dz_arith(I,k) = dz(i,j,k)
           enddo
-          Dmin(I) = G%bathyT(i,j)
+          Dmin(I) = topo(i,j)
           zi_dir(I) = -1
         elseif (OBC%segment(OBC%segnum_u(I,j))%direction == OBC_DIRECTION_W) then
           do k=1,nz
             h_harm(I,k) = h(i+1,j,k) ; h_arith(I,k) = h(i+1,j,k) ; h_delta(I,k) = 0.
             dz_harm(I,k) = dz(i+1,j,k) ; dz_arith(I,k) = dz(i+1,j,k)
           enddo
-          Dmin(I) = G%bathyT(i+1,j)
+          Dmin(I) = topo(i+1,j)
           zi_dir(I) = 1
         endif
       endif ; enddo
@@ -1528,7 +1544,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
       endif ; enddo ; enddo ! i & k loops
     else ! Not harmonic_visc
       do I=Isq,Ieq ; zh(I) = 0.0 ; z_i(I,nz+1) = 0.0 ; enddo
-      do i=Isq,Ieq+1 ; zcol(i) = -G%bathyT(i,j) ; enddo
+      do i=Isq,Ieq+1 ; zcol(i) = -topo(i,j) ; enddo
       do k=nz,1,-1
         do i=Isq,Ieq+1 ; zcol(i) = zcol(i) + dz(i,j,k) ; enddo
         do I=Isq,Ieq ; if (do_i(I)) then
@@ -1695,7 +1711,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
       dz_arith(i,k) = 0.5*(dz(i,j+1,k)+dz(i,j,k))
     endif ; enddo ; enddo
     do i=is,ie
-      Dmin(i) = min(G%bathyT(i,j), G%bathyT(i,j+1))
+      Dmin(i) = min(topo(i,j), topo(i,j+1))
       zi_dir(i) = 0
     enddo
 
@@ -1707,14 +1723,14 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
             h_harm(I,k) = h(i,j,k) ; h_arith(I,k) = h(i,j,k) ; h_delta(i,k) = 0.
             dz_harm(I,k) = dz(i,j,k) ; dz_arith(I,k) = dz(i,j,k)
           enddo
-          Dmin(I) = G%bathyT(i,j)
+          Dmin(I) = topo(i,j)
           zi_dir(I) = -1
         elseif (OBC%segment(OBC%segnum_v(i,J))%direction == OBC_DIRECTION_S) then
           do k=1,nz
             h_harm(i,k) = h(i,j+1,k) ; h_arith(i,k) = h(i,j+1,k) ; h_delta(i,k) = 0.
             dz_harm(i,k) = dz(i,j+1,k) ; dz_arith(i,k) = dz(i,j+1,k)
           enddo
-          Dmin(i) = G%bathyT(i,j+1)
+          Dmin(i) = topo(i,j+1)
           zi_dir(i) = 1
         endif
       endif ; enddo
@@ -1741,8 +1757,8 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
     else ! Not harmonic_visc
       do i=is,ie
         zh(i) = 0.0 ; z_i(i,nz+1) = 0.0
-        zcol1(i) = -G%bathyT(i,j)
-        zcol2(i) = -G%bathyT(i,j+1)
+        zcol1(i) = -topo(i,j)
+        zcol2(i) = -topo(i,j+1)
       enddo
       do k=nz,1,-1 ; do i=is,ie ; if (do_i(i)) then
         zh(i) = zh(i) + dz_harm(i,k)
