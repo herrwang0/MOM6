@@ -2642,6 +2642,13 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
       write(mesg, *) 'DEBUG accel_layer_[uv]', accel_layer_u(I-1,j,1), accel_layer_u(I,j,1), accel_layer_v(i,J-1,1), accel_layer_v(i,J,1)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
+
+      write(mesg, *) 'DEBUG depth[uv]', G%bathyT(i-1:i+1,j-1)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+      write(mesg, *) 'DEBUG depth[uv]', G%bathyT(i-1:i+1,j)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+      write(mesg, *) 'DEBUG depth[uv]', G%bathyT(i-1:i+1,j+1)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   enddo ; enddo
   if (id_clock_calc > 0) call cpu_clock_end(id_clock_calc)
