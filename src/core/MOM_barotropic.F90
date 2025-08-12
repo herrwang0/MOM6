@@ -2250,6 +2250,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
           write(mesg, *) 'DEBUG [uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG bt_rem_[uv]', bt_rem_u(I-1,j), bt_rem_u(I,j), bt_rem_v(i,J-1), bt_rem_v(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
           write(mesg, *) 'DEBUG PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
           write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
@@ -2338,6 +2340,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       do j=js,je ; do i=is,ie
         if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
           write(mesg, *) 'DEBUG [uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG bt_rem_[uv]', bt_rem_u(I-1,j), bt_rem_u(I,j), bt_rem_v(i,J-1), bt_rem_v(i,J)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
           write(mesg, *) 'DEBUG PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
@@ -2810,7 +2814,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   enddo ; enddo
-  
+
   if (id_clock_calc_post > 0) call cpu_clock_end(id_clock_calc_post)
 
   ! Calculate diagnostic quantities.
