@@ -751,6 +751,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
   integer :: l_seg
+  integer :: i_tgt, j_tgt
+
+  i_tgt = 161 ; j_tgt = 385
 
   if (.not.CS%module_is_initialized) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
@@ -2243,6 +2246,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         !$OMP end do nowait
       endif
 
+      do j=js,je ; do i=is,ie
+        if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+          write(mesg, *) 'DEBUG [uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG wdrag[uv]', -ubt(I-1,j)*Rayleigh_u(I-1,j), -ubt(I,j)*Rayleigh_u(I,j), &
+            -vbt(i,J-1)*Rayleigh_v(i,J-1), -vbt(i,J)*Rayleigh_v(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        endif
+      enddo ; enddo
+
       if (integral_BT_cont) then
         !$OMP do schedule(static)
         do j=jsv,jev ; do I=isv-1,iev
@@ -2317,6 +2334,20 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel(n) * (Cor_u(I,j) + PFu(I,j))
         enddo ; enddo
       endif
+
+      do j=js,je ; do i=is,ie
+        if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+          write(mesg, *) 'DEBUG [uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+          write(mesg, *) 'DEBUG wdrag[uv]', -ubt(I-1,j)*Rayleigh_u(I-1,j), -ubt(I,j)*Rayleigh_u(I,j), &
+            -vbt(i,J-1)*Rayleigh_v(i,J-1), -vbt(i,J)*Rayleigh_v(i,J)
+          call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        endif
+      enddo ; enddo
 
       if (integral_BT_cont) then
         !$OMP do schedule(static)
