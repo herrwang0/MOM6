@@ -2256,8 +2256,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
           write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          write(mesg, *) 'DEBUG wdrag[uv]', -ubt(I-1,j)*Rayleigh_u(I-1,j), -ubt(I,j)*Rayleigh_u(I,j), &
-            -vbt(i,J-1)*Rayleigh_v(i,J-1), -vbt(i,J)*Rayleigh_v(i,J)
+
+          write(mesg, *) 'DEBUG eta', eta_PF_BT(i,j), eta_PF_BT(i,j+1), eta_PF(i,j), eta_PF(i,j+1), &
+           gtot_N(i,j), gtot_S(i,j+1)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
         endif
       enddo ; enddo
@@ -2347,8 +2348,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
           write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          write(mesg, *) 'DEBUG wdrag[uv]', -ubt(I-1,j)*Rayleigh_u(I-1,j), -ubt(I,j)*Rayleigh_u(I,j), &
-            -vbt(i,J-1)*Rayleigh_v(i,J-1), -vbt(i,J)*Rayleigh_v(i,J)
+
+          write(mesg, *) 'DEBUG eta', eta_PF_BT(i,j), eta_PF_BT(i+1,j), eta_PF(i,j), eta_PF(i+1,j), &
+           gtot_E(i,j), gtot_W(i+1,j)
           call MOM_error(WARNING, trim(mesg), all_print=.true.)
         endif
       enddo ; enddo
