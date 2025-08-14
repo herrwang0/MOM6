@@ -2214,6 +2214,9 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
   real :: Idt     ! The inverse of the time step [T-1 ~> s-1].
   logical :: domore
   integer :: i, k, nz
+  character(len=200) :: mesg
+  integer :: i_tgt, j_tgt
+  i_tgt = 161 ; j_tgt = 385
 
   nz = GV%ke ; Idt = 1.0 / dt
   min_visc_rem = 0.1 ; CFL_min = 1e-6
@@ -2298,12 +2301,18 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
       BT_cont%vBT_NN(i,J) = (1.5 * (dvR(i) - dv0(i))) * &
                    ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0))
     endif
+
+    if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+      write(mesg, *) 'DEBUG cont ', 'BT_cont%vBT_NN(i+1,J)', &
+        BT_cont%vBT_NN(i+1,J), (1.5 * (dvR(i) - dv0(i))) * ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0)), &
+        dvR(i), dv0(i), FAmt_R(i), FA_avg, FAmt_R(i), FA_0
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+    endif
   else
     BT_cont%FA_v_S0(i,J) = 0.0 ; BT_cont%FA_v_SS(i,J) = 0.0
     BT_cont%FA_v_N0(i,J) = 0.0 ; BT_cont%FA_v_NN(i,J) = 0.0
     BT_cont%vBT_SS(i,J) = 0.0 ; BT_cont%vBT_NN(i,J) = 0.0
   endif ; enddo
-
 end subroutine set_merid_BT_cont
 
 !> Calculates left/right edge values for PPM reconstruction.
