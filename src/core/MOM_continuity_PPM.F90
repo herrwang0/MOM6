@@ -2214,7 +2214,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
   real :: Idt     ! The inverse of the time step [T-1 ~> s-1].
   logical :: domore
   integer :: i, k, nz
-  character(len=200) :: mesg
+  character(len=1000) :: mesg
   integer :: i_tgt, j_tgt
   i_tgt = 161 ; j_tgt = 385
 
