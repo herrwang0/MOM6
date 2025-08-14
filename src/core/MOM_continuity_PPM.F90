@@ -1478,6 +1478,11 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
   logical :: local_specified_BC, local_Flather_OBC, local_open_BC, any_simple_OBC  ! OBC-related logicals
   logical :: simple_OBC_pt(SZI_(G))  ! Indicates points in a row with specified transport OBCs
 
+
+  character(len=200) :: mesg
+  integer :: i_tgt, j_tgt
+  i_tgt = 161 ; j_tgt = 385
+
   call cpu_clock_begin(id_clock_correct)
 
   use_visc_rem = present(visc_rem_v)
@@ -1706,6 +1711,14 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
   endif ; endif
 
   call cpu_clock_end(id_clock_correct)
+
+  do j=jsh,jeh ; do i=ish,ieh
+    if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+      write(mesg, *) 'DEBUG end of meridional_mass_flux ', 'BT_cont%vBT_NN(i+1,J)', &
+        BT_cont%vBT_NN(i+1,J)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+    endif
+  enddo ; enddo
 
 end subroutine meridional_mass_flux
 
@@ -2302,9 +2315,9 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
                    ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0))
     endif
 
-    if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+    if ((i + G%HI%idg_offset == i_tgt+1) .and. (j + G%HI%jdg_offset == j_tgt)) then
       write(mesg, *) 'DEBUG cont ', 'BT_cont%vBT_NN(i+1,J)', &
-        BT_cont%vBT_NN(i+1,J), (1.5 * (dvR(i) - dv0(i))) * ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0)), &
+        BT_cont%vBT_NN(i,J), (1.5 * (dvR(i) - dv0(i))) * ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0)), &
         dvR(i), dv0(i), FAmt_R(i), FA_avg, FAmt_R(i), FA_0
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
