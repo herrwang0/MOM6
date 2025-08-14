@@ -2272,36 +2272,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         endif ; enddo ; enddo
       endif
 
-      do j=js,je ; do i=is,ie
-        if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
-          write(mesg, *) 'DEBUG step', n, '[uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          ! write(mesg, *) 'DEBUG bt_rem_[uv]', bt_rem_u(I-1,j), bt_rem_u(I,j), bt_rem_v(i,J-1), bt_rem_v(i,J)
-          ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          ! write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
-          ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'eta east', eta_PF_BT(i,j), eta_PF_BT(i+1,j), eta_PF(i,j), eta_PF(i+1,j)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          write(mesg, *) 'DEBUG step', n, 'eta north', eta_PF_BT(i,j), eta_PF_BT(i,j+1), eta_PF(i,j), eta_PF(i,j+1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'eta_in', eta_in(i,j), eta_in(i,j+1), eta_in(i,j), eta_in(i,j+1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'uhbt(I,j), uhbt(I+1,j), vhbt(i+1,J), vhbt(i+1,J-1)', &
-                         uhbt(I,j), uhbt(I+1,j), vhbt(i+1,J), vhbt(i+1,J-1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          write(mesg, *) 'DEBUG step', n, 'uhbt0(I,j), uhbt0(I+1,j), vhbt0(i+1,J), vhbt0(i+1,J-1)', &
-                         uhbt0(I,j), uhbt0(I+1,j), vhbt0(i+1,J), vhbt0(i+1,J-1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-        endif
-      enddo ; enddo
-
     else
       ! On even steps, update u first.
       !$OMP do schedule(static)
@@ -2468,37 +2438,41 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
           vbt(i,J) = vbt_prev(i,J); vhbt(i,J) = vhbt_prev(i,J)
         endif ; enddo ; enddo
       endif
-
-      do j=js,je ; do i=is,ie
-        if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
-          write(mesg, *) 'DEBUG step', n, '[uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          ! write(mesg, *) 'DEBUG bt_rem_[uv]', bt_rem_u(I-1,j), bt_rem_u(I,j), bt_rem_v(i,J-1), bt_rem_v(i,J)
-          ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          ! write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
-          ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'eta east', eta_PF_BT(i,j), eta_PF_BT(i+1,j), eta_PF(i,j), eta_PF(i+1,j)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          write(mesg, *) 'DEBUG step', n, 'eta north', eta_PF_BT(i,j), eta_PF_BT(i,j+1), eta_PF(i,j), eta_PF(i,j+1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'eta_in', eta_in(i,j), eta_in(i,j+1), eta_in(i,j), eta_in(i,j+1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-
-          write(mesg, *) 'DEBUG step', n, 'uhbt(I,j), uhbt(I+1,j), vhbt(i+1,J), vhbt(i+1,J-1)', &
-                         uhbt(I,j), uhbt(I+1,j), vhbt(i+1,J), vhbt(i+1,J-1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-          write(mesg, *) 'DEBUG step', n, 'uhbt0(I,j), uhbt0(I+1,j), vhbt0(i+1,J), vhbt0(i+1,J-1)', &
-                         uhbt0(I,j), uhbt0(I+1,j), vhbt0(i+1,J), vhbt0(i+1,J-1)
-          call MOM_error(WARNING, trim(mesg), all_print=.true.)
-        endif
-      enddo ; enddo
     endif
+
+    do j=js,je ; do i=is,ie
+      if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+        write(mesg, *) 'DEBUG step', n, '[uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+
+        write(mesg, *) 'DEBUG step', n, 'PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+
+        ! write(mesg, *) 'DEBUG bt_rem_[uv]', bt_rem_u(I-1,j), bt_rem_u(I,j), bt_rem_v(i,J-1), bt_rem_v(i,J)
+        ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        ! write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
+        ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
+
+        write(mesg, *) 'DEBUG step', n, 'eta east', eta_PF_BT(i,j), eta_PF_BT(i+1,j), eta_PF(i,j), eta_PF(i+1,j)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        write(mesg, *) 'DEBUG step', n, 'eta north', eta_PF_BT(i,j), eta_PF_BT(i,j+1), eta_PF(i,j), eta_PF(i,j+1)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+
+        write(mesg, *) 'DEBUG step', n, 'eta_in', eta_in(i,j), eta_in(i,j+1), eta_in(i,j), eta_in(i,j+1)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+
+        write(mesg, *) 'DEBUG step', n, 'uhbt(I,j), uhbt(I+1,j), vhbt(i+1,J), vhbt(i+1,J-1)', &
+                        uhbt(I,j), uhbt(I+1,j), vhbt(i+1,J), vhbt(i+1,J-1)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        write(mesg, *) 'DEBUG step', n, 'uhbt0(I,j), uhbt0(I+1,j), vhbt0(i+1,J), vhbt0(i+1,J-1)', &
+                        uhbt0(I,j), uhbt0(I+1,j), vhbt0(i+1,J), vhbt0(i+1,J-1)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+
+        write(mesg, *) 'DEBUG step', n, 'v(i+1,J), BTCL_v(i+1,J)', vbt_trans(i+1,J), &
+          BTCL_v(i,J)%vBT_SS, BTCL_v(i,J)%FA_v_S0, BTCL_v(i,J)%vh_crvS, BTCL_v(i,J)%vBT_SS, BTCL_v(i,J)%FA_v_SS, BTCL_v(i,J)%vh_SS
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+      endif
+    enddo ; enddo
 
     ! This might need to be moved outside of the OMP do loop directives.
     if (CS%debug_bt) then
@@ -2628,7 +2602,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       enddo ; enddo
     endif
     !$OMP end parallel
-
 
     do j=js,je ; do i=is,ie
       if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
