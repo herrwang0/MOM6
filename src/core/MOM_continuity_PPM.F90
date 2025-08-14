@@ -2283,8 +2283,8 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
 
     do i=ish,ieh
     if ((i + G%HI%idg_offset == i_tgt+1) .and. (j + G%HI%jdg_offset == j_tgt)) then
-      write(mesg, *) 'DEBUG cont merid_flux_layer v, dv0, v_0, visc_rem', &
-       v(i,j,k), dv0(i), v_0(i), visc_rem(i,k)
+      write(mesg, *) 'DEBUG cont merid_flux_layer do_I, v, dv0, visc_rem, v_0c, v_0, ', &
+       do_I(i), v(i,j,k), dv0(i), visc_rem(i,k), v(I,j,k) + dv0(i) * visc_rem(i,k), v_0(i)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
       write(mesg, *) 'DEBUG cont merid_flux_layer', 'h_in, h_S, h_N', &
        h_in(i,j,k), h_S(i,j,k), h_N(i,j,k), h_in(i,j+1,k), h_S(i,j+1,k), h_N(i,j+1,k)
