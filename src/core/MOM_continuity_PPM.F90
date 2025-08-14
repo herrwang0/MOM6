@@ -2320,7 +2320,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
     if ((i + G%HI%idg_offset == i_tgt+1) .and. (j + G%HI%jdg_offset == j_tgt)) then
       write(mesg, *) 'DEBUG cont ', 'BT_cont%vBT_NN(i+1,J)', &
         BT_cont%vBT_NN(i,J), (1.5 * (dvR(i) - dv0(i))) * ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0)), &
-        dvR(i), dv0(i), FAmt_R(i), FA_avg, FAmt_R(i), FA_0
+        dvR(i), dv0(i), FAmt_0(i), FAmt_R(i), FA_avg, FA_0
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   else
