@@ -2638,6 +2638,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
         write(mesg, *) 'DEBUG step', n, 'dtbt, Iarea', dtbt, CS%IareaT(i+1,j)
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        write(mesg, *) 'DEBUG step', n, 'eta_in(i+1), eta_src(i+1)', eta_in(i+1,j), eta_src(i+1,j)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
         write(mesg, *) 'DEBUG step', n, 'eta (i+1)', (eta_in(i+1,j) + eta_src(i+1,j)) + (dtbt * CS%IareaT(i+1,j)) * &
                    ((uhbt(I,j) - uhbt(I+1,j)) + (vhbt(i+1,J-1) - vhbt(i+1,J)))
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
