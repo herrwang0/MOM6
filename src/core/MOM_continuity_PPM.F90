@@ -1712,6 +1712,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
 
   call cpu_clock_end(id_clock_correct)
 
+  if (set_BT_cont) then
   do j=jsh,jeh ; do i=ish,ieh
     if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
       write(mesg, *) 'DEBUG end of meridional_mass_flux ', 'BT_cont%vBT_NN(i+1,J)', &
@@ -1719,6 +1720,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   enddo ; enddo
+endif
 
 end subroutine meridional_mass_flux
 
