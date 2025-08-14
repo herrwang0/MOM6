@@ -2469,7 +2469,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
 
         write(mesg, *) 'DEBUG step', n, 'v(i+1,J), BTCL_v(i+1,J)', vbt_trans(i+1,J), &
-          BTCL_v(i,J)%vBT_SS, BTCL_v(i,J)%FA_v_S0, BTCL_v(i,J)%vh_crvS, BTCL_v(i,J)%vBT_SS, BTCL_v(i,J)%FA_v_SS, BTCL_v(i,J)%vh_SS
+          BTCL_v(i+1,J)%vBT_SS, BTCL_v(i+1,J)%FA_v_S0, BTCL_v(i+1,J)%vh_crvS, BTCL_v(i+1,J)%FA_v_SS, BTCL_v(i+1,J)%vh_SS
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
       endif
     enddo ; enddo
