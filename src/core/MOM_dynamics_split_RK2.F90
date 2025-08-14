@@ -794,7 +794,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   do j=js,je ; do i=is,ie
     if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
       write(mesg, *) 'DEBUG before corrector btstep', 'BT_cont%vBT_NN(i+1,J)', &
-        BT_cont%vBT_NN(i+1,J)
+        CS%BT_cont%vBT_NN(i+1,J)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   enddo ; enddo
