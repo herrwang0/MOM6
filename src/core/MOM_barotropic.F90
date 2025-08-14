@@ -2442,6 +2442,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     do j=js,je ; do i=is,ie
       if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+        write(mesg, *) 'DEBUG step', n, 'i,j,is,ie,js,je', i,j,is,ie,js,je
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
         write(mesg, *) 'DEBUG step', n, '[uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
 
