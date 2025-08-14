@@ -2280,6 +2280,18 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
       v_R(i) = v(I,j,k) + dvR(i) * visc_rem(i,k)
       v_0(i) = v(I,j,k) + dv0(i) * visc_rem(i,k)
     endif ; enddo
+
+    do i=ish,ieh
+    if ((i + G%HI%idg_offset == i_tgt+1) .and. (j + G%HI%jdg_offset == j_tgt)) then
+      write(mesg, *) 'DEBUG cont merid_flux_layer', 'v_0', 'visc_rem' &
+       v_0, visc_rem(i,k)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+      write(mesg, *) 'DEBUG cont merid_flux_layer', 'h_in, h_S, h_N' &
+       h_in(i,j,k), h_S(i,j,k), h_N(i,j,k), h_in(i,j+1,k), h_S(i,j+1,k), h_N(i,j+1,k)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+    endif
+    enddo
+
     call merid_flux_layer(v_0, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_0, dvhdv_0, &
                           visc_rem(:,k), dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k))
     call merid_flux_layer(v_L, h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), vh_L, dvhdv_L, &
