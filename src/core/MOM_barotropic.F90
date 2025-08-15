@@ -2615,8 +2615,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
 
     do j=js,je ; do i=is,ie
       if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
-        write(mesg, *) '
-        ', n, 'eta', eta(i,j), eta(i+1,j), eta(i-1,j), eta(i,j+1), eta(i,j-1)
+        write(mesg, *) 'DEBUG step', n, 'eta', eta(i,j), eta(i+1,j), eta(i-1,j), eta(i,j+1), eta(i,j-1)
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
         ! write(mesg, *) 'DEBUG step', n, 'eta_src', eta_src(i,j), eta_src(i+1,j), eta_src(i-1,j), eta_src(i,j+1), eta_src(i,j-1)
         ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
