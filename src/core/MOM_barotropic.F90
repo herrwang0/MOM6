@@ -753,7 +753,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: l_seg
   integer :: i_tgt, j_tgt
 
-  i_tgt = 161 ; j_tgt = 385
+  ! i_tgt = 161 ; j_tgt = 385
+  i_tgt = 143 ; j_tgt = 415
 
   if (.not.CS%module_is_initialized) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
