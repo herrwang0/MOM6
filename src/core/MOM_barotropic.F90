@@ -2451,10 +2451,10 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
         write(mesg, *) 'DEBUG step', n, 'PF[uv]', PFu(I-1,j), PFu(I,j), PFv(i,J-1), PFv(i,J)
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
 
-        ! write(mesg, *) 'DEBUG bt_rem_[uv]', bt_rem_u(I-1,j), bt_rem_u(I,j), bt_rem_v(i,J-1), bt_rem_v(i,J)
-        ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
-        ! write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
-        ! call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        write(mesg, *) 'DEBUG bt_rem_[uv]', bt_rem_u(I-1,j), bt_rem_u(I,j), bt_rem_v(i,J-1), bt_rem_v(i,J)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        write(mesg, *) 'DEBUG Cor_[uv]', Cor_u(I-1,j), Cor_u(I,j), Cor_v(i,J-1), Cor_v(i,J)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
 
         write(mesg, *) 'DEBUG step', n, 'eta east', eta_PF_BT(i,j), eta_PF_BT(i+1,j), eta_PF(i,j), eta_PF(i+1,j)
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
