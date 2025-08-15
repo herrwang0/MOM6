@@ -409,7 +409,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   character(len=200) :: mesg
   integer :: i_tgt, j_tgt
   ! i_tgt = 161 ; j_tgt = 385
-  i_tgt = 145 ; j_tgt = 416
+  i_tgt = 144 ; j_tgt = 416
 
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB

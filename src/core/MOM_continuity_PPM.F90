@@ -1492,7 +1492,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
   character(len=200) :: mesg
   integer :: i_tgt, j_tgt
   ! i_tgt = 161 ; j_tgt = 385
-  i_tgt = 145 ; j_tgt = 416
+  i_tgt = 144 ; j_tgt = 416
 
   call cpu_clock_begin(id_clock_correct)
 
@@ -2243,7 +2243,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
   character(len=1000) :: mesg
   integer :: i_tgt, j_tgt
   ! i_tgt = 161 ; j_tgt = 385
-  i_tgt = 145 ; j_tgt = 416
+  i_tgt = 144 ; j_tgt = 416
 
   nz = GV%ke ; Idt = 1.0 / dt
   min_visc_rem = 0.1 ; CFL_min = 1e-6
