@@ -64,6 +64,7 @@ type, public :: continuity_PPM_CS ; private
                              !! continuity solver for use as the weights in the
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
+  logical :: underflow
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -1363,6 +1364,15 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
       u_R(I) = u(I,j,k) + duR(I) * visc_rem(I,k)
       u_0(I) = u(I,j,k) + du0(I) * visc_rem(I,k)
     endif ; enddo
+
+    if (CS%underflow) then
+      do I=ish-1,ieh ; if (do_I(I)) then
+        if (abs(u_L(I)) < 1e-20) u_L(I) = 0.0
+        if (abs(u_R(I)) < 1e-20) u_R(I) = 0.0
+        if (abs(u_0(I)) < 1e-20) u_0(I) = 0.0
+      endif ; enddo
+    endif
+
     call zonal_flux_layer(u_0, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_0, duhdu_0, &
                           visc_rem(:,k), dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
     call zonal_flux_layer(u_L, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_L, duhdu_L, &
@@ -2281,6 +2291,14 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
       v_0(i) = v(I,j,k) + dv0(i) * visc_rem(i,k)
     endif ; enddo
 
+    if (CS%underflow) then
+      do i=ish,ieh ; if (do_I(i)) then
+        if (abs(v_L(i)) < 1e-20) v_L(i) = 0.0
+        if (abs(v_R(i)) < 1e-20) v_R(i) = 0.0
+        if (abs(v_0(i)) < 1e-20) v_0(i) = 0.0
+      endif ; enddo
+    endif
+
     do i=ish,ieh
     if ((i + G%HI%idg_offset == i_tgt+1) .and. (j + G%HI%jdg_offset == j_tgt)) then
       write(mesg, *) 'DEBUG cont merid_flux_layer do_I, v, dv0, visc_rem, v_0c, v_0, ', &
@@ -2786,6 +2804,8 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS)
                  "If true, use the marginal face areas from the continuity "//&
                  "solver for use as the weights in the barotropic solver. "//&
                  "Otherwise use the transport averaged areas.", default=.true.)
+  call get_param(param_file, mdl, "CONT_UNDERFLOW", CS%underflow, &
+                 "If true, zero flow <1e-20m/s", default=.false.)
   CS%diag => diag
 
   id_clock_reconstruct = cpu_clock_id('(Ocean continuity reconstruction)', grain=CLOCK_ROUTINE)
