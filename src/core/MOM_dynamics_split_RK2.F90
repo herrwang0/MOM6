@@ -212,6 +212,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_hf_u_BT_accel_2d = -1, id_hf_v_BT_accel_2d = -1
   integer :: id_intz_u_BT_accel_2d = -1, id_intz_v_BT_accel_2d = -1
   integer :: id_u_BT_accel_visc_rem    = -1, id_v_BT_accel_visc_rem    = -1
+  integer :: id_visc_rem_pred_u, id_visc_rem_pred_v
   !>@}
 
   type(diag_ctrl), pointer       :: diag => NULL() !< A structure that is used to regulate the
@@ -685,6 +686,12 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (showCallTree) call callTree_enter("btstep(), MOM_barotropic.F90")
   ! This is the predictor step call to btstep.
   ! The CS%ADp argument here stores the weights for certain integrated diagnostics.
+
+  call enable_averages(dt, Time_local, CS%diag)
+  if (CS%id_visc_rem_pred_u > 0) call post_data(CS%id_visc_rem_pred_u, CS%visc_rem_u, CS%diag)
+  if (CS%id_visc_rem_pred_v > 0) call post_data(CS%id_visc_rem_pred_v, CS%visc_rem_v, CS%diag)
+  call disable_averaging(CS%diag)
+
   call btstep(u_inst, v_inst, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, CS%eta_PF, u_av, v_av, &
               CS%u_accel_bt, CS%v_accel_bt, eta_pred, CS%uhbt, CS%vhbt, G, GV, US, &
               CS%barotropic_CSp, CS%visc_rem_u, CS%visc_rem_v, SpV_avg, CS%ADp, CS%OBC, CS%BT_cont, &
@@ -1727,6 +1734,11 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
       'Barotropic column-mass tendency due to dynamics', trim(thickness_units)//' s-1', &
       conversion=GV%H_to_mks*US%s_to_T)
   endif
+
+  CS%id_visc_rem_pred_u = register_diag_field('ocean_model', 'visc_rem_pred_u', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_visc_rem_pred_v = register_diag_field('ocean_model', 'visc_rem_pred_v', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
 
   !CS%id_hf_PFu = register_diag_field('ocean_model', 'hf_PFu', diag%axesCuL, Time, &
   !    'Fractional Thickness-weighted Zonal Pressure Force Acceleration', &
