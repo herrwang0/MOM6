@@ -1937,12 +1937,12 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
   endif
 
   if (diag_predictor .and. query_averaging_enabled(CS%diag)) then
-    if (CS%id_Kv_u > 0) call post_data(CS%id_Kv_u, Kv_u, CS%diag)
-    if (CS%id_Kv_v > 0) call post_data(CS%id_Kv_v, Kv_v, CS%diag)
-    if (CS%id_au_vv > 0) call post_data(CS%id_au_vv, CS%a_u, CS%diag)
-    if (CS%id_av_vv > 0) call post_data(CS%id_av_vv, CS%a_v, CS%diag)
-    if (CS%id_au_vv > 0) call post_data(CS%id_au_vv, CS%a_u, CS%diag)
-    if (CS%id_av_vv > 0) call post_data(CS%id_av_vv, CS%a_v, CS%diag)
+    if (CS%id_Kv_pred_u > 0) call post_data(CS%id_Kv_pred_u, Kv_u, CS%diag)
+    if (CS%id_Kv_pred_v > 0) call post_data(CS%id_Kv_pred_v, Kv_v, CS%diag)
+    if (CS%id_au_pred_vv > 0) call post_data(CS%id_au_pred_vv, CS%a_u, CS%diag)
+    if (CS%id_av_pred_vv > 0) call post_data(CS%id_av_pred_vv, CS%a_v, CS%diag)
+    if (CS%id_h_pred_u > 0) call post_data(CS%id_h_pred_u, CS%h_u, CS%diag)
+    if (CS%id_h_pred_v > 0) call post_data(CS%id_h_pred_v, CS%h_v, CS%diag)
   endif
 
   if (allocated(hML_u)) deallocate(hML_u)
@@ -2962,6 +2962,20 @@ subroutine vertvisc_init(MIS, Time, G, GV, US, param_file, diag, ADp, dirs, &
 
   CS%id_Kv_pred_v = register_diag_field('ocean_model', 'Kv_pred_v', diag%axesCvL, Time, &
       'Total vertical viscosity at v-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
+
+  CS%id_au_pred_vv = register_diag_field('ocean_model', 'au_visc_pred', diag%axesCuL, Time, &
+      'Total vertical viscosity at u-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
+
+  CS%id_av_pred_vv = register_diag_field('ocean_model', 'av_visc_pred', diag%axesCvL, Time, &
+      'Total vertical viscosity at v-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
+
+  CS%id_h_pred_u = register_diag_field('ocean_model', 'Hu_visc_pred', diag%axesCuL, Time, &
+      'Thickness at Zonal Velocity Points for Viscosity', &
+      thickness_units, conversion=GV%H_to_MKS)
+
+  CS%id_h_pred_v = register_diag_field('ocean_model', 'Hv_visc_pred', diag%axesCvL, Time, &
+      'Thickness at Meridional Velocity Points for Viscosity', &
+      thickness_units, conversion=GV%H_to_MKS)
 
   CS%id_Kv_u = register_diag_field('ocean_model', 'Kv_u', diag%axesCuL, Time, &
       'Total vertical viscosity at u-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
