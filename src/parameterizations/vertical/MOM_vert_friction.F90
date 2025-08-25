@@ -1681,7 +1681,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
     endif
 
     ! Diagnose total Kv at u-points
-    if (CS%id_Kv_u > 0) then
+    if (CS%id_Kv_u > 0 .or. CS%id_Kv_pred_u > 0) then
       do k=1,nz ; do I=Isq,Ieq
         if (do_i(I)) Kv_u(I,j,k) = 0.5 * (CS%a_u(I,j,K)+CS%a_u(I,j,K+1)) * CS%h_u(I,j,k)
       enddo ; enddo
@@ -1895,7 +1895,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
     endif
 
     ! Diagnose total Kv at v-points
-    if (CS%id_Kv_v > 0) then
+    if (CS%id_Kv_v > 0 .or. CS%id_Kv_pred_v > 0) then
       do k=1,nz ; do i=is,ie
         if (do_i(I)) Kv_v(i,J,k) = 0.5 * (CS%a_v(i,J,K)+CS%a_v(i,J,K+1)) * CS%h_v(i,J,k)
       enddo ; enddo
