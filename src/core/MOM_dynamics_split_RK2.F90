@@ -625,8 +625,10 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   endif
   ! For porous medium, dz has been calculated.
   ! if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
+  call enable_averages(dt, Time_local, CS%diag)
   call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix, &
-                     use_ave_topo=CS%use_pormed .and. (.not.CS%use_pormed_dz))
+                     use_ave_topo=CS%use_pormed .and. (.not.CS%use_pormed_dz), diag_pred=.True.)
+  call disable_averaging(CS%diag)
   call vertvisc_remnant(visc, CS%visc_rem_u, CS%visc_rem_v, dt, G, GV, US, CS%vertvisc_CSp)
   call cpu_clock_end(id_clock_vertvisc)
   if (showCallTree) call callTree_wayPoint("done with vertvisc_coef (step_MOM_dyn_split_RK2)")
