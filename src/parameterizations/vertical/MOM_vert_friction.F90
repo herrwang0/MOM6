@@ -181,6 +181,7 @@ type, public :: vertvisc_CS ; private
   integer :: id_hf_du_dt_visc_2d = -1, id_hf_dv_dt_visc_2d = -1
   integer :: id_h_du_dt_str    = -1, id_h_dv_dt_str    = -1
   integer :: id_du_dt_str_visc_rem = -1, id_dv_dt_str_visc_rem = -1
+  integer :: id_Kv_pred_u = -1, id_Kv_pred_v = -1, id_h_pred_u = -1, id_h_pred_v = -1, id_au_pred_vv = -1, id_av_pred_vv = -1
   !>@}
 
   type(PointAccel_CS), pointer :: PointAccel_CSp => NULL() !< A pointer to the control structure
@@ -1322,7 +1323,7 @@ end subroutine vertvisc_remnant
 !> Calculate the coupling coefficients (CS%a_u, CS%a_v, CS%a_u_gl90, CS%a_v_gl90)
 !! and effective layer thicknesses (CS%h_u and CS%h_v) for later use in the
 !! applying the implicit vertical viscosity via vertvisc().
-subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, VarMix, use_ave_topo)
+subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, VarMix, use_ave_topo, diag_pred)
   type(ocean_grid_type),   intent(in)    :: G      !< Ocean grid structure
   type(verticalGrid_type), intent(in)    :: GV     !< Ocean vertical grid structure
   type(unit_scale_type),   intent(in)    :: US     !< A dimensional unit scaling type
@@ -1343,6 +1344,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
   type(ocean_OBC_type),    pointer       :: OBC    !< Open boundary condition structure
   type(VarMix_CS),         intent(in) :: VarMix !< Variable mixing coefficients
   logical, optional, intent(in) :: use_ave_topo
+  logical, optional, intent(in) :: diag_pred
   ! Field from forces used in this subroutine:
   !   ustar: the friction velocity [Z T-1 ~> m s-1], used here as the mixing
   !     velocity in the mixed layer if NKML > 1 in a bulk mixed layer.
@@ -1426,6 +1428,7 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
   integer :: i, j, k, is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
   real, dimension(SZI_(G),SZJ_(G)) :: topo
   logical :: ave_topo
+  logical :: diag_predictor
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB ; nz = GV%ke
@@ -1447,6 +1450,9 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
       topo(i,j) = G%bathyT(i,j)
     enddo ; enddo
   endif
+
+  diag_predictor = .False.
+  if (present(diag_pred))  diag_predictor = diag_pred
 
   h_neglect = GV%H_subroundoff
   dz_neglect = GV%dZ_subroundoff
@@ -1928,6 +1934,15 @@ subroutine vertvisc_coef(u, v, h, dz, forces, visc, tv, dt, G, GV, US, CS, OBC, 
     if (CS%id_h_v > 0) call post_data(CS%id_h_v, CS%h_v, CS%diag)
     if (CS%id_hML_u > 0) call post_data(CS%id_hML_u, hML_u, CS%diag)
     if (CS%id_hML_v > 0) call post_data(CS%id_hML_v, hML_v, CS%diag)
+  endif
+
+  if (diag_predictor .and. query_averaging_enabled(CS%diag)) then
+    if (CS%id_Kv_u > 0) call post_data(CS%id_Kv_u, Kv_u, CS%diag)
+    if (CS%id_Kv_v > 0) call post_data(CS%id_Kv_v, Kv_v, CS%diag)
+    if (CS%id_au_vv > 0) call post_data(CS%id_au_vv, CS%a_u, CS%diag)
+    if (CS%id_av_vv > 0) call post_data(CS%id_av_vv, CS%a_v, CS%diag)
+    if (CS%id_au_vv > 0) call post_data(CS%id_au_vv, CS%a_u, CS%diag)
+    if (CS%id_av_vv > 0) call post_data(CS%id_av_vv, CS%a_v, CS%diag)
   endif
 
   if (allocated(hML_u)) deallocate(hML_u)
@@ -2941,6 +2956,12 @@ subroutine vertvisc_init(MIS, Time, G, GV, US, param_file, diag, ADp, dirs, &
 
   CS%id_Kv_slow = register_diag_field('ocean_model', 'Kv_slow', diag%axesTi, Time, &
       'Slow varying vertical viscosity', 'm2 s-1', conversion=GV%HZ_T_to_m2_s)
+
+  CS%id_Kv_pred_u = register_diag_field('ocean_model', 'Kv_pred_u', diag%axesCuL, Time, &
+      'Total vertical viscosity at u-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
+
+  CS%id_Kv_pred_v = register_diag_field('ocean_model', 'Kv_pred_v', diag%axesCvL, Time, &
+      'Total vertical viscosity at v-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
 
   CS%id_Kv_u = register_diag_field('ocean_model', 'Kv_u', diag%axesCuL, Time, &
       'Total vertical viscosity at u-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
