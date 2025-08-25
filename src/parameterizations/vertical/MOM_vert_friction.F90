@@ -2963,10 +2963,10 @@ subroutine vertvisc_init(MIS, Time, G, GV, US, param_file, diag, ADp, dirs, &
   CS%id_Kv_pred_v = register_diag_field('ocean_model', 'Kv_pred_v', diag%axesCvL, Time, &
       'Total vertical viscosity at v-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
 
-  CS%id_au_pred_vv = register_diag_field('ocean_model', 'au_visc_pred', diag%axesCuL, Time, &
+  CS%id_au_pred_vv = register_diag_field('ocean_model', 'au_visc_pred', diag%axesCui, Time, &
       'Total vertical viscosity at u-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
 
-  CS%id_av_pred_vv = register_diag_field('ocean_model', 'av_visc_pred', diag%axesCvL, Time, &
+  CS%id_av_pred_vv = register_diag_field('ocean_model', 'av_visc_pred', diag%axesCvi, Time, &
       'Total vertical viscosity at v-points', 'm2 s-1', conversion=GV%H_to_m**2*US%s_to_T)
 
   CS%id_h_pred_u = register_diag_field('ocean_model', 'Hu_visc_pred', diag%axesCuL, Time, &
