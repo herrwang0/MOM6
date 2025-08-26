@@ -213,6 +213,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_intz_u_BT_accel_2d = -1, id_intz_v_BT_accel_2d = -1
   integer :: id_u_BT_accel_visc_rem    = -1, id_v_BT_accel_visc_rem    = -1
   integer :: id_visc_rem_pred_u, id_visc_rem_pred_v
+  integer :: id_up, id_vp, id_h_pred_visc, id_dz_pred_visc
   !>@}
 
   type(diag_ctrl), pointer       :: diag => NULL() !< A structure that is used to regulate the
@@ -626,6 +627,11 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   ! For porous medium, dz has been calculated.
   ! if (.not.CS%use_pormed) call thickness_to_dz(h, tv, dz, G, GV, US, halo_size=1)
   call enable_averages(dt, Time_local, CS%diag)
+  if (CS%id_up > 0) call post_data(CS%id_up, up, CS%diag)
+  if (CS%id_vp > 0) call post_data(CS%id_vp, vp, CS%diag)
+  if (CS%id_h_pred_visc > 0) call post_data(CS%id_h_pred_visc, h, CS%diag)
+  if (CS%id_dz_pred_visc > 0) call post_data(CS%id_dz_pred_visc, dz, CS%diag)
+
   call vertvisc_coef(up, vp, h, dz, forces, visc, tv, dt, G, GV, US, CS%vertvisc_CSp, CS%OBC, VarMix, &
                      use_ave_topo=CS%use_pormed .and. (.not.CS%use_pormed_dz), diag_pred=.True.)
   call disable_averaging(CS%diag)
@@ -1741,6 +1747,16 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
       'Viscous remnant at u', 'nondim')
   CS%id_visc_rem_pred_v = register_diag_field('ocean_model', 'visc_rem_pred_v', diag%axesCvL, Time, &
       'Viscous remnant at v', 'nondim')
+
+  CS%id_up = register_diag_field('ocean_model', 'up', diag%axesCuL, Time, &
+      'up for pred visc', 'm/s')
+  CS%id_vp = register_diag_field('ocean_model', 'vp', diag%axesCvL, Time, &
+      'vp for pred visc', 'm/s')
+
+  CS%id_h_pred_visc = register_diag_field('ocean_model', 'h_pred_visc', diag%axesTL, Time, &
+      'h for pred visc', 'm')
+  CS%id_dz_pred_visc = register_diag_field('ocean_model', 'dz_pred_visc', diag%axesTL, Time, &
+      'dz for pred visc', 'm')
 
   !CS%id_hf_PFu = register_diag_field('ocean_model', 'hf_PFu', diag%axesCuL, Time, &
   !    'Fractional Thickness-weighted Zonal Pressure Force Acceleration', &
