@@ -212,7 +212,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_hf_u_BT_accel_2d = -1, id_hf_v_BT_accel_2d = -1
   integer :: id_intz_u_BT_accel_2d = -1, id_intz_v_BT_accel_2d = -1
   integer :: id_u_BT_accel_visc_rem    = -1, id_v_BT_accel_visc_rem    = -1
-  integer :: id_visc_rem_pred_u, id_visc_rem_pred_v
+  integer :: id_visc_rem_pred_u, id_visc_rem_pred_v, id_u_accel_bt_pred, id_v_accel_bt_pred
   integer :: id_up, id_vp, id_h_pred_visc, id_dz_pred_visc
   !>@}
 
@@ -695,15 +695,17 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   ! This is the predictor step call to btstep.
   ! The CS%ADp argument here stores the weights for certain integrated diagnostics.
 
-  call enable_averages(dt, Time_local, CS%diag)
-  if (CS%id_visc_rem_pred_u > 0) call post_data(CS%id_visc_rem_pred_u, CS%visc_rem_u, CS%diag)
-  if (CS%id_visc_rem_pred_v > 0) call post_data(CS%id_visc_rem_pred_v, CS%visc_rem_v, CS%diag)
-  call disable_averaging(CS%diag)
-
   call btstep(u_inst, v_inst, eta, dt, u_bc_accel, v_bc_accel, forces, CS%pbce, CS%eta_PF, u_av, v_av, &
               CS%u_accel_bt, CS%v_accel_bt, eta_pred, CS%uhbt, CS%vhbt, G, GV, US, &
               CS%barotropic_CSp, CS%visc_rem_u, CS%visc_rem_v, SpV_avg, CS%ADp, CS%OBC, CS%BT_cont, &
               eta_PF_start, taux_bot, tauy_bot, uh_ptr, vh_ptr, u_ptr, v_ptr)
+  call enable_averages(dt, Time_local, CS%diag)
+  if (CS%id_visc_rem_pred_u > 0) call post_data(CS%id_visc_rem_pred_u, CS%visc_rem_u, CS%diag)
+  if (CS%id_visc_rem_pred_v > 0) call post_data(CS%id_visc_rem_pred_v, CS%visc_rem_v, CS%diag)
+  if (CS%id_u_accel_bt_pred > 0) call post_data(CS%id_u_accel_bt_pred, CS%u_accel_bt, CS%diag)
+  if (CS%id_v_accel_bt_pred > 0) call post_data(CS%id_v_accel_bt_pred, CS%v_accel_bt, CS%diag)
+  call disable_averaging(CS%diag)
+
   if (showCallTree) call callTree_leave("btstep()")
   call cpu_clock_end(id_clock_btstep)
 
@@ -1746,6 +1748,11 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
   CS%id_visc_rem_pred_u = register_diag_field('ocean_model', 'visc_rem_pred_u', diag%axesCuL, Time, &
       'Viscous remnant at u', 'nondim')
   CS%id_visc_rem_pred_v = register_diag_field('ocean_model', 'visc_rem_pred_v', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+
+  CS%id_u_accel_bt_pred = register_diag_field('ocean_model', 'u_accel_bt_pred', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_v_accel_bt_pred = register_diag_field('ocean_model', 'v_accel_bt_pred', diag%axesCvL, Time, &
       'Viscous remnant at v', 'nondim')
 
   CS%id_up = register_diag_field('ocean_model', 'up', diag%axesCuL, Time, &
