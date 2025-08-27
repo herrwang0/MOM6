@@ -209,6 +209,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_intz_CAu_2d = -1, id_intz_CAv_2d = -1
   integer :: id_CAu_visc_rem = -1, id_CAv_visc_rem = -1
   integer :: id_deta_dt = -1
+  integer :: id_pbce = -1
 
   ! Split scheme only.
   integer :: id_uav        = -1, id_vav        = -1
@@ -1122,6 +1123,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%id_u_BT_accel > 0) call post_data(CS%id_u_BT_accel, CS%u_accel_bt, CS%diag)
   if (CS%id_v_BT_accel > 0) call post_data(CS%id_v_BT_accel, CS%v_accel_bt, CS%diag)
 
+  if (CS%id_pbce > 0) call post_data(CS%id_pbce, CS%pbce, CS%diag)
+
   ! Calculate effective areas and post data
   if (CS%id_ueffA > 0) then
     ueffA(:,:,:) = 0
@@ -1714,10 +1717,14 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
   if (GV%Boussinesq) then
     CS%id_deta_dt = register_diag_field('ocean_model', 'deta_dt', diag%axesT1, Time, &
       'Barotropic SSH tendency due to dynamics', trim(thickness_units)//' s-1', conversion=GV%H_to_MKS*US%s_to_T)
+    CS%id_pbce = register_diag_field('ocean_model', 'pbce', diag%axesTL, Time, &
+      'Barotropic SSH tendency due to dynamics', trim(thickness_units)//' s-1', conversion=GV%H_to_MKS*US%s_to_T)
   else
     CS%id_deta_dt = register_diag_field('ocean_model', 'deta_dt', diag%axesT1, Time, &
       'Barotropic column-mass tendency due to dynamics', trim(thickness_units)//' s-1', &
       conversion=GV%H_to_mks*US%s_to_T)
+    CS%id_pbce = register_diag_field('ocean_model', 'pbce', diag%axesTL, Time, &
+      'Barotropic SSH tendency due to dynamics', trim(thickness_units)//' s-1', conversion=GV%H_to_MKS*US%s_to_T)
   endif
 
   !CS%id_hf_PFu = register_diag_field('ocean_model', 'hf_PFu', diag%axesCuL, Time, &
