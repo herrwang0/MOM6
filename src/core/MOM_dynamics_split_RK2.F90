@@ -214,7 +214,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_u_BT_accel_visc_rem    = -1, id_v_BT_accel_visc_rem    = -1
   integer :: id_visc_rem_pred_u, id_visc_rem_pred_v, id_u_accel_bt_pred, id_v_accel_bt_pred
   integer :: id_visc_rem_corr_u, id_visc_rem_corr_v, id_u_inst_corr, id_v_inst_corr, id_eta_corr
-  integer :: id_up, id_vp, id_h_pred_visc, id_dz_pred_visc
+  integer :: id_up, id_vp, id_h_pred_visc, id_dz_pred_visc, id_u_inst_pred, id_v_inst_pred, id_eta_pred
   !>@}
 
   type(diag_ctrl), pointer       :: diag => NULL() !< A structure that is used to regulate the
@@ -705,6 +705,9 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%id_visc_rem_pred_v > 0) call post_data(CS%id_visc_rem_pred_v, CS%visc_rem_v, CS%diag)
   if (CS%id_u_accel_bt_pred > 0) call post_data(CS%id_u_accel_bt_pred, CS%u_accel_bt, CS%diag)
   if (CS%id_v_accel_bt_pred > 0) call post_data(CS%id_v_accel_bt_pred, CS%v_accel_bt, CS%diag)
+  if (CS%id_u_inst_pred > 0) call post_data(CS%id_u_inst_pred, u_inst, CS%diag)
+  if (CS%id_v_inst_pred > 0) call post_data(CS%id_v_inst_pred, v_inst, CS%diag)
+  if (CS%id_eta_pred > 0) call post_data(CS%id_eta_pred, eta, CS%diag)
   call disable_averaging(CS%diag)
 
   if (showCallTree) call callTree_leave("btstep()")
@@ -1766,6 +1769,13 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
   CS%id_v_inst_corr = register_diag_field('ocean_model', 'v_inst_corr', diag%axesCvL, Time, &
       'Viscous remnant at v', 'nondim')
   CS%id_eta_corr = register_diag_field('ocean_model', 'eta_corr', diag%axesTL, Time, &
+      'eta_corr', 'nondim')
+
+  CS%id_u_inst_pred = register_diag_field('ocean_model', 'u_inst_pred', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_v_inst_pred = register_diag_field('ocean_model', 'v_inst_pred', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_eta_pred = register_diag_field('ocean_model', 'eta_pred', diag%axesTL, Time, &
       'eta_corr', 'nondim')
 
   CS%id_u_accel_bt_pred = register_diag_field('ocean_model', 'u_accel_bt_pred', diag%axesCuL, Time, &
