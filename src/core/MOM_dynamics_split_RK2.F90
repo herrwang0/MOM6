@@ -995,16 +995,15 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
               CS%u_accel_bt, CS%v_accel_bt, eta_pred, CS%uhbt, CS%vhbt, G, GV, US, &
               CS%barotropic_CSp, CS%visc_rem_u, CS%visc_rem_v, SpV_avg, CS%ADp, CS%OBC, CS%BT_cont, &
               eta_PF_start, taux_bot, tauy_bot, uh_ptr, vh_ptr, u_ptr, v_ptr, etaav=eta_av)
-  if (CS%id_deta_dt>0) then
-    do j=js,je ; do i=is,ie ; deta_dt(i,j) = (eta_pred(i,j) - eta(i,j))*Idt_bc ; enddo ; enddo
-  endif
-  do j=js,je ; do i=is,ie ; eta(i,j) = eta_pred(i,j) ; enddo ; enddo
-
   if (CS%id_visc_rem_corr_u > 0) call post_data(CS%id_visc_rem_corr_u, CS%visc_rem_u, CS%diag)
   if (CS%id_visc_rem_corr_v > 0) call post_data(CS%id_visc_rem_corr_v, CS%visc_rem_v, CS%diag)
   if (CS%id_u_inst_corr > 0) call post_data(CS%id_u_inst_corr, u_inst, CS%diag)
   if (CS%id_v_inst_corr > 0) call post_data(CS%id_v_inst_corr, v_inst, CS%diag)
   if (CS%id_eta_corr > 0) call post_data(CS%id_eta_corr, eta, CS%diag)
+  if (CS%id_deta_dt>0) then
+    do j=js,je ; do i=is,ie ; deta_dt(i,j) = (eta_pred(i,j) - eta(i,j))*Idt_bc ; enddo ; enddo
+  endif
+  do j=js,je ; do i=is,ie ; eta(i,j) = eta_pred(i,j) ; enddo ; enddo
 
   call cpu_clock_end(id_clock_btstep)
   if (showCallTree) call callTree_leave("btstep()")
