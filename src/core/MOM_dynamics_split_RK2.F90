@@ -214,8 +214,8 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_u_BT_accel_visc_rem    = -1, id_v_BT_accel_visc_rem    = -1
   integer :: id_visc_rem_pred_u, id_visc_rem_pred_v, id_u_inst_pred, id_v_inst_pred, id_eta_pred, id_eta_pf_pred
   integer :: id_visc_rem_corr_u, id_visc_rem_corr_v, id_u_inst_corr, id_v_inst_corr, id_eta_corr, id_eta_pf_corr
-  integer :: id_u_bc_accel_pred, id_u_bc_accel_pred, id_u_av_pred, id_u_av_pred
-  integer :: id_u_bc_accel_corr, id_v_bc_accel_corr, id_u_av_corr, id_u_av_corr
+  integer :: id_u_bc_accel_pred, id_v_bc_accel_pred, id_u_av_pred, id_v_av_pred
+  integer :: id_u_bc_accel_corr, id_v_bc_accel_corr, id_u_av_corr, id_v_av_corr
   integer :: id_u_accel_bt_pred, id_v_accel_bt_pred
   integer :: id_up, id_vp, id_h_pred_visc, id_dz_pred_visc
   !>@}
