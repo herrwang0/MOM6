@@ -218,6 +218,10 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   integer :: id_u_bc_accel_corr, id_v_bc_accel_corr, id_u_av_corr, id_v_av_corr
   integer :: id_u_accel_bt_pred, id_v_accel_bt_pred
   integer :: id_up, id_vp, id_h_pred_visc, id_dz_pred_visc
+  integer :: id_fuee_pred, id_fue0_pred, id_fuww_pred, id_fuw0_pred, id_uww_pred, id_uee_pred, id_hu_pred
+  integer :: id_fvnn_pred, id_fvn0_pred, id_fvss_pred, id_fvs0_pred, id_vss_pred, id_vnn_pred, id_hv_pred
+  integer :: id_fuee_corr, id_fue0_corr, id_fuww_corr, id_fuw0_corr, id_uww_corr, id_uee_corr, id_hu_corr
+  integer :: id_fvnn_corr, id_fvn0_corr, id_fvss_corr, id_fvs0_corr, id_vss_corr, id_vnn_corr, id_hv_corr
   !>@}
 
   type(diag_ctrl), pointer       :: diag => NULL() !< A structure that is used to regulate the
@@ -716,6 +720,23 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%id_v_av_pred > 0) call post_data(CS%id_v_av_pred, v_av, CS%diag)
   if (CS%id_u_bc_accel_pred > 0) call post_data(CS%id_u_bc_accel_pred, u_bc_accel, CS%diag)
   if (CS%id_v_bc_accel_pred > 0) call post_data(CS%id_v_bc_accel_pred, v_bc_accel, CS%diag)
+
+  if (CS%id_fuee_pred > 0) call post_data(CS%id_fuee_pred, CS%BT_cont%FA_u_EE, CS%diag)
+  if (CS%id_fue0_pred > 0) call post_data(CS%id_fue0_pred, CS%BT_cont%FA_u_E0, CS%diag)
+  if (CS%id_fuww_pred > 0) call post_data(CS%id_fuww_pred, CS%BT_cont%FA_u_WW, CS%diag)
+  if (CS%id_fuw0_pred > 0) call post_data(CS%id_fuw0_pred, CS%BT_cont%FA_u_W0, CS%diag)
+  if (CS%id_uww_pred > 0) call post_data(CS%id_uww_pred, CS%BT_cont%uBT_WW, CS%diag)
+  if (CS%id_uee_pred > 0) call post_data(CS%id_uee_pred, CS%BT_cont%uBT_EE, CS%diag)
+  if (CS%id_hu_pred > 0) call post_data(CS%id_hu_pred, CS%BT_cont%h_u, CS%diag)
+
+  if (CS%id_fvnn_pred > 0) call post_data(CS%id_fvnn_pred, CS%BT_cont%FA_v_NN, CS%diag)
+  if (CS%id_fvn0_pred > 0) call post_data(CS%id_fvn0_pred, CS%BT_cont%FA_v_N0, CS%diag)
+  if (CS%id_fvss_pred > 0) call post_data(CS%id_fvss_pred, CS%BT_cont%FA_v_SS, CS%diag)
+  if (CS%id_fvs0_pred > 0) call post_data(CS%id_fvs0_pred, CS%BT_cont%FA_v_S0, CS%diag)
+  if (CS%id_vss_pred > 0) call post_data(CS%id_vss_pred, CS%BT_cont%vBT_SS, CS%diag)
+  if (CS%id_vnn_pred > 0) call post_data(CS%id_vnn_pred, CS%BT_cont%vBT_NN, CS%diag)
+  if (CS%id_hv_pred > 0) call post_data(CS%id_hv_pred, CS%BT_cont%h_v, CS%diag)
+
   call disable_averaging(CS%diag)
 
   if (showCallTree) call callTree_leave("btstep()")
@@ -1013,6 +1034,23 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   if (CS%id_v_av_corr > 0) call post_data(CS%id_v_av_corr, v_av, CS%diag)
   if (CS%id_u_bc_accel_corr > 0) call post_data(CS%id_u_bc_accel_corr, u_bc_accel, CS%diag)
   if (CS%id_v_bc_accel_corr > 0) call post_data(CS%id_v_bc_accel_corr, v_bc_accel, CS%diag)
+
+  if (CS%id_fuee_corr > 0) call post_data(CS%id_fuee_corr, CS%BT_cont%FA_u_EE, CS%diag)
+  if (CS%id_fue0_corr > 0) call post_data(CS%id_fue0_corr, CS%BT_cont%FA_u_E0, CS%diag)
+  if (CS%id_fuww_corr > 0) call post_data(CS%id_fuww_corr, CS%BT_cont%FA_u_WW, CS%diag)
+  if (CS%id_fuw0_corr > 0) call post_data(CS%id_fuw0_corr, CS%BT_cont%FA_u_W0, CS%diag)
+  if (CS%id_uww_corr > 0) call post_data(CS%id_uww_corr, CS%BT_cont%uBT_WW, CS%diag)
+  if (CS%id_uee_corr > 0) call post_data(CS%id_uee_corr, CS%BT_cont%uBT_EE, CS%diag)
+  if (CS%id_hu_corr > 0) call post_data(CS%id_hu_corr, CS%BT_cont%h_u, CS%diag)
+
+  if (CS%id_fvnn_corr > 0) call post_data(CS%id_fvnn_corr, CS%BT_cont%FA_v_NN, CS%diag)
+  if (CS%id_fvn0_corr > 0) call post_data(CS%id_fvn0_corr, CS%BT_cont%FA_v_N0, CS%diag)
+  if (CS%id_fvss_corr > 0) call post_data(CS%id_fvss_corr, CS%BT_cont%FA_v_SS, CS%diag)
+  if (CS%id_fvs0_corr > 0) call post_data(CS%id_fvs0_corr, CS%BT_cont%FA_v_S0, CS%diag)
+  if (CS%id_vss_corr > 0) call post_data(CS%id_vss_corr, CS%BT_cont%vBT_SS, CS%diag)
+  if (CS%id_vnn_corr > 0) call post_data(CS%id_vnn_corr, CS%BT_cont%vBT_NN, CS%diag)
+  if (CS%id_hv_corr > 0) call post_data(CS%id_hv_corr, CS%BT_cont%h_v, CS%diag)
+
   if (CS%id_deta_dt>0) then
     do j=js,je ; do i=is,ie ; deta_dt(i,j) = (eta_pred(i,j) - eta(i,j))*Idt_bc ; enddo ; enddo
   endif
@@ -1814,6 +1852,68 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
   CS%id_u_av_corr = register_diag_field('ocean_model', 'u_av_corr', diag%axesCuL, Time, &
       'Viscous remnant at u', 'nondim')
   CS%id_v_av_corr = register_diag_field('ocean_model', 'v_av_corr', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+
+
+  CS%id_fuee_corr = register_diag_field('ocean_model', 'fuee_corr', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fue0_corr = register_diag_field('ocean_model', 'fue0_corr', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_fuww_corr = register_diag_field('ocean_model', 'fuww_corr', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fuw0_corr = register_diag_field('ocean_model', 'fuw0_corr', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_uee_corr = register_diag_field('ocean_model', 'uee_corr', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_uww_corr = register_diag_field('ocean_model', 'uww_corr', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_hu_corr = register_diag_field('ocean_model', 'hu_corr', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+
+  CS%id_fvnn_corr = register_diag_field('ocean_model', 'fvnn_corr', diag%axesCvL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fvn0_corr = register_diag_field('ocean_model', 'fvn0_corr', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_fvss_corr = register_diag_field('ocean_model', 'fvss_corr', diag%axesCvL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fvs0_corr = register_diag_field('ocean_model', 'fvs0_corr', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_vnn_corr = register_diag_field('ocean_model', 'vnn_corr', diag%axesCvL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_vss_corr = register_diag_field('ocean_model', 'vss_corr', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_hv_corr = register_diag_field('ocean_model', 'hv_corr', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+
+
+  CS%id_fuee_pred = register_diag_field('ocean_model', 'fuee_pred', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fue0_pred = register_diag_field('ocean_model', 'fue0_pred', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_fuww_pred = register_diag_field('ocean_model', 'fuww_pred', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fuw0_pred = register_diag_field('ocean_model', 'fuw0_pred', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_uee_pred = register_diag_field('ocean_model', 'uee_pred', diag%axesCuL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_uww_pred = register_diag_field('ocean_model', 'uww_pred', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_hu_pred = register_diag_field('ocean_model', 'hu_pred', diag%axesCuL, Time, &
+      'Viscous remnant at v', 'nondim')
+
+  CS%id_fvnn_pred = register_diag_field('ocean_model', 'fvnn_pred', diag%axesCvL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fvn0_pred = register_diag_field('ocean_model', 'fvn0_pred', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_fvss_pred = register_diag_field('ocean_model', 'fvss_pred', diag%axesCvL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_fvs0_pred = register_diag_field('ocean_model', 'fvs0_pred', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_vnn_pred = register_diag_field('ocean_model', 'vnn_pred', diag%axesCvL, Time, &
+      'Viscous remnant at u', 'nondim')
+  CS%id_vss_pred = register_diag_field('ocean_model', 'vss_pred', diag%axesCvL, Time, &
+      'Viscous remnant at v', 'nondim')
+  CS%id_hv_pred = register_diag_field('ocean_model', 'hv_pred', diag%axesCvL, Time, &
       'Viscous remnant at v', 'nondim')
 
 
