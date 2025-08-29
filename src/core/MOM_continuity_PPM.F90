@@ -65,6 +65,7 @@ type, public :: continuity_PPM_CS ; private
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
   logical :: underflow
+  integer :: i_tgt, j_tgt
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -1489,10 +1490,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
   logical :: simple_OBC_pt(SZI_(G))  ! Indicates points in a row with specified transport OBCs
 
 
-  character(len=200) :: mesg
-  integer :: i_tgt, j_tgt
-  ! i_tgt = 161 ; j_tgt = 385
-  i_tgt = 144 ; j_tgt = 416
+  character(len=1000) :: mesg
 
   call cpu_clock_begin(id_clock_correct)
 
@@ -1725,9 +1723,11 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
 
   if (set_BT_cont) then
   do j=jsh,jeh ; do i=ish,ieh
-    if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
-      write(mesg, *) 'DEBUG end of meridional_mass_flux ', 'BT_cont%vBT_NN(i+1,J)', &
-        BT_cont%vBT_NN(i+1,J)
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+      write(mesg, *) 'DEBUG end of meridional_mass_flux BT_cont', 'FA_v_NN(i,J), FA_v_N0(i,J)', &
+        'FA_v_SS(i,J), FA_v_N0(i,J), vBT_NN, vBT_SS, h_v', &
+        BT_cont%FA_v_NN(i,J), BT_cont%FA_v_N0(i,J), BT_cont%FA_v_SS(i,J), BT_cont%FA_v_S0(i,J), &
+        BT_cont%vBT_NN(i,J), BT_cont%vBT_SS(i,J), BT_cont%h_v(i,J,1)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   enddo ; enddo
@@ -2241,9 +2241,6 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
   logical :: domore
   integer :: i, k, nz
   character(len=1000) :: mesg
-  integer :: i_tgt, j_tgt
-  ! i_tgt = 161 ; j_tgt = 385
-  i_tgt = 144 ; j_tgt = 416
 
   nz = GV%ke ; Idt = 1.0 / dt
   min_visc_rem = 0.1 ; CFL_min = 1e-6
@@ -2302,7 +2299,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
     endif
 
     do i=ish,ieh
-    if ((i + G%HI%idg_offset == i_tgt+1) .and. (j + G%HI%jdg_offset == j_tgt)) then
+    if ((i + G%HI%idg_offset == CS%i_tgt+1) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
       write(mesg, *) 'DEBUG cont merid_flux_layer do_I, v, dv0, visc_rem, v_0c, v_0, ', &
        do_I(i), v(i,j,k), dv0(i), visc_rem(i,k), v(I,j,k) + dv0(i) * visc_rem(i,k), v_0(i)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
@@ -2338,6 +2335,12 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
                    ((FAmt_L(i) - FA_avg) / (FAmt_L(i) - FA_0))
     endif
 
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+      write(mesg, *) 'DEBUG cont merid', 'BT_cont%FA_v_S0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_L(i)', &
+        BT_cont%FA_v_S0(i,J), FA_0, FAmt_0(i), FA_avg, FAmt_L(i)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+    endif
+
     FA_0 = FAmt_0(i) ; FA_avg = FAmt_0(i)
     if ((dvR(i) - dv0(i)) /= 0.0) &
       FA_avg = vhtot_R(i) / (dvR(i) - dv0(i))
@@ -2349,10 +2352,12 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
                    ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0))
     endif
 
-    if ((i + G%HI%idg_offset == i_tgt+1) .and. (j + G%HI%jdg_offset == j_tgt)) then
-      write(mesg, *) 'DEBUG cont ', 'BT_cont%vBT_NN(i+1,J)', &
-        BT_cont%vBT_NN(i,J), (1.5 * (dvR(i) - dv0(i))) * ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0)), &
-        dvR(i), dv0(i), FAmt_0(i), FAmt_R(i), FA_avg, FA_0
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+      write(mesg, *) 'DEBUG cont merid', 'BT_cont%FA_v_N0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_R(i)', &
+        BT_cont%FA_v_N0(i,J), FA_0, FAmt_0(i), FA_avg, FAmt_R(i)
+      ! write(mesg, *) 'DEBUG cont ', 'BT_cont%vBT_NN(i+1,J)', &
+      !   BT_cont%vBT_NN(i,J), (1.5 * (dvR(i) - dv0(i))) * ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0)), &
+      !   dvR(i), dv0(i), FAmt_0(i), FAmt_R(i), FA_avg, FA_0
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   else
@@ -2808,6 +2813,10 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS)
                  "Otherwise use the transport averaged areas.", default=.true.)
   call get_param(param_file, mdl, "CONT_UNDERFLOW", CS%underflow, &
                  "If true, zero flow <1e-20m/s", default=.false.)
+  call get_param(param_file, mdl, "I_TGT", CS%i_tgt, &
+                 "I_TGT", default=1)
+  call get_param(param_file, mdl, "J_TGT", CS%j_tgt, &
+                 "J_TGT", default=1)
   CS%diag => diag
 
   id_clock_reconstruct = cpu_clock_id('(Ocean continuity reconstruction)', grain=CLOCK_ROUTINE)

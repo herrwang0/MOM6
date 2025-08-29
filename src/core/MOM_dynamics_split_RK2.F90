@@ -276,6 +276,7 @@ type, public :: MOM_dyn_split_RK2_CS ; private
   type(group_pass_type) :: pass_uv  !< Structure for group halo pass
   type(group_pass_type) :: pass_h  !< Structure for group halo pass
   type(group_pass_type) :: pass_av_uvh  !< Structure for group halo pass
+  integer :: i_tgt, j_tgt
 
 end type MOM_dyn_split_RK2_CS
 
@@ -417,9 +418,8 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
   integer :: cont_stencil, obc_stencil
 
   character(len=200) :: mesg
-  integer :: i_tgt, j_tgt
-  ! i_tgt = 161 ; j_tgt = 385
-  i_tgt = 144 ; j_tgt = 416
+  ! CS%i_tgt = 161 ; CS%j_tgt = 385
+  ! CS%i_tgt = 144 ; CS%j_tgt = 416
 
   is  = G%isc  ; ie  = G%iec  ; js  = G%jsc  ; je  = G%jec ; nz = GV%ke
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
@@ -843,7 +843,7 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
                   u_cor=u_av, v_cor=v_av, BT_cont=CS%BT_cont)
 
   do j=js,je ; do i=is,ie
-    if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
       write(mesg, *) 'DEBUG before corrector btstep', 'BT_cont%vBT_NN(i+1,J)', &
         CS%BT_cont%vBT_NN(i+1,J)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
@@ -1591,7 +1591,10 @@ subroutine initialize_dyn_split_RK2(u, v, h, tv, uh, vh, eta, Time, G, GV, US, p
                  "vertvisc_remnant() at the end of predictor stage for the following "//&
                  "continuity() and btstep() calls in the corrector step. Default of this flag "//&
                  "is set by VISC_REM_BUG", default=visc_rem_bug)
-
+  call get_param(param_file, mdl, "I_TGT", CS%i_tgt, &
+                 "I_TGT", default=1)
+  call get_param(param_file, mdl, "J_TGT", CS%j_tgt, &
+                 "J_TGT", default=1)
   allocate(CS%taux_bot(IsdB:IedB,jsd:jed), source=0.0)
   allocate(CS%tauy_bot(isd:ied,JsdB:JedB), source=0.0)
 

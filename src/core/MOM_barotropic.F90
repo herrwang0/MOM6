@@ -345,6 +345,7 @@ type, public :: barotropic_CS ; private
   integer :: id_BTC_FA_u_rat0 = -1, id_BTC_FA_v_rat0 = -1, id_BTC_FA_h_rat0 = -1
   integer :: id_uhbt0 = -1, id_vhbt0 = -1
   !>@}
+  integer :: i_tgt, j_tgt
 
 end type barotropic_CS
 
@@ -751,10 +752,9 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   integer :: ioff, joff
   integer :: l_seg
-  integer :: i_tgt, j_tgt
 
-  ! i_tgt = 161 ; j_tgt = 385
-  i_tgt = 144 ; j_tgt = 416
+  ! CS%i_tgt = 161 ; CS%j_tgt = 385
+  ! CS%i_tgt = 144 ; CS%j_tgt = 416
 
   if (.not.CS%module_is_initialized) call MOM_error(FATAL, &
       "btstep: Module MOM_barotropic must be initialized before it is used.")
@@ -2442,7 +2442,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     endif
 
     do j=js,je ; do i=is,ie
-      if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+      if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
         write(mesg, *) 'DEBUG step', n, 'i,j,is,ie,js,je', i,j,is,ie,js,je
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
         write(mesg, *) 'DEBUG step', n, '[uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
@@ -2614,7 +2614,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     !$OMP end parallel
 
     do j=js,je ; do i=is,ie
-      if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+      if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
         write(mesg, *) 'DEBUG step', n, 'eta', eta(i,j), eta(i+1,j), eta(i-1,j), eta(i,j+1), eta(i,j-1)
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
         ! write(mesg, *) 'DEBUG step', n, 'eta_src', eta_src(i,j), eta_src(i+1,j), eta_src(i-1,j), eta_src(i,j+1), eta_src(i,j-1)
@@ -2832,7 +2832,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! call hchksum(eta_pf, "eta_pf",G%HI)
 
   do j=js,je ; do i=is,ie
-    if ((i + G%HI%idg_offset == i_tgt) .and. (j + G%HI%jdg_offset == j_tgt)) then
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
       write(mesg, *) 'DEBUG [uv]_accel_bt', u_accel_bt(I-1,j), u_accel_bt(I,j), v_accel_bt(i,J-1), v_accel_bt(i,J)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
       write(mesg, *) 'DEBUG accel_layer_[uv]', accel_layer_u(I-1,j,1), accel_layer_u(I,j,1), accel_layer_v(i,J-1,1), accel_layer_v(i,J,1)
@@ -5003,7 +5003,10 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "If True, use an order of operations that is not bitwise "//&
                  "rotationally symmetric in the meridional Coriolis term of "//&
                  "the barotropic solver.", default=.false.)
-
+  call get_param(param_file, mdl, "I_TGT", CS%i_tgt, &
+                 "I_TGT", default=1)
+  call get_param(param_file, mdl, "J_TGT", CS%j_tgt, &
+                 "J_TGT", default=1)
   ! Initialize a version of the MOM domain that is specific to the barotropic solver.
   call clone_MOM_domain(G%Domain, CS%BT_Domain, min_halo=wd_halos, symmetric=.true.)
 #ifdef STATIC_MEMORY_
