@@ -1369,9 +1369,9 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
 
     if (CS%underflow) then
       do I=ish-1,ieh ; if (do_I(I)) then
-        if (abs(u_L(I)) < 1e-20) u_L(I) = 0.0
-        if (abs(u_R(I)) < 1e-20) u_R(I) = 0.0
-        if (abs(u_0(I)) < 1e-20) u_0(I) = 0.0
+        if (abs(u_L(I)) < 1e-15) u_L(I) = 0.0
+        if (abs(u_R(I)) < 1e-15) u_R(I) = 0.0
+        if (abs(u_0(I)) < 1e-15) u_0(I) = 0.0
       endif ; enddo
     endif
 
@@ -2316,9 +2316,9 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
 
     if (CS%underflow) then
       do i=ish,ieh ; if (do_I(i)) then
-        if (abs(v_L(i)) < 1e-20) v_L(i) = 0.0
-        if (abs(v_R(i)) < 1e-20) v_R(i) = 0.0
-        if (abs(v_0(i)) < 1e-20) v_0(i) = 0.0
+        if (abs(v_L(i)) < 1e-15) v_L(i) = 0.0
+        if (abs(v_R(i)) < 1e-15) v_R(i) = 0.0
+        if (abs(v_0(i)) < 1e-15) v_0(i) = 0.0
       endif ; enddo
     endif
 
