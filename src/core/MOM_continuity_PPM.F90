@@ -1317,6 +1317,7 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
   real :: Idt     ! The inverse of the time step [T-1 ~> s-1].
   logical :: domore
   integer :: i, k, nz
+  character(len=1000) :: mesg
 
   nz = GV%ke ; Idt = 1.0 / dt
   min_visc_rem = 0.1 ; CFL_min = 1e-6
@@ -1374,6 +1375,17 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
       endif ; enddo
     endif
 
+    do I=ish-1,ieh
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+      write(mesg, *) 'DEBUG cont zonal_flux_layer do_I, u, du0, visc_rem, u_0c, u_0, ', &
+       do_I(i), u(i,j,k), du0(i), visc_rem(i,k), u(I,j,k) + du0(i) * visc_rem(i,k), u_0(i)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+      write(mesg, *) 'DEBUG cont zonal_flux_layer h_in, h_S, h_N', &
+       h_in(i,j,k), h_W(i,j,k), h_E(i,j,k), h_in(i+1,j,k), h_W(i+1,j,k), h_E(i+1,j,k)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+    endif
+    enddo
+
     call zonal_flux_layer(u_0, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_0, duhdu_0, &
                           visc_rem(:,k), dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k))
     call zonal_flux_layer(u_L, h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), uh_L, duhdu_L, &
@@ -1401,6 +1413,12 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
                             ((FAmt_L(I) - FA_avg) / (FAmt_L(I) - FA_0))
     endif
 
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+      write(mesg, *) 'DEBUG cont zonal BT_cont%FA_u_W0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_L(i)', &
+        BT_cont%FA_u_W0(i,J), FA_0, FAmt_0(i), FA_avg, FAmt_L(i)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+    endif
+
     FA_0 = FAmt_0(I) ; FA_avg = FAmt_0(I)
     if ((duR(I) - du0(I)) /= 0.0) &
       FA_avg = uhtot_R(I) / (duR(I) - du0(I))
@@ -1411,6 +1429,12 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
     if (abs(FAmt_R(I) - FA_0) <= 1e-12*FA_0) then ; BT_cont%uBT_EE(I,j) = 0.0 ; else
       BT_cont%uBT_EE(I,j) = (1.5 * (duR(I) - du0(I))) * &
                             ((FAmt_R(I) - FA_avg) / (FAmt_R(I) - FA_0))
+    endif
+
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+      write(mesg, *) 'DEBUG cont zonal BT_cont%FFA_u_E0_v_N0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_R(i)', &
+        BT_cont%FA_u_E0(i,J), FA_0, FAmt_0(i), FA_avg, FAmt_R(i)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
   else
     BT_cont%FA_u_W0(I,j) = 0.0 ; BT_cont%FA_u_WW(I,j) = 0.0
