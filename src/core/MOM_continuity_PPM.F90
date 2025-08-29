@@ -2299,11 +2299,11 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
     endif
 
     do i=ish,ieh
-    if ((i + G%HI%idg_offset == CS%i_tgt+1) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
       write(mesg, *) 'DEBUG cont merid_flux_layer do_I, v, dv0, visc_rem, v_0c, v_0, ', &
        do_I(i), v(i,j,k), dv0(i), visc_rem(i,k), v(I,j,k) + dv0(i) * visc_rem(i,k), v_0(i)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
-      write(mesg, *) 'DEBUG cont merid_flux_layer', 'h_in, h_S, h_N', &
+      write(mesg, *) 'DEBUG cont merid_flux_layer h_in, h_S, h_N', &
        h_in(i,j,k), h_S(i,j,k), h_N(i,j,k), h_in(i,j+1,k), h_S(i,j+1,k), h_N(i,j+1,k)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
@@ -2336,7 +2336,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
     endif
 
     if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
-      write(mesg, *) 'DEBUG cont merid', 'BT_cont%FA_v_S0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_L(i)', &
+      write(mesg, *) 'DEBUG cont merid BT_cont%FA_v_S0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_L(i)', &
         BT_cont%FA_v_S0(i,J), FA_0, FAmt_0(i), FA_avg, FAmt_L(i)
       call MOM_error(WARNING, trim(mesg), all_print=.true.)
     endif
@@ -2353,7 +2353,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
     endif
 
     if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
-      write(mesg, *) 'DEBUG cont merid', 'BT_cont%FA_v_N0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_R(i)', &
+      write(mesg, *) 'DEBUG cont merid BT_cont%FA_v_N0(i,J),  FA_0, FAmt_0(i), FA_avg, FAmt_R(i)', &
         BT_cont%FA_v_N0(i,J), FA_0, FAmt_0(i), FA_avg, FAmt_R(i)
       ! write(mesg, *) 'DEBUG cont ', 'BT_cont%vBT_NN(i+1,J)', &
       !   BT_cont%vBT_NN(i,J), (1.5 * (dvR(i) - dv0(i))) * ((FAmt_R(i) - FA_avg) / (FAmt_R(i) - FA_0)), &
