@@ -1095,7 +1095,7 @@ end subroutine zonal_flux_thickness
 !! desired barotropic (layer-summed) transport.
 subroutine zonal_flux_adjust(u, h_in, h_W, h_E, uhbt, uh_tot_0, duhdu_tot_0, &
                              du, du_max_CFL, du_min_CFL, dt, G, GV, US, CS, visc_rem, &
-                             j, ish, ieh, do_I_in, por_face_areaU, uh_3d, OBC)
+                             j, ish, ieh, do_I_in, por_face_areaU, uh_3d, OBC, debug)
 
   type(ocean_grid_type),                     intent(in)    :: G    !< Ocean's grid structure.
   type(verticalGrid_type),                   intent(in)    :: GV   !< Ocean's vertical grid structure.
@@ -1137,6 +1137,7 @@ subroutine zonal_flux_adjust(u, h_in, h_W, h_E, uhbt, uh_tot_0, duhdu_tot_0, &
   real, dimension(SZIB_(G),SZJ_(G),SZK_(GV)), optional, intent(inout) :: uh_3d !<
                        !! Volume flux through zonal faces = u*h*dy [H L2 T-1 ~> m3 s-1 or kg s-1].
   type(ocean_OBC_type),            optional, pointer       :: OBC !< Open boundaries control structure.
+  logical, optional, intent(in) :: debug
   ! Local variables
   real, dimension(SZIB_(G),SZK_(GV)) :: &
     uh_aux, &  ! An auxiliary zonal volume flux [H L2 T-1 ~> m3 s-1 or kg s-1].
@@ -1154,6 +1155,11 @@ subroutine zonal_flux_adjust(u, h_in, h_W, h_E, uhbt, uh_tot_0, duhdu_tot_0, &
   real :: tol_vel ! The tolerance for velocity in the current iteration [L T-1 ~> m s-1].
   integer :: i, k, nz, itt, max_itts = 20
   logical :: domore, do_I(SZIB_(G))
+  logical :: do_debug
+  character(len=1000) :: mesg
+
+  do_debug = .false.
+  if (present(debug)) do_debug = debug
 
   nz = GV%ke
 
@@ -1212,6 +1218,17 @@ subroutine zonal_flux_adjust(u, h_in, h_W, h_E, uhbt, uh_tot_0, duhdu_tot_0, &
         do_I(I) = .false.
       endif
     endif ; enddo
+
+    if (do_debug) then
+    do I=ish-1,ieh
+    if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
+      write(mesg, *) 'DEBUG cont zonal_flux_adjust: itt, do_I(I), u(i,j,k), du_prev, du(i), u+du', &
+       itt, do_I(I), u(i,j,k), du_prev, du(i), u(i,j,k)+du(i)
+      call MOM_error(WARNING, trim(mesg), all_print=.true.)
+    endif
+    enddo
+    endif
+
     if (.not.domore) exit
 
     if ((itt < max_itts) .or. present(uh_3d)) then ; do k=1,nz
@@ -1326,7 +1343,7 @@ subroutine set_zonal_BT_cont(u, h_in, h_W, h_E, BT_cont, uh_tot_0, duhdu_tot_0, 
   do I=ish-1,ieh ; zeros(I) = 0.0 ; enddo
   call zonal_flux_adjust(u, h_in, h_W, h_E, zeros, uh_tot_0, duhdu_tot_0, du0, &
                          du_max_CFL, du_min_CFL, dt, G, GV, US, CS, visc_rem, &
-                         j, ish, ieh, do_I, por_face_areaU)
+                         j, ish, ieh, do_I, por_face_areaU, debug=.True.)
 
   ! Determine the westerly- and easterly- fluxes.  Choose a sufficiently
   ! negative velocity correction for the easterly-flux, and a sufficiently
