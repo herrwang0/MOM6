@@ -1220,8 +1220,8 @@ subroutine zonal_flux_adjust(u, h_in, h_W, h_E, uhbt, uh_tot_0, duhdu_tot_0, &
 
       if (do_debug) then
       if ((i + G%HI%idg_offset == CS%i_tgt) .and. (j + G%HI%jdg_offset == CS%j_tgt)) then
-        write(mesg, *) 'DEBUG cont zonal_flux_adjust: itt, do_I(I), u(i,j,k), du_prev, du(i), u+du_prev, u+du, uh_err ', &
-        itt, do_I(I), u(i,j,1), du_prev, du(i), u(i,j,1)+du_prev* visc_rem(I,k), u(i,j,1)+du(i)* visc_rem(I,k), uh_err(I), abs(ddu) < 1.0e-15*abs(du(I))
+        write(mesg, *) 'DEBUG cont zonal_flux_adjust: itt, do_I(I), u(i,j,k), du_prev, du(i), u+du_prev, u+du, uh_err, ddu ', &
+        itt, do_I(I), u(i,j,1), du_prev, du(i), u(i,j,1)+du_prev* visc_rem(I,k), u(i,j,1)+du(i)* visc_rem(I,k), uh_err(I), ddu, abs(ddu) < 1.0e-15*abs(du(I))
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
       endif
       endif
