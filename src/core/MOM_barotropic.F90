@@ -245,6 +245,10 @@ type, public :: barotropic_CS ; private
                              !!   HARMONIC, ARITHMETIC, HYBRID, and FROM_BT_CONT
   logical :: strong_drag     !< If true, use a stronger estimate of the retarding
                              !! effects of strong bottom drag.
+  logical :: rescale_strong_drag !< If true, reduce the barotropic contribution to the layer
+                             !! accelerations to account for the difference between the forces that
+                             !! can be counteracted  by the stronger drag with BT_STRONG_DRAG and the
+                             !! average of the layer viscous remnants after a baroclinic timestep.
   logical :: linear_wave_drag  !< If true, apply a linear drag to the barotropic
                              !! velocities, using rates set by lin_drag_u & _v
                              !! divided by the depth of the ocean.
@@ -2675,6 +2679,17 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   if (id_clock_calc > 0) call cpu_clock_end(id_clock_calc)
   if (id_clock_calc_post > 0) call cpu_clock_begin(id_clock_calc_post)
 
+  if (CS%strong_drag .and. CS%rescale_strong_drag) then
+    do j=js,je ; do I=is-1,ie
+      if (G%mask2dCu(I,j) * av_rem_u(I,j) > 0.0) &
+        u_accel_bt(I,j) = u_accel_bt(I,j) * min(bt_rem_u(I,j)**nstep / av_rem_u(I,j), 1.0)
+    enddo ; enddo
+    do J=js-1,je ; do i=is,ie
+      if (G%mask2dCv(i,J) * av_rem_v(i,J) > 0.0) &
+        v_accel_bt(i,J) = v_accel_bt(i,J) * min(bt_rem_v(i,J)**nstep / av_rem_v(i,J), 1.0)
+    enddo ; enddo
+  endif
+
   ! Reset the time information in the diag type.
   if (do_hifreq_output) call enable_averaging(time_int_in, time_end_in, CS%diag)
 
@@ -4902,6 +4917,12 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
                  "with the barotropic time-step instead of implicit with "//&
                  "the baroclinic time-step and dividing by the number of "//&
                  "barotropic steps.", default=.false.)
+  call get_param(param_file, mdl, "RESCALE_STRONG_DRAG", CS%rescale_strong_drag, &
+                 "If true, reduce the barotropic contribution to the layer accelerations "//&
+                 "to account for the difference between the forces that can be counteracted "//&
+                 "by the stronger drag with BT_STRONG_DRAG and the average of the layer "//&
+                 "viscous remnants after a baroclinic timestep.", &
+                 default=.false., do_not_log=.not.CS%strong_drag)
   call get_param(param_file, mdl, "BT_LINEAR_WAVE_DRAG", CS%linear_wave_drag, &
                  "If true, apply a linear drag to the barotropic velocities, "//&
                  "using rates set by lin_drag_u & _v divided by the depth of "//&
