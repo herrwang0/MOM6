@@ -1223,6 +1223,9 @@ subroutine zonal_flux_adjust(u, h_in, h_W, h_E, uhbt, uh_tot_0, duhdu_tot_0, &
         write(mesg, *) 'DEBUG cont zonal_flux_adjust: itt, do_I(I), u(i,j,k), du_prev, du(i), u+du_prev, u+du, uh_err, ddu ', &
         itt, do_I(I), u(i,j,1), du_prev, du(i), u(i,j,1)+du_prev* visc_rem(I,1), u(i,j,1)+du(i)* visc_rem(I,1), uh_err(I), ddu, abs(ddu) < 1.0e-15*abs(du(I))
         call MOM_error(WARNING, trim(mesg), all_print=.true.)
+        write(mesg, *) 'DEBUG cont zonal_flux_adjust: itt, tol_eta/dt/area, tol_vel * duhdu_tot(I), uh_err_best(I) ', &
+        itt, tol_eta/(dt * min(G%IareaT(i,j),G%IareaT(i+1,j))), tol_vel * duhdu_tot(I), uh_err_best(I)
+        call MOM_error(WARNING, trim(mesg), all_print=.true.)
       endif
       endif
 
