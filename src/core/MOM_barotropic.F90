@@ -4609,6 +4609,7 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
   integer :: isdw, iedw, jsdw, jedw
   integer :: i, j, k
   integer :: wd_halos(2), bt_halo_sz
+  logical :: pormed_dz
   isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
   IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
@@ -4811,8 +4812,10 @@ subroutine barotropic_init(u, v, h, eta, Time, G, GV, US, param_file, diag, CS, 
     call MOM_error(FATAL, "barotropic_init: BT_THICK_SCHEME FROM_BT_CONT "//&
                            "can only be used if USE_BT_CONT_TYPE is defined.")
 
-  call get_param(param_file, mdl, "USE_PM_DZ", CS%use_pormed_dz, &
+  call get_param(param_file, mdl, "USE_PM_DZ", pormed_dz, &
                  default=CS%use_pormed, do_not_log=.true.)
+  call get_param(param_file, mdl, "USE_PM_DZ_WAVE_DRAG", CS%use_pormed_dz, &
+                 "DZ for wave drag", default=pormed_dz)
   call get_param(param_file, mdl, "BT_STRONG_DRAG", CS%strong_drag, &
                  "If true, use a stronger estimate of the retarding "//&
                  "effects of strong bottom drag, by making it implicit "//&
