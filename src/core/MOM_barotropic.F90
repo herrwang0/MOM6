@@ -1627,21 +1627,22 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     enddo ; enddo
   endif
   if (CS%linear_wave_drag) then
-    if (CS%use_pormed .and. (.not.CS%use_pormed_dz)) then
+    if (CS%use_pormed .and. CS%use_pormed_dz) then
+    call h_to_hprime(eta, G, GV, eta_prime, spv_avg=SpV_col_avg, halo_size=max(iev-ie+1, jev-je+1))
     !$OMP do
     do j=js,je ; do I=is-1,ie ; if (CS%lin_drag_u(I,j) > 0.0) then
-      Htot = 0.5 * (eta(i,j) + eta(i+1,j))
+      Htot = 0.5 * (eta_prime(i,j) + eta_prime(i+1,j))
       if (GV%Boussinesq) &
-        Htot = Htot + 0.5*GV%Z_to_H * (G%depc_ave(i,j) + G%depc_ave(i+1,j))
+        Htot = Htot + 0.5*GV%Z_to_H * (CS%bathyT(i,j) + CS%bathyT(i+1,j))
       bt_rem_u(I,j) = bt_rem_u(I,j) * (Htot / (Htot + CS%lin_drag_u(I,j) * dtbt))
 
       Rayleigh_u(I,j) = CS%lin_drag_u(I,j) / Htot
     endif ; enddo ; enddo
     !$OMP do
     do J=js-1,je ; do i=is,ie ; if (CS%lin_drag_v(i,J) > 0.0) then
-      Htot = 0.5 * (eta(i,j) + eta(i,j+1))
+      Htot = 0.5 * (eta_prime(i,j) + eta_prime(i,j+1))
       if (GV%Boussinesq) &
-        Htot = Htot + 0.5*GV%Z_to_H * (G%depc_ave(i,j) + G%depc_ave(i,j+1))
+        Htot = Htot + 0.5*GV%Z_to_H * (CS%bathyT(i,j) + CS%bathyT(i,j+1))
       bt_rem_v(i,J) = bt_rem_v(i,J) * (Htot / (Htot + CS%lin_drag_v(i,J) * dtbt))
 
       Rayleigh_v(i,J) = CS%lin_drag_v(i,J) / Htot
