@@ -138,7 +138,7 @@ function tracer_Z_init(tr, h, filename, tr_name, G, GV, US, missing_val, land_va
 
       do i=is,ie ; if (G%mask2dT(i,j)*htot(i) > 0.0) then
         ! Determine the z* heights of the model interfaces.
-        dilate = (G%bathyT(i,j) + G%Z_ref) / htot(i)
+        dilate = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) / htot(i)
         e(nz+1) = -G%bathyT(i,j) - G%Z_ref
         do k=nz,1,-1 ; e(K) = e(K+1) + dilate * h(i,j,k) ; enddo
 
@@ -213,7 +213,7 @@ function tracer_Z_init(tr, h, filename, tr_name, G, GV, US, missing_val, land_va
 
       do i=is,ie ; if (G%mask2dT(i,j)*htot(i) > 0.0) then
         ! Determine the z* heights of the model interfaces.
-        dilate = (G%bathyT(i,j) + G%Z_ref) / htot(i)
+        dilate = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) / htot(i)
         e(nz+1) = -G%bathyT(i,j) - G%Z_ref
         do k=nz,1,-1 ; e(K) = e(K+1) + dilate * h(i,j,k) ; enddo
 
