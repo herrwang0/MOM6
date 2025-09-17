@@ -373,12 +373,14 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
 
   !$OMP parallel do default(shared)
   do J=js-1,je ; do i=is-1,ie+1
-    D_v(i,J) = 0.5*(G%bathyT(i,j) + G%bathyT(i,j+1)) + G%Z_ref
+    D_v(i,J) = 0.5 * ( max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) &
+                     + max(G%meanSL(i,j+1) + G%bathyT(i,j+1), 0.0) )
     mask_v(i,J) = G%mask2dCv(i,J)
   enddo ; enddo
   !$OMP parallel do default(shared)
   do j=js-1,je+1 ; do I=is-1,ie
-    D_u(I,j) = 0.5*(G%bathyT(i,j) + G%bathyT(i+1,j)) + G%Z_ref
+    D_u(I,j) = 0.5 * ( max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) &
+                     + max(G%meanSL(i+1,j) + G%bathyT(i+1,j), 0.0) )
     mask_u(I,j) = G%mask2dCu(I,j)
   enddo ; enddo
 
@@ -389,7 +391,7 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
       is_OBC = max(is-1, OBC%is_v_N_obc) ; ie_OBC = min(ie+1, OBC%ie_v_N_obc)
       !$OMP parallel do default(shared)
       do J=Js_OBC,Je_OBC ; do i=is_OBC,ie_OBC
-        if (OBC%segnum_v(i,J) > 0) D_v(i,J) = G%bathyT(i,j) + G%Z_ref !  OBC_DIRECTION_N
+        if (OBC%segnum_v(i,J) > 0) D_v(i,J) = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) !  OBC_DIRECTION_N
       enddo ; enddo
     endif
     if (OBC%v_S_OBCs_on_PE) then
@@ -397,7 +399,7 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
       is_OBC = max(is-1, OBC%is_v_S_obc) ; ie_OBC = min(ie+1, OBC%ie_v_S_obc)
       !$OMP parallel do default(shared)
       do J=Js_OBC,Je_OBC ; do i=is_OBC,ie_OBC
-        if (OBC%segnum_v(i,J) < 0) D_v(i,J) = G%bathyT(i,j+1) + G%Z_ref !  OBC_DIRECTION_S
+        if (OBC%segnum_v(i,J) < 0) D_v(i,J) = max(G%meanSL(i,j+1) + G%bathyT(i,j+1), 0.0) !  OBC_DIRECTION_S
       enddo ; enddo
     endif
     if (OBC%u_E_OBCs_on_PE) then
@@ -405,7 +407,7 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
       Is_OBC = max(is-1, OBC%Is_u_E_obc) ; Ie_OBC = min(ie, OBC%Ie_u_E_obc)
       !$OMP parallel do default(shared)
       do j=js_OBC,je_OBC ; do I=Is_OBC,Ie_OBC
-        if (OBC%segnum_u(I,j) > 0) D_u(I,j) = G%bathyT(i,j) + G%Z_ref !  OBC_DIRECTION_E
+        if (OBC%segnum_u(I,j) > 0) D_u(I,j) = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) !  OBC_DIRECTION_E
       enddo ; enddo
     endif
     if (OBC%u_W_OBCs_on_PE) then
@@ -413,7 +415,7 @@ subroutine set_viscous_BBL(u, v, h, tv, visc, G, GV, US, CS, pbv)
       Is_OBC = max(is-1, OBC%Is_u_W_obc) ; Ie_OBC = min(ie, OBC%Ie_u_W_obc)
       !$OMP parallel do default(shared)
       do j=js_OBC,je_OBC ; do I=Is_OBC,Ie_OBC
-        if (OBC%segnum_u(I,j) < 0) D_u(I,j) = G%bathyT(i+1,j) + G%Z_ref !  OBC_DIRECTION_W
+        if (OBC%segnum_u(I,j) < 0) D_u(I,j) = max(G%meanSL(i+1,j) + G%bathyT(i+1,j), 0.0) !  OBC_DIRECTION_W
       enddo ; enddo
     endif
   endif

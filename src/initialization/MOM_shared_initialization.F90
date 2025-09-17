@@ -30,6 +30,7 @@ public reset_face_lengths_named, reset_face_lengths_file, reset_face_lengths_lis
 public read_face_length_list, set_velocity_depth_max, set_velocity_depth_min
 public set_subgrid_topo_at_vel_from_file
 public compute_global_grid_integrals, write_ocean_geometry_file
+public set_meanSL_from_file
 
 ! A note on unit descriptions in comments: MOM6 uses units that can be rescaled for dimensional
 ! consistency testing. These are noted in comments with units like Z, H, L, and T, along with
@@ -136,6 +137,42 @@ function diagnoseMaximumDepth(D, G)
   call max_across_PEs(diagnoseMaximumDepth)
 end function diagnoseMaximumDepth
 
+!> Read time mean ocean sea level from a file
+subroutine set_meanSL_from_file(meanSL, G, param_file, US)
+  type(dyn_horgrid_type),           intent(in)  :: G !< The dynamic horizontal grid type
+  real, dimension(G%isd:G%ied,G%jsd:G%jed), &
+                                    intent(out) :: meanSL !< Mean sea level referenced to a zero
+                                                          !! reference height at tracer points [Z ~> m].
+  type(param_file_type),            intent(in)  :: param_file !< Parameter file structure
+  type(unit_scale_type),            intent(in)  :: US !< A dimensional unit scaling type
+  ! Local variables
+  logical :: read_meanSL_file
+  character(len=200) :: filename, file, inputdir ! Strings for file/path
+  character(len=200) :: varname                  ! Variable name in file
+  character(len=40)  :: mdl = "set_meanSL_from_file" ! This subroutine's name.
+  integer :: i, j
+
+  call callTree_enter(trim(mdl)//"(), MOM_shared_initialization.F90")
+
+  call get_param(param_file, mdl, "INPUTDIR", inputdir, default=".")
+  inputdir = slasher(inputdir)
+  call get_param(param_file, mdl, "MEAN_SEA_LEVEL_FILE", file, &
+                 "The file from which the mean sea level is read.", &
+                 default="mean_sea_level.nc")
+  call get_param(param_file, mdl, "MEAN_SEA_LEVEL_VARNAME", varname, &
+                 "The name of the mean sea level variable in MEAN_SEA_LEVEL_FILE.", &
+                 default="meanSL")
+  filename = trim(inputdir)//trim(file)
+  call log_param(param_file, mdl, "INPUTDIR/TOPO_FILE", filename)
+
+  if (.not.file_exists(filename, G%Domain)) &
+    call MOM_error(FATAL, " "//mdl//": Unable to open "//trim(filename))
+
+  call MOM_read_data(filename, trim(varname), meanSL, G%Domain, scale=US%m_to_Z)
+  call pass_var(meanSL, G%Domain)
+
+  call callTree_leave(trim(mdl)//'()')
+end subroutine set_meanSL_from_file
 
 !> Read gridded depths from file
 subroutine initialize_topography_from_file(D, G, param_file, US)
@@ -1354,7 +1391,7 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
 
   call callTree_enter('write_ocean_geometry_file()')
 
-  nFlds = 19 ; if (G%bathymetry_at_vel) nFlds = 23
+  nFlds = 20 ; if (G%bathymetry_at_vel) nFlds = 24
 
   allocate(vars(nFlds))
   allocate(fields(nFlds))
@@ -1389,12 +1426,13 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   vars(17)= var_desc("dxCvo","m","Open zonal grid spacing at v points",'v','1','1')
   vars(18)= var_desc("dyCuo","m","Open meridional grid spacing at u points",'u','1','1')
   vars(19)= var_desc("wet", "nondim", "land or ocean?", 'h','1','1')
+  vars(20)= var_desc("meanSL","meter","Mean Sea Level",'h','1','1')
 
   if (G%bathymetry_at_vel) then
-    vars(20) = var_desc("Dblock_u","m","Blocked depth at u points",'u','1','1')
-    vars(21) = var_desc("Dopen_u","m","Open depth at u points",'u','1','1')
-    vars(22) = var_desc("Dblock_v","m","Blocked depth at v points",'v','1','1')
-    vars(23) = var_desc("Dopen_v","m","Open depth at v points",'v','1','1')
+    vars(21) = var_desc("Dblock_u","m","Blocked depth at u points",'u','1','1')
+    vars(22) = var_desc("Dopen_u","m","Open depth at u points",'u','1','1')
+    vars(23) = var_desc("Dblock_v","m","Blocked depth at v points",'v','1','1')
+    vars(24) = var_desc("Dopen_v","m","Open depth at v points",'v','1','1')
   endif
 
   if (present(geom_file)) then
@@ -1448,12 +1486,13 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   call MOM_write_field(IO_handle, fields(17), G%Domain, G%dx_Cv, unscale=US%L_to_m)
   call MOM_write_field(IO_handle, fields(18), G%Domain, G%dy_Cu, unscale=US%L_to_m)
   call MOM_write_field(IO_handle, fields(19), G%Domain, G%mask2dT)
+  call MOM_write_field(IO_handle, fields(20), G%Domain, G%meanSL, unscale=US%Z_to_m)
 
   if (G%bathymetry_at_vel) then
-    call MOM_write_field(IO_handle, fields(20), G%Domain, G%Dblock_u, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(21), G%Domain, G%Dopen_u, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(22), G%Domain, G%Dblock_v, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(23), G%Domain, G%Dopen_v, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(21), G%Domain, G%Dblock_u, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(22), G%Domain, G%Dopen_u, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(23), G%Domain, G%Dblock_v, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(24), G%Domain, G%Dopen_v, unscale=US%Z_to_m)
   endif
 
   call IO_handle%close()
