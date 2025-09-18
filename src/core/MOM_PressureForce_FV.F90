@@ -1161,7 +1161,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     !$OMP parallel do default(shared)
     do j=Jsq,Jeq+1
       do i=Isq,Ieq+1
-        SSH(i,j) = min(-G%bathyT(i,j) - G%Z_ref, 0.0)
+        SSH(i,j) = -G%meanThick(i,j)
       enddo
       do k=1,nz ; do i=Isq,Ieq+1
         SSH(i,j) = SSH(i,j) + h(i,j,k)*GV%H_to_Z

@@ -5389,26 +5389,26 @@ subroutine find_face_areas(Datu, Datv, G, GV, US, CS, MS, halo, eta, add_max)
     !$OMP do
     do j=js-hs,je+hs ; do I=is-1-hs,ie+hs
       Datu(I,j) = CS%dy_Cu(I,j) * Z_to_H * &
-                 max(max(CS%bathyT(i+1,j), CS%bathyT(i,j)) + (G%Z_ref + add_max), 0.0)
+                 max(max(G%meanThick(i+1,j), G%meanThick(i,j)) + add_max, 0.0)
     enddo ; enddo
     !$OMP do
     do J=js-1-hs,je+hs ; do i=is-hs,ie+hs
       Datv(i,J) = CS%dx_Cv(i,J) * Z_to_H * &
-                 max(max(CS%bathyT(i,j+1), CS%bathyT(i,j)) + (G%Z_ref + add_max), 0.0)
+                 max(max(G%meanThick(i,j+1), G%meanThick(i,j)) + add_max, 0.0)
     enddo ; enddo
   else
     Z_to_H = GV%Z_to_H ; if (.not.GV%Boussinesq) Z_to_H = GV%RZ_to_H * CS%Rho_BT_lin
 
     !$OMP do
     do j=js-hs,je+hs ; do I=is-1-hs,ie+hs
-      H1 = (CS%bathyT(i,j) + G%Z_ref) * Z_to_H ; H2 = (CS%bathyT(i+1,j) + G%Z_ref) * Z_to_H
+      H1 = G%meanThick(i,j) * Z_to_H ; H2 = G%meanThick(i+1,j) * Z_to_H
       Datu(I,j) = 0.0
       if ((H1 > 0.0) .and. (H2 > 0.0)) &
         Datu(I,j) = CS%dy_Cu(I,j) * (2.0 * H1 * H2) / (H1 + H2)
     enddo ; enddo
     !$OMP do
     do J=js-1-hs,je+hs ; do i=is-hs,ie+hs
-      H1 = (CS%bathyT(i,j) + G%Z_ref) * Z_to_H ; H2 = (CS%bathyT(i,j+1) + G%Z_ref) * Z_to_H
+      H1 = G%meanThick(i,j) * Z_to_H ; H2 = G%meanThick(i,j+1) * Z_to_H
       Datv(i,J) = 0.0
       if ((H1 > 0.0) .and. (H2 > 0.0)) &
         Datv(i,J) = CS%dx_Cv(i,J) * (2.0 * H1 * H2) / (H1 + H2)
@@ -6134,25 +6134,24 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
 
     Z_to_H = GV%Z_to_H ; if (.not.GV%Boussinesq) Z_to_H = GV%RZ_to_H * CS%Rho_BT_lin
 
-    Mean_SL = G%Z_ref
     do j=js,je ; do I=is-1,ie
-      CS%D_u_Cor(I,j) = 0.5 * (max(Mean_SL+G%bathyT(i+1,j),0.0) + max(Mean_SL+G%bathyT(i,j),0.0)) * Z_to_H
+      CS%D_u_Cor(I,j) = 0.5 * (G%meanThick(i+1,j) + G%meanThick(i,j)) * Z_to_H
     enddo ; enddo
     if (CS%interior_OBC_PV .and. CS%BT_OBC%u_OBCs_on_PE) then ; do j=js,je ; do I=is-1,ie
       if (CS%BT_OBC%u_OBC_type(I,j) < 0) & ! Western boundary condition
-        CS%D_u_Cor(I,j) = max(Mean_SL+G%bathyT(i+1,j),0.0) * Z_to_H
+        CS%D_u_Cor(I,j) = G%meanThick(i+1,j) * Z_to_H
       if (CS%BT_OBC%u_OBC_type(I,j) > 0) & ! Eastern boundary condition
-        CS%D_u_Cor(I,j) = max(Mean_SL+G%bathyT(i,j),0.0) * Z_to_H
+        CS%D_u_Cor(I,j) = G%meanThick(i,j) * Z_to_H
     enddo ; enddo ; endif
 
     do J=js-1,je ; do i=is,ie
-      CS%D_v_Cor(i,J) = 0.5 * (max(Mean_SL+G%bathyT(i,j+1),0.0) + max(Mean_SL+G%bathyT(i,j),0.0)) * Z_to_H
+      CS%D_v_Cor(i,J) = 0.5 * (G%meanThick(i,j+1) + G%meanThick(i,j))  * Z_to_H
     enddo ; enddo
     if (CS%interior_OBC_PV .and. CS%BT_OBC%v_OBCs_on_PE) then ; do J=js-1,je ; do i=is,ie
       if (CS%BT_OBC%v_OBC_type(i,J) < 0) & ! Southern boundary condition
-        CS%D_v_Cor(i,J) = max(Mean_SL+G%bathyT(i,j+1),0.0) * Z_to_H
+        CS%D_v_Cor(i,J) = G%meanThick(i,j+1) * Z_to_H
       if (CS%BT_OBC%v_OBC_type(i,J) > 0) & ! Northern boundary condition
-        CS%D_v_Cor(i,J) = max(Mean_SL+G%bathyT(i,j),0.0) * Z_to_H
+        CS%D_v_Cor(i,J) = G%meanThick(i,j) * Z_to_H
     enddo ; enddo ; endif
 
     h_a_neglect = GV%H_subroundoff * 1.0 * US%m_to_L**2
@@ -6160,10 +6159,10 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
       if ((CS%q_wt(1,I,J) + CS%q_wt(4,I,J)) + (CS%q_wt(2,I,J) + CS%q_wt(3,I,J)) > 0.) then
         CS%q_D(I,J) = 0.25 * (CS%BT_Coriolis_scale * G%CoriolisBu(I,J)) * &
            ((CS%q_wt(1,I,J) + CS%q_wt(4,I,J)) + (CS%q_wt(2,I,J) + CS%q_wt(3,I,J))) / &
-           max(Z_to_H * (((CS%q_wt(1,I,J) * max(Mean_SL+G%bathyT(i,j),0.0)) + &
-                          (CS%q_wt(4,I,J) * max(Mean_SL+G%bathyT(i+1,j+1),0.0))) + &
-                         ((CS%q_wt(2,I,J) * max(Mean_SL+G%bathyT(i+1,j),0.0)) + &
-                          (CS%q_wt(3,I,J) * max(Mean_SL+G%bathyT(i,j+1),0.0)))), h_a_neglect)
+           max(Z_to_H * (((CS%q_wt(1,I,J) * G%meanThick(i,j)) + &
+                          (CS%q_wt(4,I,J) * G%meanThick(i+1,j+1))) + &
+                         ((CS%q_wt(2,I,J) * G%meanThick(i+1,j)) + &
+                          (CS%q_wt(3,I,J) * G%meanThick(i,j+1)))), h_a_neglect)
       else ! All four h points are masked out so q_D(I,J) is meaningless
         CS%q_D(I,J) = 0.
       endif
