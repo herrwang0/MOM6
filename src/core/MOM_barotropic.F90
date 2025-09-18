@@ -5531,8 +5531,6 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
                                        ! name in wave_drag_file.
   character(len=80)  :: wave_drag_v    ! The wave drag piston velocity variable
                                        ! name in wave_drag_file.
-  real :: mean_SL     ! The mean sea level that is used along with the bathymetry to estimate the
-                      ! geometry when LINEARIZED_BT_CORIOLIS is true or BT_NONLIN_STRESS is false [Z ~> m].
   real :: Z_to_H      ! A local unit conversion factor [H Z-1 ~> nondim or kg m-3]
   real :: H_to_Z      ! A local unit conversion factor [Z H-1 ~> nondim or m3 kg-1]
   real :: det_de      ! The partial derivative due to self-attraction and loading of the reference
@@ -6433,18 +6431,17 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
   ! Calculate other constants which are used for btstep.
 
   if (.not.CS%nonlin_stress) then
-    Mean_SL = G%Z_ref
     Z_to_H = GV%Z_to_H ; if (.not.GV%Boussinesq) Z_to_H = GV%RZ_to_H * CS%Rho_BT_lin
     do j=js,je ; do I=is-1,ie
       if (G%OBCmaskCu(I,j) > 0.) then
-        CS%IDatu(I,j) = G%OBCmaskCu(I,j) * 2.0 / (Z_to_H * ((G%bathyT(i+1,j) + G%bathyT(i,j)) + 2.0*Mean_SL))
+        CS%IDatu(I,j) = G%OBCmaskCu(I,j) * 2.0 / (Z_to_H * (G%meanThick(i+1,j) + G%meanThick(i,j)))
       else ! Both neighboring H points are masked out or this is an OBC face so IDatu(I,j) is unused
         CS%IDatu(I,j) = 0.
       endif
     enddo ; enddo
     do J=js-1,je ; do i=is,ie
       if (G%OBCmaskCv(i,J) > 0.) then
-        CS%IDatv(i,J) = G%OBCmaskCv(i,J) * 2.0 / (Z_to_H * ((G%bathyT(i,j+1) + G%bathyT(i,j)) + 2.0*Mean_SL))
+        CS%IDatv(i,J) = G%OBCmaskCv(i,J) * 2.0 / (Z_to_H * (G%meanThick(i,j+1) + G%meanThick(i,j)))
       else ! Both neighboring H points are masked out or this is an OBC face so IDatv(i,J) is unused
         CS%IDatv(i,J) = 0.
       endif
