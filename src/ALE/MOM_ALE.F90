@@ -1794,7 +1794,7 @@ subroutine ALE_initThicknessToCoord( CS, G, GV, h, height_units )
   scale = GV%Z_to_H
   if (present(height_units)) then ; if (height_units) scale = 1.0 ; endif
   do j = G%jsd,G%jed ; do i = G%isd,G%ied
-    h(i,j,:) = scale * getStaticThickness( CS%regridCS, 0., G%bathyT(i,j)+G%Z_ref )
+    h(i,j,:) = scale * getStaticThickness( CS%regridCS, 0., G%meanThick(i,j) )
   enddo ; enddo
 
 end subroutine ALE_initThicknessToCoord
