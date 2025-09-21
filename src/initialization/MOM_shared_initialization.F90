@@ -1406,7 +1406,7 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
 
   call callTree_enter('write_ocean_geometry_file()')
 
-  nFlds = 19 ; if (G%bathymetry_at_vel) nFlds = 23
+  nFlds = 20 ; if (G%bathymetry_at_vel) nFlds = 24
 
   allocate(vars(nFlds))
   allocate(fields(nFlds))
@@ -1441,12 +1441,13 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   vars(17)= var_desc("dxCvo","m","Open zonal grid spacing at v points",'v','1','1')
   vars(18)= var_desc("dyCuo","m","Open meridional grid spacing at u points",'u','1','1')
   vars(19)= var_desc("wet", "nondim", "land or ocean?", 'h','1','1')
+  vars(20)= var_desc("meanThick","meter","Mean Thickness",'h','1','1')
 
   if (G%bathymetry_at_vel) then
-    vars(20) = var_desc("Dblock_u","m","Blocked depth at u points",'u','1','1')
-    vars(21) = var_desc("Dopen_u","m","Open depth at u points",'u','1','1')
-    vars(22) = var_desc("Dblock_v","m","Blocked depth at v points",'v','1','1')
-    vars(23) = var_desc("Dopen_v","m","Open depth at v points",'v','1','1')
+    vars(21) = var_desc("Dblock_u","m","Blocked depth at u points",'u','1','1')
+    vars(22) = var_desc("Dopen_u","m","Open depth at u points",'u','1','1')
+    vars(23) = var_desc("Dblock_v","m","Blocked depth at v points",'v','1','1')
+    vars(24) = var_desc("Dopen_v","m","Open depth at v points",'v','1','1')
   endif
 
   if (present(geom_file)) then
@@ -1500,12 +1501,13 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   call MOM_write_field(IO_handle, fields(17), G%Domain, G%dx_Cv, unscale=US%L_to_m)
   call MOM_write_field(IO_handle, fields(18), G%Domain, G%dy_Cu, unscale=US%L_to_m)
   call MOM_write_field(IO_handle, fields(19), G%Domain, G%mask2dT)
+  call MOM_write_field(IO_handle, fields(20), G%Domain, G%meanThick, unscale=US%Z_to_m)
 
   if (G%bathymetry_at_vel) then
-    call MOM_write_field(IO_handle, fields(20), G%Domain, G%Dblock_u, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(21), G%Domain, G%Dopen_u, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(22), G%Domain, G%Dblock_v, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(23), G%Domain, G%Dopen_v, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(21), G%Domain, G%Dblock_u, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(22), G%Domain, G%Dopen_u, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(23), G%Domain, G%Dblock_v, unscale=US%Z_to_m)
+    call MOM_write_field(IO_handle, fields(24), G%Domain, G%Dopen_v, unscale=US%Z_to_m)
   endif
 
   call IO_handle%close()
