@@ -437,8 +437,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         SSH(i,j) = (za(i,j,1) - alpha_ref*p(i,j,1)) * I_gEarth - G%Z_ref
-        if (G%meanThick(i,j)==0) & ! Remove above sea level topography at floodable cells
-          SSH(i,j) = SSH(i,j) + (G%bathyT(i,j) + G%Z_ref)
+        ! Remove above sea level topography at floodable cells
+        SSH(i,j) = SSH(i,j) + ((G%bathyT(i,j) + G%Z_ref) - G%meanThick(i,j))
       enddo ; enddo
       call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
     endif
@@ -1356,9 +1356,9 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     else
       !$OMP parallel do default(shared)
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        SSH(i,j) = e(i,j,1)
-        if (G%meanThick(i,j)==0) & ! Remove above sea level topography at floodable cells
-          SSH(i,j) = SSH(i,j) + (G%bathyT(i,j) + G%Z_ref)
+        SSH(i,j) = e(i,j,1) - G%Z_ref
+        ! Remove above sea level topography at floodable cells
+        SSH(i,j) = SSH(i,j) + ((G%bathyT(i,j) + G%Z_ref) - G%meanThick(i,j))
       enddo ; enddo
       call calc_SAL(SSH, e_sal, G, CS%SAL_CSp, tmp_scale=US%Z_to_m)
     endif
