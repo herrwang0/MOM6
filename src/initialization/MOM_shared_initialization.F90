@@ -138,16 +138,11 @@ function diagnoseMaximumDepth(D, G)
 end function diagnoseMaximumDepth
 
 !> Read time mean ocean sea level from a file
-subroutine set_meanSL_from_file(meanThick, meanSL, D, G, param_file, US)
+subroutine set_meanSL_from_file(meanSL, G, param_file, US)
   type(dyn_horgrid_type),           intent(in)  :: G !< The dynamic horizontal grid type
-  real, dimension(G%isd:G%ied,G%jsd:G%jed), &
-                                    intent(in)  :: D !< Ocean bottom depth referenced to a zero
-                                                     !! reference height at tracer points [Z ~> m].
   real, dimension(G%isd:G%ied,G%jsd:G%jed), &
                                     intent(out) :: meanSL !< Mean sea level referenced to a zero
                                                           !! reference height at tracer points [Z ~> m].
-  real, dimension(G%isd:G%ied,G%jsd:G%jed), &
-                                    intent(out) :: meanThick !< Mean ocean thickness [Z ~> m]
   type(param_file_type),            intent(in)  :: param_file !< Parameter file structure
   type(unit_scale_type),            intent(in)  :: US !< A dimensional unit scaling type
   ! Local variables
@@ -175,10 +170,6 @@ subroutine set_meanSL_from_file(meanThick, meanSL, D, G, param_file, US)
 
   call MOM_read_data(filename, trim(varname), meanSL, G%Domain, scale=US%m_to_Z)
   call pass_var(meanSL, G%Domain)
-
-  do i=G%isd,G%ied ; do j=G%jsd,G%jed
-    meanThick(i,j) = max(D(i,j) + meanSL(i,j), 0.0)
-  enddo ; enddo
 
   call callTree_leave(trim(mdl)//'()')
 end subroutine set_meanSL_from_file
@@ -1435,7 +1426,7 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   vars(17)= var_desc("dxCvo","m","Open zonal grid spacing at v points",'v','1','1')
   vars(18)= var_desc("dyCuo","m","Open meridional grid spacing at u points",'u','1','1')
   vars(19)= var_desc("wet", "nondim", "land or ocean?", 'h','1','1')
-  vars(20)= var_desc("meanThick","meter","Mean Thickness",'h','1','1')
+  vars(20)= var_desc("meanSL","meter","Mean Sea Level",'h','1','1')
 
   if (G%bathymetry_at_vel) then
     vars(21) = var_desc("Dblock_u","m","Blocked depth at u points",'u','1','1')
@@ -1495,7 +1486,7 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   call MOM_write_field(IO_handle, fields(17), G%Domain, G%dx_Cv, unscale=US%L_to_m)
   call MOM_write_field(IO_handle, fields(18), G%Domain, G%dy_Cu, unscale=US%L_to_m)
   call MOM_write_field(IO_handle, fields(19), G%Domain, G%mask2dT)
-  call MOM_write_field(IO_handle, fields(20), G%Domain, G%meanThick, unscale=US%Z_to_m)
+  call MOM_write_field(IO_handle, fields(20), G%Domain, G%meanSL, unscale=US%Z_to_m)
 
   if (G%bathymetry_at_vel) then
     call MOM_write_field(IO_handle, fields(21), G%Domain, G%Dblock_u, unscale=US%Z_to_m)

@@ -94,7 +94,7 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
                 "If true, use a 2D map for time mean sea level, which is used to calculate "// &
                 "time mean ocean total thickness.", default=.False.)
   if (read_meanSL_file) &
-    call set_meanSL_from_file(G%meanThick, G%meanSL, G%bathyT, G, PF, US)
+    call set_meanSL_from_file(G%meanSL, G, PF, US)
 
   ! Determine the position of any open boundaries
   call open_boundary_config(G, US, PF, OBC)
