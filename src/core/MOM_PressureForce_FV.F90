@@ -1271,11 +1271,9 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
       Z_0p(i,j) = e(i,j,1)
     enddo ; enddo
   else
-    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1 ; if (G%mask2dT(i,j) > 0) then
-      Z_0p(i,j) = G%meanThick(i,j) - G%bathyT(i,j)
-    else
-      Z_0p(i,j) = G%Z_ref
-    endif ; enddo ; enddo
+    do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      Z_0p(i,j) = G%meanSL(i,j)
+    enddo ; enddo
   endif
 
   do k=1,nz
