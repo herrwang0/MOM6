@@ -6441,14 +6441,16 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
     Z_to_H = GV%Z_to_H ; if (.not.GV%Boussinesq) Z_to_H = GV%RZ_to_H * CS%Rho_BT_lin
     do j=js,je ; do I=is-1,ie
       if (G%OBCmaskCu(I,j) > 0.) then
-        CS%IDatu(I,j) = G%OBCmaskCu(I,j) * 2.0 / (Z_to_H * (G%meanThick(i+1,j) + G%meanThick(i,j)))
+        CS%IDatu(I,j) = G%OBCmaskCu(I,j) * 2.0 / (Z_to_H * (max(G%meanSL(i+1,j) + G%bathyT(i+1,j), 0.0) &
+                                                          + max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)))
       else ! Both neighboring H points are masked out or this is an OBC face so IDatu(I,j) is unused
         CS%IDatu(I,j) = 0.
       endif
     enddo ; enddo
     do J=js-1,je ; do i=is,ie
       if (G%OBCmaskCv(i,J) > 0.) then
-        CS%IDatv(i,J) = G%OBCmaskCv(i,J) * 2.0 / (Z_to_H * (G%meanThick(i,j+1) + G%meanThick(i,j)))
+        CS%IDatv(i,J) = G%OBCmaskCv(i,J) * 2.0 / (Z_to_H * (max(G%meanSL(i,j+1) + G%bathyT(i,j+1), 0.0) &
+                                                          + max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)))
       else ! Both neighboring H points are masked out or this is an OBC face so IDatv(i,J) is unused
         CS%IDatv(i,J) = 0.
       endif
