@@ -83,9 +83,9 @@ subroutine calc_SAL(eta, eta_sal, G, CS, tmp_scale)
   Isq = G%IscB ; Ieq = G%IecB ; Jsq = G%JscB ; Jeq = G%JecB
 
   if (CS%use_bpa) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-    bpa(i,j) = eta(i,j) - CS%pbot_ref(i,j)
+    bpa(i,j) = G%mask2dT(i,j) * (eta(i,j) - CS%pbot_ref(i,j))
   enddo ; enddo ; else ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-    bpa(i,j) = eta(i,j)
+    bpa(i,j) = G%mask2dT(i,j) * eta(i,j)
   enddo ; enddo ; endif
 
   ! use the scalar approximation and/or iterative tidal SAL
