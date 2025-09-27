@@ -56,6 +56,7 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
     oG%dyT(i,j) = dG%dyT(i+ido,j+jdo)
     oG%areaT(i,j) = dG%areaT(i+ido,j+jdo)
     oG%bathyT(i,j) = dG%bathyT(i+ido,j+jdo) - oG%Z_ref
+    oG%meanSL(i,j) = dG%meanSL(i+ido,j+jdo) + oG%Z_ref
     oG%meanThick(i,j) = dG%meanThick(i+ido,j+jdo)
 
     oG%dF_dx(i,j) = dG%dF_dx(i+ido,j+jdo)
@@ -146,6 +147,7 @@ subroutine copy_dyngrid_to_MOM_grid(dG, oG, US)
 ! Update the halos in case the dynamic grid has smaller halos than the ocean grid.
   call pass_var(oG%areaT, oG%Domain)
   call pass_var(oG%bathyT, oG%Domain)
+  call pass_var(oG%meanSL, oG%Domain)
   call pass_var(oG%meanThick, oG%Domain)
   call pass_var(oG%geoLonT, oG%Domain)
   call pass_var(oG%geoLatT, oG%Domain)
@@ -219,6 +221,7 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
     dG%dyT(i,j) = oG%dyT(i+ido,j+jdo)
     dG%areaT(i,j) = oG%areaT(i+ido,j+jdo)
     dG%bathyT(i,j) = oG%bathyT(i+ido,j+jdo) + oG%Z_ref
+    dG%meanSL(i,j) = oG%meanSL(i+ido,j+jdo) - oG%Z_ref
     dG%meanThick(i,j) = oG%meanThick(i+ido,j+jdo)
 
     dG%dF_dx(i,j) = oG%dF_dx(i+ido,j+jdo)
@@ -310,6 +313,7 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
 ! Update the halos in case the dynamic grid has smaller halos than the ocean grid.
   call pass_var(dG%areaT, dG%Domain)
   call pass_var(dG%bathyT, dG%Domain)
+  call pass_var(dG%meanSL, dG%Domain)
   call pass_var(dG%meanThick, oG%Domain)
   call pass_var(dG%geoLonT, dG%Domain)
   call pass_var(dG%geoLatT, dG%Domain)
