@@ -1244,14 +1244,14 @@ subroutine regridding_main( remapCS, CS, G, GV, US, h, tv, h_new, dzInterface, &
     enddo ; enddo ; enddo
     do j=G%jsc-1,G%jec+1 ; do i=G%isc-1,G%iec+1
       if (tot_dz(i,j) > 0.0) then
-        nom_depth_H(i,j) = G%meanThick(i,j) * (tot_h(i,j) / tot_dz(i,j))
+        nom_depth_H(i,j) = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) * (tot_h(i,j) / tot_dz(i,j))
       else
         nom_depth_H(i,j) = 0.0
       endif
     enddo ; enddo
   else
     do j=G%jsc-1,G%jec+1 ; do i=G%isc-1,G%iec+1
-      nom_depth_H(i,j) = G%meanThick(i,j) * Z_to_H
+      nom_depth_H(i,j) = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) * Z_to_H
     enddo ; enddo
   endif
 
