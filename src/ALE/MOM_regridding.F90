@@ -863,7 +863,7 @@ subroutine initialize_regridding(CS, G, GV, US, max_depth, param_file, mdl, &
       endif
       do i=G%isc-1,G%iec+1; do j=G%jsc-1,G%jec+1
         if (G%mask2dT(i,j)>0.) then
-          nominalDepth = (G%bathyT(i,j)+G%Z_ref)*US%Z_to_m
+          nominalDepth = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0) * US%Z_to_m
           if (nominalDepth <= depth_s) then
             do k= 1,n_sigma
               dz_3d(i,j,k) = dz_shallow(k)
