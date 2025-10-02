@@ -5358,14 +5358,14 @@ subroutine find_face_areas(Datu, Datv, G, GV, US, CS, MS, halo, eta, add_max)
         H1 = CS%bathyT(i,j)*GV%Z_to_H + eta(i,j) ; H2 = CS%bathyT(i+1,j)*GV%Z_to_H + eta(i+1,j)
         Datu(I,j) = 0.0 ; if ((H1 > 0.0) .and. (H2 > 0.0)) &
         Datu(I,j) = CS%dy_Cu(I,j) * (2.0 * H1 * H2) / (H1 + H2)
-!       Datu(I,j) = CS%dy_Cu(I,j) * 0.5 * (H1 + H2)
+        ! Datu(I,j) = CS%dy_Cu(I,j) * 0.5 * (H1 + H2)
       enddo ; enddo
       !$OMP do
       do J=js-1-hs,je+hs ; do i=is-hs,ie+hs
         H1 = CS%bathyT(i,j)*GV%Z_to_H + eta(i,j) ; H2 = CS%bathyT(i,j+1)*GV%Z_to_H + eta(i,j+1)
         Datv(i,J) = 0.0 ; if ((H1 > 0.0) .and. (H2 > 0.0)) &
         Datv(i,J) = CS%dx_Cv(i,J) * (2.0 * H1 * H2) / (H1 + H2)
-!       Datv(i,J) = CS%dy_v(i,J) * 0.5 * (H1 + H2)
+        ! Datv(i,J) = CS%dy_v(i,J) * 0.5 * (H1 + H2)
       enddo ; enddo
     else
       !$OMP do
@@ -5388,15 +5388,15 @@ subroutine find_face_areas(Datu, Datv, G, GV, US, CS, MS, halo, eta, add_max)
 
     !$OMP do
     do j=js-hs,je+hs ; do I=is-1-hs,ie+hs
-      H1 = max(G%meanSL(i+1,j) + G%bathyT(i+1,j), 0.0)
-      H2 = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)
-      Datu(I,j) = CS%dy_Cu(I,j) * Z_to_H * max(max(H1, H2) + add_max, 0.0)
+      H1 = max((G%meanSL(i+1,j) + add_max) + G%bathyT(i+1,j), 0.0)
+      H2 = max((G%meanSL(i,j) + add_max) + G%bathyT(i,j), 0.0)
+      Datu(I,j) = CS%dy_Cu(I,j) * Z_to_H * max(H1, H2)
     enddo ; enddo
     !$OMP do
     do J=js-1-hs,je+hs ; do i=is-hs,ie+hs
-      H1 = max(G%meanSL(i,j+1) + G%bathyT(i,j+1), 0.0)
-      H2 = max(G%meanSL(i,j) + G%bathyT(i,j), 0.0)
-      Datv(i,J) = CS%dx_Cv(i,J) * Z_to_H * max(max(H1, H2) + add_max, 0.0)
+      H1 = max((G%meanSL(i,j+1) + add_max) + G%bathyT(i,j+1), 0.0)
+      H2 = max((G%meanSL(i,j) + add_max) + G%bathyT(i,j), 0.0)
+      Datv(i,J) = CS%dx_Cv(i,J) * Z_to_H * max(H1, H2)
     enddo ; enddo
   else
     Z_to_H = GV%Z_to_H ; if (.not.GV%Boussinesq) Z_to_H = GV%RZ_to_H * CS%Rho_BT_lin
