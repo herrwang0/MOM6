@@ -3500,7 +3500,7 @@ subroutine btloop_update_v(dtbt, ubt, vbt, v_accel_bt, &
   Idtbt = 1.0 / dtbt
   if (CS%hydr_ctrl) then
     !$OMP do schedule(static)
-    do J=Js_v,Je_v ; do i=is_v,ie_v ; if (bt_rem_v(i,J)/=0) then
+    do J=Js_v,Je_v ; do i=is_v,ie_v ; if (CS%OBCmask_v(i,J) * bt_rem_v(i,J)/=0) then
       Ibt_rem = 1.0 / bt_rem_v(i,J)
       force_temp = (BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)
       if (vbt(i,J)>=0.0) then
@@ -3611,7 +3611,7 @@ subroutine btloop_update_u(dtbt, ubt, vbt, u_accel_bt, &
   Idtbt = 1.0 / dtbt
   if (CS%hydr_ctrl) then
     !$OMP do schedule(static)
-    do j=js_u,je_u ; do I=Is_u,Ie_u ; if (bt_rem_u(I,j)/=0) then
+    do j=js_u,je_u ; do I=Is_u,Ie_u ; if (CS%OBCmask_u(I,j) * bt_rem_u(I,j)/=0) then
       Ibt_rem = 1.0 / bt_rem_u(I,j)
       force_temp = BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j)
       if (ubt(I,j)>=0.0) then
