@@ -327,6 +327,9 @@ type, public :: barotropic_CS ; private
                              !! calculation relies on bathymetry and eta being projected outward
                              !! across OBCs.  Unfortunately, this option does change answers near
                              !! convex (peninsula-type) pairs of OBC segments.
+  logical :: hydr_ctrl = .false. !< If true, use hydraulic control theory to curb BT velocity.
+  real    :: hc_coef !< Coefficient for the critical velocity from hydraulic control.
+                     !! [sqrt(L2 Z-1 T-2) ~> sqrt(m s-2)]
   type(time_type), pointer :: Time  => NULL() !< A pointer to the ocean models clock.
   type(diag_ctrl), pointer :: diag => NULL()  !< A structure that is used to regulate
                              !! the timing of diagnostic output.
@@ -360,6 +363,7 @@ type, public :: barotropic_CS ; private
   !>@{ Diagnostic IDs
   integer :: id_PFu_bt = -1, id_PFv_bt = -1, id_Coru_bt = -1, id_Corv_bt = -1
   integer :: id_LDu_bt = -1, id_LDv_bt = -1, id_eta_cor = -1
+  integer :: id_HCu_bt = -1, id_HCv_bt = -1
   integer :: id_ubtforce = -1, id_vbtforce = -1, id_uaccel = -1, id_vaccel = -1
   integer :: id_visc_rem_u = -1, id_visc_rem_v = -1, id_bt_rem_u = -1, id_bt_rem_v = -1
   integer :: id_ubt = -1, id_vbt = -1, id_eta_bt = -1, id_ubtav = -1, id_vbtav = -1
@@ -569,6 +573,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     PFu_avg, &    ! The average zonal barotropic pressure gradient force [L T-2 ~> m s-2].
     Coru_avg, &   ! The average zonal barotropic Coriolis acceleration [L T-2 ~> m s-2].
     LDu_avg, &    ! The average zonal barotropic linear wave drag acceleration [L T-2 ~> m s-2].
+    HCu_avg, &    ! The average zonal barotropic hydraulic control acceleration [L T-2 ~> m s-2].
     ubt_dt        ! The zonal barotropic velocity tendency [L T-2 ~> m s-2].
   real, dimension(SZI_(G),SZJB_(G)) :: &
     av_rem_v, &   ! The weighted average of visc_rem_v [nondim]
@@ -578,6 +583,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
     PFv_avg, &    ! The average meridional barotropic pressure gradient force [L T-2 ~> m s-2].
     Corv_avg, &   ! The average meridional barotropic Coriolis acceleration [L T-2 ~> m s-2].
     LDv_avg, &    ! The average meridional barotropic linear wave drag acceleration [L T-2 ~> m s-2].
+    HCv_avg, &    ! The average meridional barotropic hydraulic control acceleration [L T-2 ~> m s-2].
     vbt_dt        ! The meridional barotropic velocity tendency [L T-2 ~> m s-2].
   real, dimension(SZI_(G),SZJ_(G)) :: &
     tmp_h, &      ! A temporary array at h points [nondim]
@@ -611,6 +617,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                   ! that introduced directly into the barotropic solver rather than coming in via
                   ! the visc_rem_u arrays from the layered equations [T-1 ~> s-1].
                   ! This is nonzero mostly for a barotropic tidal body drag.
+    HCu, &        ! The zonal acceleration from hydraulic control [L T-2 ~> m s-2].
     DCor_u, &     ! An averaged total thickness at u points [H ~> m or kg m-2].
     Datu          ! Basin depth at u-velocity grid points times the y-grid
                   ! spacing [H L ~> m2 or kg m-1].
@@ -638,6 +645,7 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
                   ! that introduced directly into the barotropic solver rather than coming
                   ! in via the visc_rem_v arrays from the layered equations [T-1 ~> s-1].
                   ! This is nonzero mostly for a barotropic tidal body drag.
+    HCv, &        ! The meridional acceleration from hydraulic control [L T-2 ~> m s-2].
     DCor_v, &     ! An averaged total thickness at v points [H ~> m or kg m-2].
     Datv          ! Basin depth at v-velocity grid points times the x-grid
                   ! spacing [H L ~> m2 or kg m-1].
@@ -731,7 +739,6 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   real :: accel_underflow ! An acceleration that is so small it should be zeroed out [L T-2 ~> m s-2].
   real :: h_a_neglect ! A cell volume or mass that is so small it is usually lost
                       ! in roundoff and can be neglected [H L2 ~> m3 or kg].
-
   real, allocatable :: wt_vel(:)    ! The raw or relative weights of each of the barotropic timesteps
                                     ! in determining the average velocities [nondim]
   real, allocatable :: wt_eta(:)    ! The raw or relative weights of each of the barotropic timesteps
@@ -1894,12 +1901,12 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
   ! March the barotropic solver through all of its time steps.
   call btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL_v, eta_IC, &
                 eta_PF_1, d_eta_PF, eta_src, dyn_coef_eta, uhbtav, vhbtav, u_accel_bt, v_accel_bt, &
-                f_4_u, f_4_v, bt_rem_u, bt_rem_v, &
-                BT_force_u, BT_force_v, Cor_ref_u, Cor_ref_v, Rayleigh_u, Rayleigh_v, &
-                eta_PF, gtot_E, gtot_W, gtot_N, gtot_S, SpV_col_avg, dgeo_de, &
-                eta_sum, eta_wtd, ubt_wtd, vbt_wtd, Coru_avg, PFu_avg, LDu_avg, Corv_avg, PFv_avg, &
-                LDv_avg, use_BT_cont, interp_eta_PF, find_etaav, dt, dtbt, nstep, nfilter, &
-                wt_vel, wt_eta, wt_accel, wt_trans, wt_accel2, ADp, CS%BT_OBC, CS, G, MS, GV, US)
+                f_4_u, f_4_v, bt_rem_u, bt_rem_v, BT_force_u, BT_force_v, Cor_ref_u, Cor_ref_v, &
+                Rayleigh_u, Rayleigh_v, eta_PF, gtot_E, gtot_W, gtot_N, gtot_S, SpV_col_avg, &
+                dgeo_de, eta_sum, eta_wtd, ubt_wtd, vbt_wtd, Coru_avg, PFu_avg, LDu_avg, HCu_avg, &
+                Corv_avg, PFv_avg, LDv_avg, HCv_avg, use_BT_cont, interp_eta_PF, find_etaav, &
+                dt, dtbt, nstep, nfilter, wt_vel, wt_eta, wt_accel, wt_trans, wt_accel2, &
+                ADp, CS%BT_OBC, CS, G, MS, GV, US)
 
   if (id_clock_calc > 0) call cpu_clock_end(id_clock_calc)
   if (id_clock_calc_post > 0) call cpu_clock_begin(id_clock_calc_post)
@@ -2056,6 +2063,8 @@ subroutine btstep(U_in, V_in, eta_in, dt, bc_accel_u, bc_accel_v, forces, pbce, 
       if (CS%id_Corv_bt > 0) call post_data(CS%id_Corv_bt, Corv_avg, CS%diag)
       if (CS%id_LDu_bt > 0) call post_data(CS%id_LDu_bt, LDu_avg, CS%diag)
       if (CS%id_LDv_bt > 0) call post_data(CS%id_LDv_bt, LDv_avg, CS%diag)
+      if (CS%id_HCu_bt > 0) call post_data(CS%id_HCu_bt, HCu_avg, CS%diag)
+      if (CS%id_HCv_bt > 0) call post_data(CS%id_HCv_bt, HCv_avg, CS%diag)
     else ! if (CS%answer_date < 20190101) then
       if (CS%id_PFu_bt > 0) then
         do j=js,je ; do I=is-1,ie
@@ -2286,12 +2295,12 @@ end subroutine btstep
 !> Update the barotropic solver through multiple time steps.
 subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL_v, eta_IC, &
                 eta_PF_1, d_eta_PF, eta_src, dyn_coef_eta, uhbtav, vhbtav, u_accel_bt, v_accel_bt, &
-                f_4_u, f_4_v, bt_rem_u, bt_rem_v, &
-                BT_force_u, BT_force_v, Cor_ref_u, Cor_ref_v, Rayleigh_u, Rayleigh_v, &
-                eta_PF, gtot_E, gtot_W, gtot_N, gtot_S, SpV_col_avg, dgeo_de, &
-                eta_sum, eta_wtd, ubt_wtd, vbt_wtd, Coru_avg, PFu_avg, LDu_avg, Corv_avg, PFv_avg, &
-                LDv_avg, use_BT_cont, interp_eta_PF, find_etaav, dt, dtbt, nstep, nfilter, &
-                wt_vel, wt_eta, wt_accel, wt_trans, wt_accel2, ADp, BT_OBC, CS, G, MS, GV, US)
+                f_4_u, f_4_v, bt_rem_u, bt_rem_v, BT_force_u, BT_force_v, Cor_ref_u, Cor_ref_v, &
+                Rayleigh_u, Rayleigh_v, eta_PF, gtot_E, gtot_W, gtot_N, gtot_S, SpV_col_avg, &
+                dgeo_de, eta_sum, eta_wtd, ubt_wtd, vbt_wtd, Coru_avg, PFu_avg, LDu_avg, HCu_avg, &
+                Corv_avg, PFv_avg, LDv_avg, HCv_avg, use_BT_cont, interp_eta_PF, find_etaav, &
+                dt, dtbt, nstep, nfilter, wt_vel, wt_eta, wt_accel, wt_trans, wt_accel2, &
+                ADp, BT_OBC, CS, G, MS, GV, US)
 
   type(barotropic_CS),    intent(inout) :: CS    !< Barotropic control structure
   type(ocean_grid_type),  intent(inout) :: G     !< The ocean's grid structure (inout to allow for halo updates)
@@ -2425,12 +2434,16 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
     PFu_avg       !< The average zonal barotropic pressure gradient force [L T-2 ~> m s-2]
   real, dimension(SZIB_(G),SZJ_(G)), intent(out) :: &
     LDu_avg       !< The average zonal barotropic linear wave drag acceleration [L T-2 ~> m s-2]
+  real, dimension(SZIB_(G),SZJ_(G)), intent(out) :: &
+    HCu_avg       !< The average zonal barotropic hydraulic control acceleration [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G)), intent(out) :: &
     Corv_avg      !< The average meridional barotropic Coriolis acceleration [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G)), intent(out) :: &
     PFv_avg       !< The average meridional barotropic pressure gradient force [L T-2 ~> m s-2]
   real, dimension(SZI_(G),SZJB_(G)), intent(out) :: &
     LDv_avg       !< The average meridional barotropic linear wave drag acceleration [L T-2 ~> m s-2]
+  real, dimension(SZI_(G),SZJB_(G)), intent(out) :: &
+    HCv_avg       !< The average meridional barotropic hydraulic control acceleration [L T-2 ~> m s-2]
   logical, intent(in) :: use_BT_cont  !< If true, use the information in the bt_cont_types to
                   !! calculate the mass transports
   logical, intent(in) :: interp_eta_PF !< If true, interpolate the reference value of eta used
@@ -2469,6 +2482,7 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
     ubt_trans, &  ! The latest value of ubt used for a transport [L T-1 ~> m s-1]
     PFu, &        ! The zonal pressure force acceleration [L T-2 ~> m s-2]
     Cor_u, &      ! The zonal Coriolis acceleration [L T-2 ~> m s-2]
+    HCu, &        ! The zonal hydraulic control acceleration [L T-2 ~> m s-2]
     ubt_int, &    ! The running time integral of ubt over the time steps [L ~> m]
     uhbt_int, &   ! The running time integral of uhbt over the time steps [H L2  ~> m3]
     ubt_int_prev, & ! Previous value of time-integrated velocity stored for OBCs [L ~> m]
@@ -2479,6 +2493,7 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
     vbt_trans, &  ! The latest value of vbt used for a transport [L T-1 ~> m s-1]
     PFv, &        ! The meridional pressure force acceleration [L T-2 ~> m s-2]
     Cor_v, &      ! The meridional Coriolis acceleration [L T-2 ~> m s-2]
+    HCv, &        ! The meridional hydraulic control acceleration [L T-2 ~> m s-2]
     vbt_int, &    ! The running time integral of vbt over the time steps [L ~> m]
     vhbt_int, &   ! The running time integral of vhbt over the time steps [H L2  ~> m3]
     vbt_int_prev, & ! Previous value of time-integrated velocity stored for OBCs [L ~> m]
@@ -2554,8 +2569,8 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
 
   ! Manage diagnostics
   do_ave = query_averaging_enabled(CS%diag) .and. &
-      ((CS%id_PFu_bt > 0) .or. (CS%id_Coru_bt > 0) .or. (CS%id_LDu_bt > 0) .or. &
-       (CS%id_PFv_bt > 0) .or. (CS%id_Corv_bt > 0) .or. (CS%id_LDv_bt > 0) .or. &
+      ((CS%id_PFu_bt > 0) .or. (CS%id_Coru_bt > 0) .or. (CS%id_LDu_bt > 0) .or. (CS%id_HCu_bt > 0) .or. &
+       (CS%id_PFv_bt > 0) .or. (CS%id_Corv_bt > 0) .or. (CS%id_LDv_bt > 0) .or. (CS%id_HCv_bt > 0) .or. &
        associated(ADp%bt_pgf_u) .or. associated(ADp%bt_cor_u) .or. associated(ADp%bt_lwd_u) .or. &
        associated(ADp%bt_pgf_v) .or. associated(ADp%bt_cor_v) .or. associated(ADp%bt_lwd_v))
 
@@ -2585,7 +2600,8 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
   do j=js,je ; do I=is-1,ie
     CS%ubtav(I,j) = 0.0 ; uhbtav(I,j) = 0.0
     PFu_avg(I,j) = 0.0 ; Coru_avg(I,j) = 0.0
-    LDu_avg(I,j) = 0.0 ; ubt_wtd(I,j) = 0.0
+    LDu_avg(I,j) = 0.0 ; HCu_avg(I,j) = 0.0
+    ubt_wtd(I,j) = 0.0
   enddo ; enddo
   !$OMP do
   do j=jsvf-1,jevf+1 ; do I=isvf-1,ievf
@@ -2595,7 +2611,8 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
   do J=js-1,je ; do i=is,ie
     CS%vbtav(i,J) = 0.0 ; vhbtav(i,J) = 0.0
     PFv_avg(i,J) = 0.0 ; Corv_avg(i,J) = 0.0
-    LDv_avg(i,J) = 0.0 ; vbt_wtd(i,J) = 0.0
+    LDv_avg(i,J) = 0.0 ; HCv_avg(i,J) = 0.0
+    vbt_wtd(i,J) = 0.0
   enddo ; enddo
   !$OMP do
   do J=jsvf-1,jevf ; do i=isvf-1,ievf+1
@@ -2716,26 +2733,27 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
                              isv, iev, jsv, jev, v_first, G, US, CS)
     endif
 
+    ! For hydraulic control, maybe eta_pred should be used for if BT_project_velocity is False?
     if (v_first) then
       ! On odd-steps, update v first.
-      call btloop_update_v(dtbt, ubt, vbt, v_accel_bt, Cor_v, PFv, isv-1, iev+1, jsv-1, jev, &
-                           f_4_v, bt_rem_v, BT_force_v, Cor_ref_v, Rayleigh_v, &
-                           wt_accel(n), G, US, CS)
+      call btloop_update_v(dtbt, ubt, vbt, v_accel_bt, Cor_v, HCv, PFv, isv-1, iev+1, jsv-1, jev, &
+                           f_4_v, bt_rem_v, BT_force_v, Cor_ref_v, Rayleigh_v, eta, &
+                           wt_accel(n), G, GV, US, CS)
 
       ! Now update the zonal velocity.
-      call btloop_update_u(dtbt, ubt, vbt, u_accel_bt, Cor_u, PFu, isv-1, iev, jsv, jev, &
-                           f_4_u, bt_rem_u, BT_force_u, Cor_ref_u, Rayleigh_u, &
-                           wt_accel(n), G, US, CS)
+      call btloop_update_u(dtbt, ubt, vbt, u_accel_bt, Cor_u, HCu, PFu, isv-1, iev, jsv, jev, &
+                           f_4_u, bt_rem_u, BT_force_u, Cor_ref_u, Rayleigh_u, eta, &
+                           wt_accel(n), G, GV, US, CS)
 
     else
       ! On even steps, update u first.
-      call btloop_update_u(dtbt, ubt, vbt, u_accel_bt, Cor_u, PFu, isv-1, iev, jsv-1, jev+1, &
-                           f_4_u, bt_rem_u, BT_force_u, Cor_ref_u, Rayleigh_u, &
-                           wt_accel(n), G, US, CS)
+      call btloop_update_u(dtbt, ubt, vbt, u_accel_bt, Cor_u, HCu, PFu, isv-1, iev, jsv-1, jev+1, &
+                           f_4_u, bt_rem_u, BT_force_u, Cor_ref_u, Rayleigh_u, eta, &
+                           wt_accel(n), G, GV, US, CS)
       ! Now update the meridional velocity.
-      call btloop_update_v(dtbt, ubt, vbt, v_accel_bt, Cor_v, PFv, isv, iev, jsv-1, jev, &
-                           f_4_v, bt_rem_v, BT_force_v, Cor_ref_v, Rayleigh_v, &
-                           wt_accel(n), G, US, CS, Cor_bracket_bug=CS%use_old_coriolis_bracket_bug)
+      call btloop_update_v(dtbt, ubt, vbt, v_accel_bt, Cor_v, HCv, PFv, isv, iev, jsv-1, jev, &
+                           f_4_v, bt_rem_v, BT_force_v, Cor_ref_v, Rayleigh_v, eta, &
+                           wt_accel(n), G, GV, US, CS, Cor_bracket_bug=CS%use_old_coriolis_bracket_bug)
     endif
 
     ! Determine the transports based on the updated velocities when no OBCs are applied
@@ -2971,6 +2989,23 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
           !$OMP do
           do J=js-1,je ; do i=is,ie
             LDv_avg(i,J) = LDv_avg(i,J) - wt_accel2(n) * (vbt(i,J) * Rayleigh_v(i,J))
+          enddo ; enddo
+          !$OMP end do nowait
+        endif
+      endif
+
+      if (CS%hydr_ctrl) then
+        if ((CS%id_HCu_bt > 0)) then
+          !$OMP do
+          do j=js,je ; do I=is-1,ie
+            HCu_avg(I,j) = HCu_avg(I,j) + wt_accel2(n) * HCu(I,j)
+          enddo ; enddo
+          !$OMP end do nowait
+        endif
+        if ((CS%id_HCv_bt > 0)) then
+          !$OMP do
+          do J=js-1,je ; do i=is,ie
+            HCv_avg(i,J) = HCv_avg(i,J) + wt_accel2(n) * HCv(i,J)
           enddo ; enddo
           !$OMP end do nowait
         endif
@@ -3389,10 +3424,11 @@ end subroutine btloop_add_dyn_PF
 
 !> Update meridional velocity.
 subroutine btloop_update_v(dtbt, ubt, vbt, v_accel_bt, &
-                           Cor_v, PFv, is_v, ie_v, Js_v, Je_v, f_4_v, &
-                           bt_rem_v, BT_force_v, Cor_ref_v, Rayleigh_v, &
-                           wt_accel_n, G, US, CS, Cor_bracket_bug)
-  type(ocean_grid_type),   intent(inout) :: G     !< The ocean's grid structure.
+                           Cor_v, HCv, PFv, is_v, ie_v, Js_v, Je_v, f_4_v, &
+                           bt_rem_v, BT_force_v, Cor_ref_v, Rayleigh_v, eta, &
+                           wt_accel_n, G, GV, US, CS, Cor_bracket_bug)
+  type(ocean_grid_type),   intent(in)    :: G     !< The ocean's grid structure.
+  type(verticalGrid_type), intent(in)    :: GV    !< The ocean's vertical grid structure.
   type(barotropic_CS),     intent(inout) :: CS    !< Barotropic control structure
   real, dimension(SZIBW_(CS),SZJW_(CS)), intent(in) :: &
     ubt           !< The zonal barotropic velocity [L T-1 ~> m s-1].
@@ -3403,6 +3439,8 @@ subroutine btloop_update_v(dtbt, ubt, vbt, v_accel_bt, &
                   !! barotropic calculation and BT_force_v [L T-2 ~> m s-2].
   real, dimension(SZIW_(CS),SZJBW_(CS)), intent(inout) :: &
     Cor_v         !< The meridional Coriolis acceleration [L T-2 ~> m s-2]
+  real, dimension(SZIW_(CS),SZJBW_(CS)), intent(inout) :: &
+    HCv           !< The meridional hydraulic control acceleration [L T-2 ~> m s-2]
   real, dimension(SZIW_(CS),SZJBW_(CS)), intent(in) :: &
     PFv           !< The meridional pressure force acceleration [L T-2 ~> m s-2].
   real, dimension(4,SZIW_(CS),SZJBW_(CS)), intent(in) :: &
@@ -3430,6 +3468,8 @@ subroutine btloop_update_v(dtbt, ubt, vbt, v_accel_bt, &
     Rayleigh_v    !< A Rayleigh drag timescale operating at v-points for drag parameterizations
                   !! that introduced directly into the barotropic solver rather than coming
                   !! in via the visc_rem_v arrays from the layered equations [T-1 ~> s-1]
+  real, dimension(SZIW_(CS),SZJW_(CS)), intent(in) :: &
+    eta           !< The barotropic free surface height anomaly or column mass anomaly [H ~> m or kg m-2]
   real,    intent(in) :: wt_accel_n  !< The raw or relative weights of each of the barotropic timesteps
                   !! in determining the average accelerations [nondim]
   real,    intent(in) :: dtbt !< The barotropic time step [T ~> s].
@@ -3440,6 +3480,8 @@ subroutine btloop_update_v(dtbt, ubt, vbt, v_accel_bt, &
   ! Local variables
   logical :: use_bracket_bug
   integer :: i, j
+  real :: Idtbt       ! The inverse of the barotropic time step [T-1 ~> s-1]
+  real :: force_temp, vel_hc, Ibt_rem ! Temporary variables for hydraulic control
 
   use_bracket_bug = .false. ; if (present(Cor_bracket_bug)) use_bracket_bug = Cor_bracket_bug
 
@@ -3460,11 +3502,32 @@ subroutine btloop_update_v(dtbt, ubt, vbt, v_accel_bt, &
    !$OMP end do nowait
   endif
 
+  Idtbt = 1.0 / dtbt
+  if (CS%hydr_ctrl) then
+    !$OMP do schedule(static)
+    do J=Js_v,Je_v ; do i=is_v,ie_v ; if (CS%OBCmask_v(i,J) * bt_rem_v(i,J)/=0) then
+      Ibt_rem = 1.0 / bt_rem_v(i,J)
+      force_temp = (BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)
+      if (vbt(i,J)>=0.0) then
+        vel_hc =  Ibt_rem * CS%hc_coef * (max(eta(i,j) + GV%Z_to_H * G%bathyT(i,j), 0.0)**0.5)
+        HCv(i,J) = min(0.0, (vel_hc - vbt(i,J)) * Idtbt - force_temp)
+      else
+        vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i,j+1) + GV%Z_to_H * G%bathyT(i,j+1), 0.0)**0.5)
+        HCv(i,J) = max(0.0, (vel_hc - vbt(i,J)) * Idtbt - force_temp)
+      endif
+    else
+      HCv(i,J) = 0.0
+    endif ; enddo ; enddo
+    !$OMP end do nowait
+  else
+    do J=Js_v,Je_v ; do i=is_v,ie_v ; HCv(i,J) = 0.0 ; enddo ; enddo
+  endif
+
   !$OMP do schedule(static)
   ! This updates the v-velocity, except at OBC points.
   do J=Js_v,Je_v ; do i=is_v,ie_v
     vbt(i,J) = bt_rem_v(i,J) * (vbt(i,J) + &
-         dtbt * ((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)))
+         dtbt * (((BT_force_v(i,J) + Cor_v(i,J)) + PFv(i,J)) + HCv(i,J)))
     if (abs(vbt(i,J)) < CS%vel_underflow) vbt(i,J) = 0.0
   enddo ; enddo
   !$OMP end do nowait
@@ -3473,12 +3536,12 @@ subroutine btloop_update_v(dtbt, ubt, vbt, v_accel_bt, &
     !$OMP do schedule(static)
     do J=Js_v,Je_v ; do i=is_v,ie_v
       v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel_n * &
-          ((Cor_v(i,J) + PFv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
+          (((Cor_v(i,J) + PFv(i,J)) + HCv(i,J)) - vbt(i,J)*Rayleigh_v(i,J))
     enddo ; enddo
   else
     !$OMP do schedule(static)
     do J=Js_v,Je_v ; do i=is_v,ie_v
-      v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel_n * (Cor_v(i,J) + PFv(i,J))
+      v_accel_bt(i,J) = v_accel_bt(i,J) + wt_accel_n * ((Cor_v(i,J) + PFv(i,J)) + HCv(i,J))
     enddo ; enddo
   endif
 
@@ -3486,10 +3549,11 @@ end subroutine btloop_update_v
 
 !> Update zonal velocity.
 subroutine btloop_update_u(dtbt, ubt, vbt, u_accel_bt, &
-                           Cor_u, PFu, Is_u, Ie_u, js_u, je_u, f_4_u, &
-                           bt_rem_u, BT_force_u, Cor_ref_u, Rayleigh_u, &
-                           wt_accel_n, G, US, CS)
-  type(ocean_grid_type),   intent(inout) :: G     !< The ocean's grid structure.
+                           Cor_u, HCu, PFu, Is_u, Ie_u, js_u, je_u, f_4_u, &
+                           bt_rem_u, BT_force_u, Cor_ref_u, Rayleigh_u, eta, &
+                           wt_accel_n, G, GV, US, CS)
+  type(ocean_grid_type),   intent(in)    :: G     !< The ocean's grid structure.
+  type(verticalGrid_type), intent(in)    :: GV    !< The ocean's vertical grid structure.
   type(barotropic_CS),     intent(inout) :: CS    !< Barotropic control structure
   real,    intent(in) :: dtbt     !< The barotropic time step [T ~> s].
   real, dimension(SZIBW_(CS),SZJW_(CS)), intent(inout) :: &
@@ -3501,6 +3565,8 @@ subroutine btloop_update_u(dtbt, ubt, vbt, u_accel_bt, &
                   !< barotropic calculation and BT_force_v [L T-2 ~> m s-2].
   real, dimension(SZIBW_(CS),SZJW_(CS)), intent(inout) :: &
     Cor_u         !< The anomalous zonal Coriolis acceleration [L T-2 ~> m s-2]
+  real, dimension(SZIBW_(CS),SZJW_(CS)), intent(inout) :: &
+    HCu           !< The zonal hydraulic control acceleration [L T-2 ~> m s-2]
   real, dimension(SZIBW_(CS),SZJW_(CS)), intent(in) :: &
     PFu           !< The anomalous zonal pressure force acceleration [L T-2 ~> m s-2].
   integer, intent(in)  :: Is_u !< The starting i-index of the range of u-point values to calculate
@@ -3528,6 +3594,8 @@ subroutine btloop_update_u(dtbt, ubt, vbt, u_accel_bt, &
     Rayleigh_u    !< A Rayleigh drag timescale operating at u-points for drag parameterizations
                   !! that introduced directly into the barotropic solver rather than coming
                   !! in via the visc_rem_u arrays from the layered equations [T-1 ~> s-1].
+  real, dimension(SZIW_(CS),SZJW_(CS)), intent(in) :: &
+    eta           !< The barotropic free surface height anomaly or column mass anomaly [H ~> m or kg m-2]
   real,    intent(in) :: wt_accel_n  !< The raw or relative weights of each of the barotropic timesteps
                                   !! in determining the average accelerations [nondim]
   type(unit_scale_type),   intent(in)  :: US      !< A dimensional unit scaling type
@@ -3535,15 +3603,42 @@ subroutine btloop_update_u(dtbt, ubt, vbt, u_accel_bt, &
   ! Local variables
   real :: vel_prev    ! The previous velocity [L T-1 ~> m s-1].
   integer :: i, j
+  real :: Idtbt       ! The inverse of the barotropic time step [T-1 ~> s-1]
+  real :: force_temp, vel_hc, Ibt_rem ! Temporary variables for hydraulic control
 
   !$OMP do schedule(static)
   do j=js_u,je_u ; do I=Is_u,Ie_u
     Cor_u(I,j) = (((f_4_u(4,I,j) * vbt(i+1,J)) + (f_4_u(1,I,j) * vbt(i,J-1))) + &
                   ((f_4_u(3,I,j) * vbt(i,J)) + (f_4_u(2,I,j) * vbt(i+1,J-1)))) - &
                  Cor_ref_u(I,j)
+  enddo ; enddo
+  !$OMP end do nowait
 
+  Idtbt = 1.0 / dtbt
+  if (CS%hydr_ctrl) then
+    !$OMP do schedule(static)
+    do j=js_u,je_u ; do I=Is_u,Ie_u ; if (CS%OBCmask_u(I,j) * bt_rem_u(I,j)/=0) then
+      Ibt_rem = 1.0 / bt_rem_u(I,j)
+      force_temp = BT_force_u(I,j) + Cor_u(I,j) + PFu(I,j)
+      if (ubt(I,j)>=0.0) then
+        vel_hc =  Ibt_rem * CS%hc_coef * (max(eta(i,j) + GV%Z_to_H * G%bathyT(i,j), 0.0)**0.5)
+        HCu(I,j) = min(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
+      else
+        vel_hc = -Ibt_rem * CS%hc_coef * (max(eta(i+1,j) + GV%Z_to_H * G%bathyT(i+1,j), 0.0)**0.5)
+        HCu(I,j) = max(0.0, (vel_hc - ubt(I,j)) * Idtbt - force_temp)
+      endif
+    else
+      HCu(I,j) = 0.0
+    endif ; enddo ; enddo
+    !$OMP end do nowait
+  else
+    do j=js_u,je_u ; do I=Is_u,Ie_u ; HCu(I,j) = 0.0 ; enddo ; enddo
+  endif
+
+  !$OMP do schedule(static)
+  do j=js_u,je_u ; do I=Is_u,Ie_u
     ubt(I,j) = bt_rem_u(I,j) * (ubt(I,j) + &
-         dtbt * ((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)))
+         dtbt * (((BT_force_u(I,j) + Cor_u(I,j)) + PFu(I,j)) + HCu(I,j)))
     if (abs(ubt(I,j)) < CS%vel_underflow) ubt(I,j) = 0.0
   enddo ; enddo
   !$OMP end do nowait
@@ -3552,13 +3647,13 @@ subroutine btloop_update_u(dtbt, ubt, vbt, u_accel_bt, &
     !$OMP do schedule(static)
     do j=js_u,je_u ; do I=Is_u,Ie_u
       u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel_n * &
-          ((Cor_u(I,j) + PFu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
+          (((Cor_u(I,j) + PFu(I,j)) + HCu(I,j)) - ubt(I,j)*Rayleigh_u(I,j))
     enddo ; enddo
     !$OMP end do nowait
   else
     !$OMP do schedule(static)
     do j=js_u,je_u ; do I=Is_u,Ie_u
-      u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel_n * (Cor_u(I,j) + PFu(I,j))
+      u_accel_bt(I,j) = u_accel_bt(I,j) + wt_accel_n * ((Cor_u(I,j) + PFu(I,j)) + HCu(I,j))
     enddo ; enddo
     !$OMP end do nowait
   endif
@@ -5558,6 +5653,7 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
   logical :: enable_bugs  ! If true, the defaults for recently added bug-fix flags are set to
                           ! recreate the bugs, or if false bugs are only used if actively selected.
   logical :: visc_rem_bug ! Stores the value of runtime paramter VISC_REM_BUG.
+  logical :: hydr_ctrl_froude ! If true, use grid Froude number in hydraulic control.
   character(len=48) :: thickness_units, flux_units
   character*(40) :: hvel_str
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz
@@ -5926,6 +6022,18 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
                  "does not alter the solutions themselves.", default=.false.)
                  !### Change the default for MASK_COASTAL_PRESSURE_FORCE to true?
 
+  call get_param(param_file, mdl, "BT_HYDRAULIC_CONTROL", CS%hydr_ctrl, &
+                 "If true, use hydraulic control to curb barotropic velocity", default=.false.)
+  if (CS%hydr_ctrl) then
+    call get_param(param_file, mdl, "BT_HYDRAULIC_CONTROL_FROUDE", hydr_ctrl_froude, &
+                   "If true, use grid Froude number to curb barotropic velocity", default=.false.)
+    if (hydr_ctrl_froude) then
+      CS%hc_coef = GV%g_Earth**0.5
+    else
+      CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
+    endif
+  endif
+
   ! Initialize a version of the MOM domain that is specific to the barotropic solver.
   call clone_MOM_domain(G%Domain, CS%BT_Domain, min_halo=wd_halos, symmetric=.true.)
 #ifdef STATIC_MEMORY_
@@ -6283,6 +6391,12 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
       'Zonal Barotropic Coriolis Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_Corv_bt = register_diag_field('ocean_model', 'CorvBT', diag%axesCv1, Time, &
       'Meridional Barotropic Coriolis Acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
+  if (CS%hydr_ctrl) then
+    CS%id_HCu_bt = register_diag_field('ocean_model', 'HCuBT', diag%axesCu1, Time, &
+        'Zonal acceleration from hydraulic control', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_HCv_bt = register_diag_field('ocean_model', 'HCvBT', diag%axesCv1, Time, &
+        'Meridional acceleration from hydraulic control', 'm s-2', conversion=US%L_T2_to_m_s2)
+  endif
   CS%id_uaccel = register_diag_field('ocean_model', 'u_accel_bt', diag%axesCu1, Time, &
       'Barotropic zonal acceleration', 'm s-2', conversion=US%L_T2_to_m_s2)
   CS%id_vaccel = register_diag_field('ocean_model', 'v_accel_bt', diag%axesCv1, Time, &
