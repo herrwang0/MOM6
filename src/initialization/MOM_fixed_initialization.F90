@@ -222,6 +222,7 @@ subroutine MOM_initialize_topography(D, max_depth, G, PF, US, meanSL)
   ! the ice-sheet code or other components.
 
   ! Local variables
+  real :: max_depth_default = -1.e9 ! Default value of MAXIMUM_DEPTH parameter [m]
   character(len=40)  :: mdl = "MOM_initialize_topography" ! This subroutine's name.
   character(len=200) :: config
 
@@ -253,7 +254,8 @@ subroutine MOM_initialize_topography(D, max_depth, G, PF, US, meanSL)
                  " \t dense - Denmark Strait-like dense water formation and overflow.\n"//&
                  " \t USER - call a user modified routine.", &
                  fail_if_missing=.true.)
-  call get_param(PF, mdl, "MAXIMUM_DEPTH", max_depth, units="m", default=-1.e9, scale=US%m_to_Z, do_not_log=.true.)
+  call get_param(PF, mdl, "MAXIMUM_DEPTH", max_depth, units="m", default=max_depth_default, &
+                 scale=US%m_to_Z, do_not_log=.true.)
   select case ( trim(config) )
     case ("file");      call initialize_topography_from_file(D, G, PF, US)
     case ("flat");      call initialize_topography_named(D, G, PF, config, max_depth, US)
@@ -277,9 +279,12 @@ subroutine MOM_initialize_topography(D, max_depth, G, PF, US, meanSL)
     case default ;      call MOM_error(FATAL,"MOM_initialize_topography: "// &
       "Unrecognized topography setup '"//trim(config)//"'")
   end select
-  if (max_depth>0.) then
+  if (max_depth/=max_depth_default * US%m_to_Z) then
     call log_param(PF, mdl, "MAXIMUM_DEPTH", max_depth, &
                    "The maximum depth of the ocean.", units="m", unscale=US%Z_to_m)
+    if (trim(config) /= "DOME") then
+      call limit_topography(D, G, PF, max_depth, US)
+    endif
   else
     if (present(meanSL)) then
       max_depth = diagnoseMaximumDepth(D+meanSL, G)
@@ -289,9 +294,10 @@ subroutine MOM_initialize_topography(D, max_depth, G, PF, US, meanSL)
     call log_param(PF, mdl, "!MAXIMUM_DEPTH", max_depth, &
                    "The (diagnosed) maximum depth of the ocean.", &
                    units="m", unscale=US%Z_to_m, like_default=.true.)
-  endif
-  if (trim(config) /= "DOME") then
-    call limit_topography(D, G, PF, max_depth, US)
+    if (trim(config) /= "DOME") then
+      ! MAXIMUM_DEPTH is not set and topogrpahy does not need to be trimmed by its maximum depth.
+      call limit_topography(D, G, PF, max_depth_default * US%m_to_Z, US)
+    endif
   endif
 
 end subroutine MOM_initialize_topography
