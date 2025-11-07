@@ -296,7 +296,7 @@ subroutine MOM_initialize_topography(D, max_depth, G, PF, US, meanSL)
                    units="m", unscale=US%Z_to_m, like_default=.true.)
     if (trim(config) /= "DOME") then
       ! MAXIMUM_DEPTH is not set and topogrpahy does not need to be trimmed by its maximum depth.
-      call limit_topography(D, G, PF, max_depth_default * US%m_to_Z, US)
+      call limit_topography(D, G, PF, -max_depth_default * US%m_to_Z, US)
     endif
   endif
 
