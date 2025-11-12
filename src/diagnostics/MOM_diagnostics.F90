@@ -24,6 +24,7 @@ use MOM_EOS,               only : cons_temp_to_pot_temp, abs_saln_to_prac_saln
 use MOM_error_handler,     only : MOM_error, FATAL, WARNING
 use MOM_file_parser,       only : get_param, log_version, param_file_type
 use MOM_grid,              only : ocean_grid_type
+use MOM_harmonic_analysis, only : HA_accum, harmonic_analysis_CS
 use MOM_interface_heights, only : find_eta, find_col_mass
 use MOM_spatial_means,     only : global_area_mean, global_layer_mean
 use MOM_spatial_means,     only : global_volume_mean, global_area_integral
@@ -114,6 +115,7 @@ type, public :: diagnostics_CS ; private
   integer :: id_drho_dT        = -1, id_drho_dS        = -1
   integer :: id_h_pre_sync     = -1
   integer :: id_tosq           = -1, id_sosq           = -1
+  integer :: id_bsl            = -1
 
   !>@}
   type(wave_speed_CS) :: wave_speed  !< Wave speed control struct
@@ -166,7 +168,7 @@ end type transport_diag_IDs
 contains
 !> Diagnostics not more naturally calculated elsewhere are computed here.
 subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
-                                       dt, diag_pre_sync, G, GV, US, CS)
+                                       dt, diag_pre_sync, G, GV, US, CS, Time, HA_CSp)
   type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),   intent(in)    :: US   !< A dimensional unit scaling type
@@ -196,6 +198,8 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
   type(diag_grid_storage), intent(in)    :: diag_pre_sync !< Target grids from previous timestep
   type(diagnostics_CS),    intent(inout) :: CS   !< Control structure returned by a
                                                  !! previous call to diagnostics_init.
+  type(time_type), optional, intent(in)  :: Time !< Current model time.
+  type(harmonic_analysis_CS), pointer, optional :: HA_CSp !< Control structure for the harmonic analysis.
 
   ! Local variables
   real, dimension(SZI_(G),SZJ_(G),SZK_(G))  :: uv  ! u x v at h-points          [L2 T-2 ~> m2 s-2]
@@ -549,7 +553,11 @@ subroutine calculate_diagnostic_fields(u, v, h, uh, vh, tv, ADp, CDp, p_surf, &
     endif
   endif
 
-  call calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
+  if (present(Time)) then
+    call calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS, Time, HA_CSp)
+  else
+    call calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
+  endif
 
   if ((CS%id_Rml > 0) .or. (CS%id_Rcv > 0) .or. (CS%id_h_Rlay > 0) .or. &
       (CS%id_uh_Rlay > 0) .or. (CS%id_vh_Rlay > 0) .or. &
@@ -877,7 +885,7 @@ end subroutine find_weights
 !> This subroutine calculates vertical integrals of several tracers, along
 !! with the mass-weight of these tracers, the total column mass, and the
 !! carefully calculated column height.
-subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
+subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS, Time, HA_CSp)
   type(ocean_grid_type),   intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type), intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),   intent(in)    :: US   !< A dimensional unit scaling type
@@ -890,6 +898,8 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
                                                  !! as setting the surface pressure to 0.
   type(diagnostics_CS),    intent(inout) :: CS   !< Control structure returned by a
                                                  !! previous call to diagnostics_init.
+  type(time_type), optional, intent(in)  :: Time !< Current model time.
+  type(harmonic_analysis_CS), pointer, optional :: HA_CSp !< Control structure for the harmonic analysis.
 
   real, dimension(SZI_(G),SZJ_(G)) :: &
     z_top, &  ! Height of the top of a layer or the ocean [Z ~> m].
@@ -902,8 +912,14 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
     btm_pres,&! The pressure at the ocean bottom, or CMIP variable 'pbo'.
               ! This is the column mass multiplied by gravity plus the pressure
               ! at the ocean surface [R L2 T-2 ~> Pa].
-    tr_int    ! vertical integral of a tracer times density,
+    tr_int, & ! vertical integral of a tracer times density,
               ! (Rho_0 in a Boussinesq model) [Conc R Z ~> Conc kg m-2].
+    eta, &    ! Sea surface height [Z ~> m].
+    bsl, &    ! Baroclinic sea surface height [Z ~> m].
+    pres, &   ! Pressure at the bottom of a layer [R Z-1 T-2 ~> Pa or Z2 T-2 ~> m2 s-2].
+    dpres, &  ! Change in pressure across a layer [R Z-1 T-2 ~> Pa or Z2 T-2 ~> m2 s-2].
+    pres_int, & ! Vertical integral of pressure at the bottom of a layer [R T-2 ~> kg s-2 or Z3 T-2 ~> m3 s-2].
+    dpres_int   ! Vertical integral of change in pressure across a layer [R T-2 ~> kg s-2 or Z3 T-2 ~> m3 s-2].
   real    :: IG_Earth  ! Inverse of gravitational acceleration [T2 Z L-2 ~> s2 m-1].
 
   integer :: i, j, k, is, ie, js, je, nz
@@ -950,6 +966,54 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS)
     endif
     if (CS%id_col_mass > 0) call post_data(CS%id_col_mass, mass, CS%diag)
   endif
+
+  if (present(Time) .and. GV%Boussinesq) then
+    do j=js,je ; do i=is,ie ; pres(i,j) = 0.0 ; enddo ; enddo
+    do j=js,je ; do i=is,ie ; pres_int(i,j) = 0.0 ; enddo ; enddo
+    call find_eta(h, tv, G, GV, US, eta)
+    call HA_accum('eta', eta, Time, G, HA_CSp)
+    if (associated(tv%eqn_of_state)) then
+      do k=1,nz
+        if (k==1) then
+          do j=js,je ; do i=is,ie
+            z_top(i,j) = eta(i,j)
+            z_bot(i,j) = z_top(i,j) - GV%H_to_Z * h(i,j,k)
+          enddo ; enddo
+        else
+          do j=js,je ; do i=is,ie
+            z_top(i,j) = z_bot(i,j)
+            z_bot(i,j) = z_top(i,j) - GV%H_to_Z * h(i,j,k)
+          enddo ; enddo
+        endif ! (k==1)
+        call int_density_dz(tv%T(:,:,k), tv%S(:,:,k), z_top, z_bot, GV%Rho0, GV%Rho0, &
+                            GV%g_Earth, G%HI, tv%eqn_of_state, US, dpres, dpres_int)
+        do j=js,je ; do i=is,ie
+          pres_int(i,j) = pres_int(i,j) + dpres_int(i,j) + GV%H_to_Z * h(i,j,k) * pres(i,j)
+          pres(i,j) = pres(i,j) + dpres(i,j)
+        enddo; enddo
+      enddo ! k=1,nz
+      do j=js,je ; do i=is,ie
+        bsl(i,j) = pres_int(i,j) / ((GV%g_Earth * GV%Rho0) * (eta(i,j) - z_bot(i,j)))
+      enddo ; enddo
+    else
+      do j=js,je ; do i=is,ie
+        z_top(i,j) = eta(i,j)
+        pres(i,j) = (GV%g_prime(1) * GV%H_to_Z) * (z_top(i,j) + G%bathyT(i,j))
+        pres_int(i,j) = pres_int(i,j) - pres(i,j) * z_top(i,j)
+      enddo ; enddo
+      do k=2,nz ; do j=js,je ; do i=is,ie
+        z_top(i,j) = z_top(i,j) - GV%H_to_Z * h(i,j,k-1)
+        pres(i,j) = (GV%g_prime(k) * GV%H_to_Z) * (z_top(i,j) + G%bathyT(i,j))
+        pres_int(i,j) = pres_int(i,j) - pres(i,j) * z_top(i,j)
+      enddo ; enddo ; enddo
+      do j=js,je ; do i=is,ie
+        bsl(i,j) = pres_int(i,j) / (GV%g_Earth * ((eta(i,j) + G%bathyT(i,j)) + &
+                                                  GV%H_subroundoff * GV%H_to_Z))
+      enddo ; enddo
+    endif ! (associated(tv%eqn_of_state))
+    call HA_accum("bsl", bsl, Time, G, HA_CSp)
+    if (CS%id_bsl > 0) call post_data(CS%id_bsl, bsl, CS%diag)
+  endif ! (present(Time) .and. GV%Boussinesq)
 
 end subroutine calculate_vertical_integrals
 
@@ -2101,6 +2165,10 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
   CS%id_pbo = register_diag_field('ocean_model', 'pbo', diag%axesT1, Time, &
       long_name='Sea Water Pressure at Sea Floor', standard_name='sea_water_pressure_at_sea_floor', &
       units='Pa', conversion=US%RL2_T2_to_Pa)
+
+  CS%id_bsl = register_diag_field('ocean_model', 'bsl', diag%axesT1, Time, &
+      long_name='Baroclinic Sea Level', standard_name='baroclinic_sea_level', &
+      units='m', conversion=US%Z_to_m)
 
   ! Register time derivatives and allocate memory for diagnostics that need
   ! access from across several modules.
