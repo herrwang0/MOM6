@@ -5668,6 +5668,7 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
                           ! recreate the bugs, or if false bugs are only used if actively selected.
   logical :: visc_rem_bug ! Stores the value of runtime paramter VISC_REM_BUG.
   logical :: hydr_ctrl_froude ! If true, use grid Froude number in hydraulic control.
+  real :: hydr_ctrl_coef
   logical :: dtbt_restart_bug ! Stores the value of runtime parameter DTBT_RESTART_BUG.
   character(len=48) :: thickness_units, flux_units
   character*(40) :: hvel_str
@@ -6043,12 +6044,16 @@ subroutine barotropic_init(u, v, h, Time, G, GV, US, param_file, diag, CS, &
   call get_param(param_file, mdl, "BT_HYDRAULIC_CONTROL", CS%hydr_ctrl, &
                  "If true, use hydraulic control to curb barotropic velocity", default=.false.)
   if (CS%hydr_ctrl) then
+    call get_param(param_file, mdl, "BT_HYDRAULIC_CONTROL_COEF", hydr_ctrl_coef, &
+                   "If true, use grid Froude number to curb barotropic velocity", units="nondim", default=0.0)
     call get_param(param_file, mdl, "BT_HYDRAULIC_CONTROL_FROUDE", hydr_ctrl_froude, &
                    "If true, use grid Froude number to curb barotropic velocity", default=.false.)
-    if (hydr_ctrl_froude) then
-      CS%hc_coef = GV%g_Earth**0.5
-    else
+    if (hydr_ctrl_froude) &
+      hydr_ctrl_coef = 1.0
+    if (hydr_ctrl_coef == 0.0) then
       CS%hc_coef = ((2.0/3.0)**1.5) * (GV%g_Earth**0.5)
+    else
+      CS%hc_coef = hydr_ctrl_coef * (GV%g_Earth**0.5)
     endif
   endif
 
