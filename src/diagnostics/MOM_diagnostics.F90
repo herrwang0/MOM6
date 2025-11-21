@@ -116,6 +116,7 @@ type, public :: diagnostics_CS ; private
   integer :: id_h_pre_sync     = -1
   integer :: id_tosq           = -1, id_sosq           = -1
   integer :: id_bsl            = -1
+  logical :: bsl_use_ref
 
   !>@}
   type(wave_speed_CS) :: wave_speed  !< Wave speed control struct
@@ -984,8 +985,13 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS, Time, HA_C
             z_bot(i,j) = z_top(i,j) - GV%H_to_Z * h(i,j,k)
           enddo ; enddo
         endif ! (k==1)
+        if (CS%bsl_use_ref) then
         call int_density_dz(tv%T(:,:,k), tv%S(:,:,k), z_top, z_bot, GV%Rho0, GV%Rho0, &
                             GV%g_Earth, G%HI, tv%eqn_of_state, US, dpres, dpres_int)
+        else
+        call int_density_dz(tv%T(:,:,k), tv%S(:,:,k), z_top, z_bot, 0.0, GV%Rho0, &
+                            GV%g_Earth, G%HI, tv%eqn_of_state, US, dpres, dpres_int)
+        endif
         do j=js,je ; do i=is,ie
           pres_int(i,j) = pres_int(i,j) + dpres_int(i,j) + GV%H_to_Z * h(i,j,k) * pres(i,j)
           pres(i,j) = pres(i,j) + dpres(i,j)
@@ -1823,6 +1829,8 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
 
   ! Read all relevant parameters and write them to the model log.
   call log_version(param_file, mdl, version, "")
+  call get_param(param_file, mdl, "BSL_USE_REF", CS%bsl_use_ref, &
+                 default=.true.)
   call get_param(param_file, mdl, "DIAG_EBT_MONO_N2_COLUMN_FRACTION", CS%mono_N2_column_fraction, &
                  "The lower fraction of water column over which N2 is limited as monotonic "// &
                  "for the purposes of calculating the equivalent barotropic wave speed.", &
