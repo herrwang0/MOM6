@@ -967,7 +967,7 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS, Time, HA_C
     if (CS%id_col_mass > 0) call post_data(CS%id_col_mass, mass, CS%diag)
   endif
 
-  if (present(Time) .and. GV%Boussinesq) then
+  if (CS%id_bsl >0) then
     do j=js,je ; do i=is,ie ; pres(i,j) = 0.0 ; enddo ; enddo
     do j=js,je ; do i=is,ie ; pres_int(i,j) = 0.0 ; enddo ; enddo
     call find_eta(h, tv, G, GV, US, eta)
@@ -1011,8 +1011,7 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS, Time, HA_C
                                                   GV%H_subroundoff * GV%H_to_Z))
       enddo ; enddo
     endif ! (associated(tv%eqn_of_state))
-    call HA_accum("bsl", bsl, Time, G, HA_CSp)
-    if (CS%id_bsl > 0) call post_data(CS%id_bsl, bsl, CS%diag)
+    call post_data(CS%id_bsl, bsl, CS%diag)
   endif ! (present(Time) .and. GV%Boussinesq)
 
 end subroutine calculate_vertical_integrals
