@@ -971,7 +971,6 @@ subroutine calculate_vertical_integrals(h, tv, p_surf, G, GV, US, CS, Time, HA_C
     do j=js,je ; do i=is,ie ; pres(i,j) = 0.0 ; enddo ; enddo
     do j=js,je ; do i=is,ie ; pres_int(i,j) = 0.0 ; enddo ; enddo
     call find_eta(h, tv, G, GV, US, eta)
-    call HA_accum('eta', eta, Time, G, HA_CSp)
     if (associated(tv%eqn_of_state)) then
       do k=1,nz
         if (k==1) then
