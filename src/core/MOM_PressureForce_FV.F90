@@ -94,6 +94,7 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_p_stanley = -1 !< Diagnostic identifier
   integer :: id_MassWt_u = -1 !< Diagnostic identifier
   integer :: id_MassWt_v = -1 !< Diagnostic identifier
+  integer :: id_bc_ssh = -1 !< Diagnostic identifier
   type(SAL_CS), pointer :: SAL_CSp => NULL() !< SAL control structure
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
@@ -879,6 +880,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                 ! CALCULATE_SAL is True and SAL_USE_BPA is False [Z ~> m].
     pbot, &     ! Total bottom pressure for self-attraction and loading. Used if
                 ! CALCULATE_SAL is True and SAL_USE_BPA is True [R L2 T-2 ~> Pa].
+    bc_ssh, &   ! Baroclinic sea level [Z ~> m].
     dM          ! The barotropic adjustment to the Montgomery potential to
                 ! account for a reduced gravity model [L2 T-2 ~> m2 s-2].
   real, dimension(SZI_(G)) :: &
@@ -1700,7 +1702,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     call set_pbce_Bouss(e, tv_tmp, G, GV, US, CS%Rho0, CS%GFS_scale, pbce)
   endif
 
-  if (present(eta)) then
+  if (present(eta) .or. (CS%id_bc_ssh > 0)) then
     ! eta is the sea surface height relative to a time-invariant geoid, for comparison with
     ! what is used for eta in btstep.  See how e was calculated about 200 lines above.
     !$OMP parallel do default(shared)
@@ -1725,6 +1727,18 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         eta(i,j) = eta(i,j) + e_sal(i,j)*GV%Z_to_H
       enddo ; enddo
+    endif
+
+    if (CS%id_bc_ssh > 0) then
+      bc_ssh(:,:) = 0.0
+      do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        bc_ssh(i,j) = bc_ssh(i,j) - ((pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k)) &
+          - (GxRho_ref * (e(i,j,k) - G%Z_ref) - 0.5 * GxRho_ref * h(i,j,k) * GV%H_to_Z) * h(i,j,k))
+      enddo ; enddo ; enddo
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        bc_ssh(i,j) = ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) ) * GV%H_to_Z
+      enddo ; enddo
+      call post_data(CS%id_bc_ssh, bc_ssh, CS%diag)
     endif
   endif
 
@@ -1959,7 +1973,8 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
     CS%id_e_tidal_sal = register_diag_field('ocean_model', 'e_tide_sal', diag%axesT1, Time, &
         'Read-in tidal self-attraction and loading height anomaly', 'meter', conversion=US%Z_to_m)
   endif
-
+  CS%id_bc_ssh = register_diag_field('ocean_model', 'BC_SSH', diag%axesT1, Time, &
+        'Baroclinic Sea Level', 'meter', conversion=US%Z_to_m)
   CS%id_MassWt_u = register_diag_field('ocean_model', 'MassWt_u', diag%axesCuL, Time, &
         'The fractional mass weighting at u-point PGF calculations', 'nondim')
   CS%id_MassWt_v = register_diag_field('ocean_model', 'MassWt_v', diag%axesCvL, Time, &
