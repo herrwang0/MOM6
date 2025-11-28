@@ -1732,12 +1732,35 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     if (CS%id_bc_ssh > 0) then
       bc_ssh(:,:) = 0.0
       do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        bc_ssh(i,j) = bc_ssh(i,j) - ((pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k)) &
-          - (GxRho_ref * (e(i,j,k) - G%Z_ref) - 0.5 * GxRho_ref * h(i,j,k) * GV%H_to_Z) * h(i,j,k))
+        ! [H R L2 T-2]
+        ! bc_ssh(i,j) = bc_ssh(i,j) - ((pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k)) &
+        !   - GxRho_ref * h(i,j,k) * ((e(i,j,k) - G%Z_ref) - 0.5 * GV%H_to_Z * h(i,j,k)))
+        bc_ssh(i,j) = bc_ssh(i,j) - (pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k))
       enddo ; enddo ; enddo
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         bc_ssh(i,j) = ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) ) * GV%H_to_Z
       enddo ; enddo
+
+    !   if (CS%tides .and. (.not.CS%bq_sal_tides)) then
+    !   if (CS%tides_answer_date>20230630) then
+    !     !$OMP parallel do default(shared)
+    !     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+    !       bc_ssh(i,j) = bc_ssh(i,j) - GxRho_ref * (e_tidal_eq(i,j)+e_tidal_sal(i,j)) * h(i,j,k)
+    !     enddo ; enddo
+    !   else
+    !     !$OMP parallel do default(shared)
+    !     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+    !       eta(i,j) = eta(i,j) + e_sal_and_tide(i,j)*GV%Z_to_H
+    !     enddo ; enddo
+    !   endif
+    ! endif
+    ! if (CS%calculate_SAL .and. (CS%tides_answer_date>20230630) .and. (.not.CS%bq_sal_tides)) then
+    !   !$OMP parallel do default(shared)
+    !   do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+    !     eta(i,j) = eta(i,j) + e_sal(i,j)*GV%Z_to_H
+    !   enddo ; enddo
+    ! endif
+
       call post_data(CS%id_bc_ssh, bc_ssh, CS%diag)
     endif
   endif
