@@ -2369,7 +2369,7 @@ subroutine set_viscous_ML(u, v, h, tv, forces, visc, dt, G, GV, US, CS)
         ustarsq = Rho0x400_G * ustar(i)**2
         htot(i) = 0.0 ; dztot(i) = 0.0
         if (use_EOS) then
-          Thtot(i) = 0.0 ; Shtot(i) = 0.0
+          Thtot(i) = 0.0 ; Shtot(i) = 0.0 ; oldfn = 0.0
           do k=1,nz-1
             if (h_at_vel(i,k) <= 0.0) cycle
             T_Lay = 0.5 * (tv%T(i,j,k) + tv%T(i+1,j,k))
@@ -2648,7 +2648,7 @@ subroutine set_viscous_ML(u, v, h, tv, forces, visc, dt, G, GV, US, CS)
         htot(i) = 0.0
         dztot(i) = 0.0
         if (use_EOS) then
-          Thtot(i) = 0.0 ; Shtot(i) = 0.0
+          Thtot(i) = 0.0 ; Shtot(i) = 0.0 ; oldfn = 0.0
           do k=1,nz-1
             if (h_at_vel(i,k) <= 0.0) cycle
             T_Lay = 0.5 * (tv%T(i,j,k) + tv%T(i,j+1,k))
