@@ -2506,6 +2506,7 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
                       ! to equal bebt, as they have similar roles and meanings.
   real :: eta_cor_multiplier ! Increases the rate of applying CS%eta_cor so that the mass
                       ! source is all used up by the beginning of the filtering [nondim]
+  real :: eta_acc     ! Change due to divergence of mass transport [H ~> m or kg m-2]
   logical :: do_hifreq_output  ! If true, output occurs every barotropic step.
   logical :: do_ave   ! If true, diagnostics are enabled on this step.
   logical :: evolving_face_areas
@@ -2882,7 +2883,21 @@ subroutine btstep_timeloop(eta, ubt, vbt, uhbt0, Datu, BTCL_u, vhbt0, Datv, BTCL
       do j=jsv,jev ; do i=isv,iev
         eta(i,j) = (eta_IC(i,j) + eta_cor_multiplier*eta_src(i,j)) + CS%IareaT_OBCmask(i,j) * &
                    ((uhbt_int(I-1,j) - uhbt_int(I,j)) + (vhbt_int(i,J-1) - vhbt_int(i,J)))
+        ! eta_acc contains the magnitude of the largest term in the above expression which
+        ! will be used to estimate a bound for round off when comparing to the bottom depth
+        eta_acc = abs( CS%IareaT_OBCmask(i,j) * &
+                   ((uhbt_int(I-1,j) - uhbt_int(I,j)) + (vhbt_int(i,J-1) - vhbt_int(i,J))) )
+        eta_acc = max( eta_acc, abs( eta_cor_multiplier*eta_src(i,j) ), abs( eta_IC(i,j) ) )
+        if ( G%mask2dT(i,j) * ( eta(i,j) + GV%Z_to_H*G%bathyT(i,j) ) > &
+             -G%mask2dT(i,j) * eta_acc * epsilon(eta_acc) * 2. ) &
+          eta(i,j) = max( eta(i,j), -GV%Z_to_H*G%bathyT(i,j) )
         eta_wtd(i,j) = eta_wtd(i,j) + eta(i,j) * wt_eta(n)
+        if ((eta(i,j) < -GV%Z_to_H*G%bathyT(i,j)) .and. (G%mask2dT(i,j) > 0.0)) then
+          write(mesg,'(ES24.16," vs. ",ES24.16, " at ", ES12.4, ES12.4, i7, i7)') GV%H_to_m*eta(i,j), &
+               -US%Z_to_m*G%bathyT(i,j), G%geoLonT(i,j), G%geoLatT(i,j), i + G%HI%idg_offset, j + G%HI%jdg_offset
+          if (CS%bt_limit_integral_transport) &
+            call MOM_error(FATAL, "btstep: eta has dropped below bathyT: "//trim(mesg))
+        endif
       enddo ; enddo
     else
       !$OMP do
