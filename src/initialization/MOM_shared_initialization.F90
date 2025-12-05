@@ -36,6 +36,23 @@ public compute_global_grid_integrals, write_ocean_geometry_file
 ! their mks counterparts with notation like "a velocity [Z T-1 ~> m s-1]".  If the units
 ! vary with the Boussinesq approximation, the Boussinesq variant is given first.
 
+!> A structure to store information about 2D geometry output fields in write_ocean_geometry_file
+type geometry_field
+  type(vardesc) :: desc          !< Description of a field
+  real, pointer :: data(:,:)     !< Pointers to the field
+  real          :: unscale = 1.0 !< A scaling factor that the field is multiplied by before
+                                 !! it is written [a A-1 ~> 1]
+end type geometry_field
+
+!> A registry for 2D geometry output fields in write_ocean_geometry_file
+type geometry_registry
+  type(geometry_field), allocatable :: items(:) !< An array of registered fields
+  integer :: count = 0                          !< Number of registered fields
+contains
+  !> subroutine to add geometry_field
+  procedure :: add => add_geometry_field
+end type geometry_registry
+
 contains
 
 ! -----------------------------------------------------------------------------
@@ -1327,6 +1344,19 @@ subroutine compute_global_grid_integrals(G, US)
 end subroutine compute_global_grid_integrals
 ! -----------------------------------------------------------------------------
 
+!> Add geometry field to the registry
+subroutine add_geometry_field(this, desc, data2d, unscale)
+  class(geometry_registry), intent(inout) :: this !< Geometry registry
+  type(vardesc), intent(in) :: desc !< Field description
+  real, target :: data2d(:,:) !< 2D geometry field [A]
+  real, intent(in), optional :: unscale !< Factor to scale back to physical unit [a A-1 ~> 1]
+
+  this%count = this%count + 1
+  this%items(this%count)%desc = desc
+  this%items(this%count)%data => data2d
+  if (present(unscale)) this%items(this%count)%unscale = unscale
+end subroutine add_geometry_field
+
 ! -----------------------------------------------------------------------------
 !> Write out a file describing the topography, Coriolis parameter, grid locations
 !! and various other fixed fields from the grid.
@@ -1342,22 +1372,20 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   character(len=240) :: filepath  ! The full path to the file to write
   character(len=40)  :: mdl = "write_ocean_geometry_file"
   character(len=32)  :: filename_appendix = '' ! Appendix to geom filename for ensemble runs
+  type(geometry_registry) :: registry ! Registry for geometry fields
   type(vardesc),   dimension(:), allocatable :: &
     vars     ! Types with metadata about the variables and their staggering
   type(MOM_field), dimension(:), allocatable :: &
     fields   ! Opaque types used by MOM_io to store variable metadata information
   type(MOM_infra_file) :: IO_handle ! The I/O handle of the fileset
-  integer :: nFlds ! The number of variables in this file
+  integer :: nFlds_max = 30 ! The maximum number of variables in this file
   integer :: file_threading
   integer :: geom_file_len ! geometry file name length
   logical :: multiple_files
+  integer :: n, nFlds
 
   call callTree_enter('write_ocean_geometry_file()')
-
-  nFlds = 19 ; if (G%bathymetry_at_vel) nFlds = 23
-
-  allocate(vars(nFlds))
-  allocate(fields(nFlds))
+  allocate(registry%items(nFlds_max))
 
   !   var_desc populates a type defined in MOM_io.F90.  The arguments, in order, are:
   ! (1) the variable name for the NetCDF file
@@ -1369,33 +1397,62 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
   !     'i' (interface), or '1' (no vertical location)
   ! (6) a character indicating the time levels of the field, which may be
   !    's' (snap-shot), 'p' (periodic), or '1' (no time variation)
-  vars(1) = var_desc("geolatb","degree","latitude at corner (Bu) points",'q','1','1')
-  vars(2) = var_desc("geolonb","degree","longitude at corner (Bu) points",'q','1','1')
-  vars(3) = var_desc("geolat","degree", "latitude at tracer (T) points", 'h','1','1')
-  vars(4) = var_desc("geolon","degree","longitude at tracer (T) points",'h','1','1')
-  vars(5) = var_desc("D","meter","Basin Depth",'h','1','1')
-  vars(6) = var_desc("f","s-1","Coriolis Parameter",'q','1','1')
-  vars(7) = var_desc("dxCv","m","Zonal grid spacing at v points",'v','1','1')
-  vars(8) = var_desc("dyCu","m","Meridional grid spacing at u points",'u','1','1')
-  vars(9) = var_desc("dxCu","m","Zonal grid spacing at u points",'u','1','1')
-  vars(10)= var_desc("dyCv","m","Meridional grid spacing at v points",'v','1','1')
-  vars(11)= var_desc("dxT","m","Zonal grid spacing at h points",'h','1','1')
-  vars(12)= var_desc("dyT","m","Meridional grid spacing at h points",'h','1','1')
-  vars(13)= var_desc("dxBu","m","Zonal grid spacing at q points",'q','1','1')
-  vars(14)= var_desc("dyBu","m","Meridional grid spacing at q points",'q','1','1')
-  vars(15)= var_desc("Ah","m2","Area of h cells",'h','1','1')
-  vars(16)= var_desc("Aq","m2","Area of q cells",'q','1','1')
 
-  vars(17)= var_desc("dxCvo","m","Open zonal grid spacing at v points",'v','1','1')
-  vars(18)= var_desc("dyCuo","m","Open meridional grid spacing at u points",'u','1','1')
-  vars(19)= var_desc("wet", "nondim", "land or ocean?", 'h','1','1')
+  call registry%add(var_desc("geolatb", "degree", "latitude at corner (Bu) points", 'q', '1', '1'), &
+           G%geoLatBu)
+  call registry%add(var_desc("geolonb", "degree", "longitude at corner (Bu) points", 'q', '1', '1'), &
+           G%geoLonBu)
+  call registry%add(var_desc("geolat",  "degree", "latitude at tracer (T) points", 'h', '1', '1'), &
+           G%geoLatT)
+  call registry%add(var_desc("geolon",  "degree", "longitude at tracer (T) points", 'h', '1', '1'), &
+           G%geoLonT)
+  call registry%add(var_desc("D", "meter", "Basin Depth", 'h', '1', '1'), &
+           G%bathyT, unscale=US%Z_to_m)
+  call registry%add(var_desc("f", "s-1", "Coriolis Parameter", 'q', '1', '1'), &
+           G%CoriolisBu, unscale=US%s_to_T)
+
+  call registry%add(var_desc("dxCv", "m", "Zonal grid spacing at v points", 'v', '1', '1'), &
+           G%dxCv, unscale=US%L_to_m)
+  call registry%add(var_desc("dyCu", "m", "Meridional grid spacing at u points", 'u', '1', '1'), &
+           G%dyCu, unscale=US%L_to_m)
+  call registry%add(var_desc("dxCu", "m", "Zonal grid spacing at u points", 'u', '1', '1'), &
+           G%dxCu, unscale=US%L_to_m)
+  call registry%add(var_desc("dyCv", "m", "Meridional grid spacing at v points", 'v', '1', '1'), &
+           G%dyCv, unscale=US%L_to_m)
+  call registry%add(var_desc("dxT", "m", "Zonal grid spacing at h points", 'h', '1', '1'), &
+           G%dxT, unscale=US%L_to_m)
+  call registry%add(var_desc("dyT", "m", "Meridional grid spacing at h points", 'h', '1', '1'), &
+           G%dyT, unscale=US%L_to_m)
+  call registry%add(var_desc("dxBu", "m", "Zonal grid spacing at q points", 'q', '1', '1'), &
+           G%dxBu, unscale=US%L_to_m)
+  call registry%add(var_desc("dyBu", "m", "Meridional grid spacing at q points", 'q', '1', '1'), &
+           G%dyBu, unscale=US%L_to_m)
+
+  call registry%add(var_desc("Ah", "m2", "Area of h cells", 'h', '1', '1'), &
+           G%areaT, unscale=US%L_to_m**2)
+  call registry%add(var_desc("Aq", "m2", "Area of q cells", 'q', '1', '1'), &
+           G%areaBu, unscale=US%L_to_m**2)
+
+  call registry%add(var_desc("dxCvo", "m", "Open zonal grid spacing at v points", 'v', '1', '1'), &
+           G%dx_Cv, unscale=US%L_to_m)
+  call registry%add(var_desc("dyCuo", "m", "Open meridional grid spacing at u points", 'u', '1', '1'), &
+           G%dy_Cu, unscale=US%L_to_m)
+  call registry%add(var_desc("wet", "nondim", "land or ocean?", 'h', '1', '1'), G%mask2dT)
 
   if (G%bathymetry_at_vel) then
-    vars(20) = var_desc("Dblock_u","m","Blocked depth at u points",'u','1','1')
-    vars(21) = var_desc("Dopen_u","m","Open depth at u points",'u','1','1')
-    vars(22) = var_desc("Dblock_v","m","Blocked depth at v points",'v','1','1')
-    vars(23) = var_desc("Dopen_v","m","Open depth at v points",'v','1','1')
+    call registry%add(var_desc("Dblock_u", "m", "Blocked depth at u points", 'u', '1', '1'), &
+             G%Dblock_u, unscale=US%Z_to_m)
+    call registry%add(var_desc("Dopen_u",  "m", "Open depth at u points",    'u', '1', '1'), &
+             G%Dopen_u, unscale=US%Z_to_m)
+    call registry%add(var_desc("Dblock_v", "m", "Blocked depth at v points", 'v', '1', '1'), &
+             G%Dblock_v, unscale=US%Z_to_m)
+    call registry%add(var_desc("Dopen_v",  "m", "Open depth at v points",    'v', '1', '1'), &
+             G%Dopen_v, unscale=US%Z_to_m)
   endif
+
+  nFlds = registry%count
+  allocate(vars(nFlds), fields(nFlds))
+  do n=1,nFlds ; vars(n) = registry%items(n)%desc ; enddo
 
   if (present(geom_file)) then
     filepath = trim(directory) // trim(geom_file)
@@ -1424,41 +1481,13 @@ subroutine write_ocean_geometry_file(G, param_file, directory, US, geom_file)
 
   call create_MOM_file(IO_handle, trim(filepath), vars, nFlds, fields, &
       file_threading, dG=G)
-
-  call MOM_write_field(IO_handle, fields(1), G%Domain, G%geoLatBu)
-  call MOM_write_field(IO_handle, fields(2), G%Domain, G%geoLonBu)
-  call MOM_write_field(IO_handle, fields(3), G%Domain, G%geoLatT)
-  call MOM_write_field(IO_handle, fields(4), G%Domain, G%geoLonT)
-
-  call MOM_write_field(IO_handle, fields(5), G%Domain, G%bathyT, unscale=US%Z_to_m)
-  call MOM_write_field(IO_handle, fields(6), G%Domain, G%CoriolisBu, unscale=US%s_to_T)
-
-  call MOM_write_field(IO_handle, fields(7),  G%Domain, G%dxCv, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(8),  G%Domain, G%dyCu, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(9),  G%Domain, G%dxCu, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(10), G%Domain, G%dyCv, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(11), G%Domain, G%dxT, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(12), G%Domain, G%dyT, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(13), G%Domain, G%dxBu, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(14), G%Domain, G%dyBu, unscale=US%L_to_m)
-
-  call MOM_write_field(IO_handle, fields(15), G%Domain, G%areaT, unscale=US%L_to_m**2)
-  call MOM_write_field(IO_handle, fields(16), G%Domain, G%areaBu, unscale=US%L_to_m**2)
-
-  call MOM_write_field(IO_handle, fields(17), G%Domain, G%dx_Cv, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(18), G%Domain, G%dy_Cu, unscale=US%L_to_m)
-  call MOM_write_field(IO_handle, fields(19), G%Domain, G%mask2dT)
-
-  if (G%bathymetry_at_vel) then
-    call MOM_write_field(IO_handle, fields(20), G%Domain, G%Dblock_u, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(21), G%Domain, G%Dopen_u, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(22), G%Domain, G%Dblock_v, unscale=US%Z_to_m)
-    call MOM_write_field(IO_handle, fields(23), G%Domain, G%Dopen_v, unscale=US%Z_to_m)
-  endif
-
+  do n=1,nFlds
+    call MOM_write_field(IO_handle, fields(n), G%Domain, registry%items(n)%data)
+  enddo
   call IO_handle%close()
 
   deallocate(vars, fields)
+  deallocate(registry%items)
 
   call callTree_leave('write_ocean_geometry_file()')
 end subroutine write_ocean_geometry_file
