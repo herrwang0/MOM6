@@ -1744,7 +1744,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         ! bc_ssh(i,j) = GV%H_to_Z * &
         !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) + e(i,j,nz+1)) )
         bc_ssh(i,j) = GV%H_to_Z * &
-          ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) / I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
+          ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) * I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
       enddo ; enddo
 
     !   if (CS%tides .and. (.not.CS%bq_sal_tides)) then
