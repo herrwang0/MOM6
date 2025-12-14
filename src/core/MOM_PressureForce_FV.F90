@@ -1737,13 +1737,14 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         !   - GxRho_ref * h(i,j,k) * ((e(i,j,k) - G%Z_ref) - 0.5 * GV%H_to_Z * h(i,j,k)))
         bc_ssh(i,j) = bc_ssh(i,j) - (pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k))
       enddo ; enddo ; enddo
-      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-      !   bc_ssh(i,j) = GV%H_to_Z * &
-      !     ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) - 0.5 * rho_ref * I_Rho0 * (e(i,j,1) + e(i,j,nz+1)) + eta(i,j) )
-      ! enddo ; enddo
 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        bc_ssh(i,j) = ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) ) * GV%H_to_Z
+        ! bc_ssh(i,j) = ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) ) * GV%H_to_Z
+        ! bc_ssh(i,j) = ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) ) * GV%H_to_Z
+        ! bc_ssh(i,j) = GV%H_to_Z * &
+        !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) + e(i,j,nz+1)) )
+        bc_ssh(i,j) = GV%H_to_Z * &
+          ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) / I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
       enddo ; enddo
 
     !   if (CS%tides .and. (.not.CS%bq_sal_tides)) then
