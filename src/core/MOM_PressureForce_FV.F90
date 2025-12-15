@@ -1750,10 +1750,16 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       ! enddo ; enddo
 
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        ! -( p_bar - p_ref )
-        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + pa(i,j,1) ) * I_g_rho ) * GV%H_to_Z
+        ! ! -( p_bar )
         ! bc_ssh(i,j) = GV%H_to_Z * &
-        !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) + e(i,j,nz+1)) )
+        !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) - e(i,j,nz+1)) )
+
+        ! ! -( p_bar - p_ref )
+        ! bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + pa(i,j,1) ) * I_g_rho ) * GV%H_to_Z
+
+        ! -( p_bar - p_rhom )
+        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * (pa(i,j,nz+1) + pa(i,j,1))) * I_g_rho ) * GV%H_to_Z
+
         ! bc_ssh(i,j) = GV%H_to_Z * &
         !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) * I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
       !   bc_ssh(i,j) = GV%H_to_Z * &
