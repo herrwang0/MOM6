@@ -84,6 +84,7 @@ type, public :: PressureForce_FV_CS ; private
   logical :: use_stanley_pgf  !< If true, turn on Stanley parameterization in the PGF
   logical :: bq_sal_tides = .false. !< If true, use an alternative method for SAL and tides
                                     !! in Boussinesq mode
+  logical :: bc_ssh_use_mean  !< If true
   integer :: tides_answer_date = 99991231 !< Recover old answers with tides
   integer :: id_e_tide = -1 !< Diagnostic identifier
   integer :: id_e_tidal_eq = -1 !< Diagnostic identifier
@@ -255,6 +256,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   integer, dimension(2) :: EOSdom_u ! The i-computational domain for the equation of state at u-velocity points
   integer, dimension(2) :: EOSdom_v ! The i-computational domain for the equation of state at v-velocity points
   integer :: i, j, k, m
+  real, dimension(SZI_(G),SZJ_(G))  :: &
+    bc_ssh   ! Baroclinic sea level [Z ~> m].
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -824,8 +827,30 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     endif
   endif
 
-  ! To be consistent with old runs, tidal forcing diagnostic also includes total SAL.
-  ! New diagnostics are given for each individual field.
+  if (CS%id_bc_ssh > 0) then
+    bc_ssh(:,:) = 0.0
+    do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      ! [H R L2 T-2]
+      bc_ssh(i,j) = bc_ssh(i,j) - (za(i,j,K+1) * h(i,j,k) + intp_dza(i,j,k))
+    enddo ; enddo ; enddo
+
+    if (CS%bc_ssh_use_mean) then
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        ! -( p_bar - p_rhom )
+        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + 0.5 * (za(i,j,nz+1) + za(i,j,1))) * I_gEarth ) * GV%H_to_Z
+      enddo ; enddo
+    else
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        ! ! -( p_bar - p_ref )
+        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + za(i,j,1) ) * I_gEarth ) * GV%H_to_Z
+      enddo ; enddo
+    endif
+    call post_data(CS%id_bc_ssh, bc_ssh, CS%diag)
+  endif
+
+  if (CS%id_MassWt_u>0) call post_data(CS%id_MassWt_u, MassWt_u, CS%diag)
+  if (CS%id_MassWt_v>0) call post_data(CS%id_MassWt_v, MassWt_v, CS%diag)
+
   if (CS%id_e_tide>0) then
     if (CS%tides_answer_date>20230630) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       e_sal_and_tide(i,j) = e_sal(i,j) + e_tidal_eq(i,j) + e_tidal_sal(i,j)
@@ -1728,66 +1753,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
         eta(i,j) = eta(i,j) + e_sal(i,j)*GV%Z_to_H
       enddo ; enddo
     endif
-
-    if (CS%id_bc_ssh > 0) then
-      bc_ssh(:,:) = 0.0
-      do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        ! [H R L2 T-2]
-        ! bc_ssh(i,j) = bc_ssh(i,j) - ((pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k)) &
-        !   - GxRho_ref * h(i,j,k) * ((e(i,j,k) - G%Z_ref) - 0.5 * GV%H_to_Z * h(i,j,k)))
-        bc_ssh(i,j) = bc_ssh(i,j) - (pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k))
-      enddo ; enddo ; enddo
-
-      ! do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        ! bc_ssh(i,j) = ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) ) * GV%H_to_Z
-        ! bc_ssh(i,j) = ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) ) * GV%H_to_Z
-        ! bc_ssh(i,j) = GV%H_to_Z * &
-        !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) + e(i,j,nz+1)) )
-        ! bc_ssh(i,j) = GV%H_to_Z * &
-        !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) * I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
-        ! bc_ssh(i,j) = GV%H_to_Z * &
-          ! ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) * I_g_rho + GxRho_ref * eta(i,j) )
-      ! enddo ; enddo
-
-      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        ! ! -( p_bar )
-        ! bc_ssh(i,j) = GV%H_to_Z * &
-        !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) - e(i,j,nz+1)) )
-
-        ! ! -( p_bar - p_ref )
-        ! bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + pa(i,j,1) ) * I_g_rho ) * GV%H_to_Z
-
-        ! -( p_bar - p_rhom )
-        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * (pa(i,j,nz+1) + pa(i,j,1))) * I_g_rho ) * GV%H_to_Z
-
-        ! bc_ssh(i,j) = GV%H_to_Z * &
-        !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) * I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
-      !   bc_ssh(i,j) = GV%H_to_Z * &
-      !     ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) * I_g_rho + GxRho_ref * eta(i,j) )
-      enddo ; enddo
-
-    !   if (CS%tides .and. (.not.CS%bq_sal_tides)) then
-    !   if (CS%tides_answer_date>20230630) then
-    !     !$OMP parallel do default(shared)
-    !     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-    !       bc_ssh(i,j) = bc_ssh(i,j) - GxRho_ref * (e_tidal_eq(i,j)+e_tidal_sal(i,j)) * h(i,j,k)
-    !     enddo ; enddo
-    !   else
-    !     !$OMP parallel do default(shared)
-    !     do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-    !       eta(i,j) = eta(i,j) + e_sal_and_tide(i,j)*GV%Z_to_H
-    !     enddo ; enddo
-    !   endif
-    ! endif
-    ! if (CS%calculate_SAL .and. (CS%tides_answer_date>20230630) .and. (.not.CS%bq_sal_tides)) then
-    !   !$OMP parallel do default(shared)
-    !   do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-    !     eta(i,j) = eta(i,j) + e_sal(i,j)*GV%Z_to_H
-    !   enddo ; enddo
-    ! endif
-
-      call post_data(CS%id_bc_ssh, bc_ssh, CS%diag)
-    endif
   endif
 
   if (CS%use_stanley_pgf) then
@@ -1827,8 +1792,62 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     endif
   endif
 
-  ! To be consistent with old runs, tidal forcing diagnostic also includes total SAL.
-  ! New diagnostics are given for each individual field.
+  if (CS%id_bc_ssh > 0) then
+    bc_ssh(:,:) = 0.0
+    do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      ! [H R L2 T-2]
+      ! bc_ssh(i,j) = bc_ssh(i,j) - ((pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k)) &
+      !   - GxRho_ref * h(i,j,k) * ((e(i,j,k) - G%Z_ref) - 0.5 * GV%H_to_Z * h(i,j,k)))
+      bc_ssh(i,j) = bc_ssh(i,j) - (pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k))
+    enddo ; enddo ; enddo
+
+    if (CS%bc_ssh_use_mean) then
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      ! ! -( p_bar )
+      ! bc_ssh(i,j) = GV%H_to_Z * &
+      !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) - e(i,j,nz+1)) )
+
+      ! ! -( p_bar - p_ref )
+      ! bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + pa(i,j,1) ) * I_g_rho ) * GV%H_to_Z
+
+      ! -( p_bar - p_rhom )
+      bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * (pa(i,j,nz+1) + pa(i,j,1))) * I_g_rho ) * GV%H_to_Z
+
+      ! bc_ssh(i,j) = GV%H_to_Z * &
+      !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) * I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
+    !   bc_ssh(i,j) = GV%H_to_Z * &
+    !     ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) * I_g_rho + GxRho_ref * eta(i,j) )
+      enddo ; enddo
+    else
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      ! ! -( p_bar )
+      ! bc_ssh(i,j) = GV%H_to_Z * &
+      !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * rho_ref * I_Rho0 * (e(i,j,1) - e(i,j,nz+1)) )
+
+      ! ! -( p_bar - p_ref )
+      bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + pa(i,j,1) ) * I_g_rho ) * GV%H_to_Z
+
+      ! -( p_bar - p_rhom )
+      ! bc_ssh(i,j) = ( ( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * (pa(i,j,nz+1) + pa(i,j,1))) * I_g_rho ) * GV%H_to_Z
+
+      ! bc_ssh(i,j) = GV%H_to_Z * &
+      !   ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) / (e(i,j,1) - e(i,j,nz+1)) * I_g_rho * (e(i,j,1) + e(i,j,nz+1)) )
+    !   bc_ssh(i,j) = GV%H_to_Z * &
+    !     ( bc_ssh(i,j) * I_g_rho / (e(i,j,1) - e(i,j,nz+1)) + eta(i,j) + 0.5 * (pa(i,j,nz+1) - pa(i,j,1)) * I_g_rho + GxRho_ref * eta(i,j) )
+      enddo ; enddo
+    endif
+    call post_data(CS%id_bc_ssh, bc_ssh, CS%diag)
+  endif
+
+
+  if (CS%id_MassWt_u>0) call post_data(CS%id_MassWt_u, MassWt_u, CS%diag)
+  if (CS%id_MassWt_v>0) call post_data(CS%id_MassWt_v, MassWt_v, CS%diag)
+
+  if (CS%id_rho_pgf>0) call post_data(CS%id_rho_pgf, rho_pgf, CS%diag)
+  if (CS%id_rho_stanley_pgf>0) call post_data(CS%id_rho_stanley_pgf, rho_stanley_pgf, CS%diag)
+  if (CS%id_p_stanley>0) call post_data(CS%id_p_stanley, p_stanley, CS%diag)
+
+  ! Diagnostics for tidal forcing and SAL height anomaly
   if (CS%id_e_tide>0) then
     if (CS%tides_answer_date>20230630) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       e_sal_and_tide(i,j) = e_sal(i,j) + e_tidal_eq(i,j) + e_tidal_sal(i,j)
@@ -2028,6 +2047,8 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
   CS%id_MassWt_v = register_diag_field('ocean_model', 'MassWt_v', diag%axesCvL, Time, &
         'The fractional mass weighting at v-point PGF calculations', 'nondim')
 
+  call get_param(param_file, mdl, "BC_SSH_USE_MEAN", CS%bc_ssh_use_mean, &
+          "If true, use rho mean for BC_SSH.", default=.false.)
   CS%GFS_scale = 1.0
   if (GV%g_prime(1) /= GV%g_Earth) CS%GFS_scale = GV%g_prime(1) / GV%g_Earth
 
