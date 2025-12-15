@@ -907,12 +907,12 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     if (CS%bc_ssh_use_mean) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         ! -( p_bar - p_rhom )
-        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + 0.5 * (za(i,j,nz+1) + za(i,j,1))) * I_gEarth ) * GV%H_to_Z
+        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + 0.5 * (za(i,j,nz+1) + za(i,j,1)) * I_gEarth) ) * GV%H_to_Z
       enddo ; enddo
     else
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         ! ! -( p_bar - p_ref )
-        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + za(i,j,1) ) * I_gEarth ) * GV%H_to_Z
+        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + za(i,j,1) * I_gEarth ) ) * GV%H_to_Z
       enddo ; enddo
     endif
     call post_data(CS%id_bc_ssh, bc_ssh, CS%diag)
@@ -1904,7 +1904,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     call set_pbce_Bouss(e, tv_tmp, G, GV, US, rho0_set_pbce, CS%GFS_scale, pbce)
   endif
 
-  if (present(eta) .or. (CS%id_bc_ssh > 0)) then
+  if (present(eta)) then
     ! eta is the sea surface height relative to a time-invariant geoid, for comparison with
     ! what is used for eta in btstep.  See how e was calculated about 200 lines above.
     !$OMP parallel do default(shared)
