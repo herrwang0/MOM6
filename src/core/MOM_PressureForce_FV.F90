@@ -96,6 +96,7 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_MassWt_u = -1 !< Diagnostic identifier
   integer :: id_MassWt_v = -1 !< Diagnostic identifier
   integer :: id_bc_ssh = -1 !< Diagnostic identifier
+  integer :: id_pbar = -1 !< Diagnostic identifier
   type(SAL_CS), pointer :: SAL_CSp => NULL() !< SAL control structure
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
@@ -257,7 +258,7 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
   integer, dimension(2) :: EOSdom_v ! The i-computational domain for the equation of state at v-velocity points
   integer :: i, j, k, m
   real, dimension(SZI_(G),SZJ_(G))  :: &
-    bc_ssh   ! Baroclinic sea level [Z ~> m].
+    bc_ssh, pbar   ! Baroclinic sea level [Z ~> m].
 
   is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
   nkmb=GV%nk_rho_varies
@@ -827,12 +828,18 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_
     endif
   endif
 
-  if (CS%id_bc_ssh > 0) then
+  if (CS%id_bc_ssh > 0 .or. CS%id_pbar) then
     bc_ssh(:,:) = 0.0
     do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       ! [H R L2 T-2]
       bc_ssh(i,j) = bc_ssh(i,j) - (za(i,j,K+1) * h(i,j,k) * H_to_RL2_T2 + intp_dza(i,j,k))
     enddo ; enddo ; enddo
+
+    if (CS%id_pbar) then
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + 0.5 * (za(i,j,nz+1) + za(i,j,1)) ) * I_gEarth ) !* GV%H_to_Z
+      enddo ; enddo
+    endif
 
     if (CS%bc_ssh_use_mean) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -905,7 +912,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
                 ! CALCULATE_SAL is True and SAL_USE_BPA is False [Z ~> m].
     pbot, &     ! Total bottom pressure for self-attraction and loading. Used if
                 ! CALCULATE_SAL is True and SAL_USE_BPA is True [R L2 T-2 ~> Pa].
-    bc_ssh, &   ! Baroclinic sea level [Z ~> m].
+    bc_ssh, pbar, &   ! Baroclinic sea level [Z ~> m].
     dM          ! The barotropic adjustment to the Montgomery potential to
                 ! account for a reduced gravity model [L2 T-2 ~> m2 s-2].
   real, dimension(SZI_(G)) :: &
@@ -1792,7 +1799,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     endif
   endif
 
-  if (CS%id_bc_ssh > 0) then
+  if (CS%id_bc_ssh > 0 .or. CS%id_pbar) then
     bc_ssh(:,:) = 0.0
     do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       ! [H R L2 T-2]
@@ -1800,6 +1807,13 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       !   - GxRho_ref * h(i,j,k) * ((e(i,j,k) - G%Z_ref) - 0.5 * GV%H_to_Z * h(i,j,k)))
       bc_ssh(i,j) = bc_ssh(i,j) - (pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k))
     enddo ; enddo ; enddo
+
+    if (CS%id_pbar) then
+      do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+        pbar(i,j) = ( -( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * GxRho_ref * (e(i,j,nz+1) + e(i,j,1))) * I_g_rho ) * GV%H_to_Z
+     enddo ; enddo
+    endif
+    call post_data(CS%id_pbar, pbar, CS%diag)
 
     if (CS%bc_ssh_use_mean) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
@@ -2041,6 +2055,8 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, SAL_CSp,
         'Read-in tidal self-attraction and loading height anomaly', 'meter', conversion=US%Z_to_m)
   endif
   CS%id_bc_ssh = register_diag_field('ocean_model', 'BC_SSH', diag%axesT1, Time, &
+        'Baroclinic Sea Level', 'meter', conversion=US%Z_to_m)
+  CS%id_pbar = register_diag_field('ocean_model', 'pbar', diag%axesT1, Time, &
         'Baroclinic Sea Level', 'meter', conversion=US%Z_to_m)
   CS%id_MassWt_u = register_diag_field('ocean_model', 'MassWt_u', diag%axesCuL, Time, &
         'The fractional mass weighting at u-point PGF calculations', 'nondim')
