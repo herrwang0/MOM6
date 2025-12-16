@@ -898,16 +898,16 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     endif
   endif
 
-  if (CS%id_bc_ssh > 0 .or. CS%id_pbar) then
+  if (CS%id_bc_ssh > 0 .or. CS%id_pbar>0) then
     bc_ssh(:,:) = 0.0
     do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       ! [H R L2 T-2]
       bc_ssh(i,j) = bc_ssh(i,j) - (za(i,j,K+1) * h(i,j,k) * H_to_RL2_T2 + intp_dza(i,j,k))
     enddo ; enddo ; enddo
 
-    if (CS%id_pbar) then
+    if (CS%id_pbar>0) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
-        bc_ssh(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + 0.5 * (za(i,j,nz+1) + za(i,j,1)) ) * I_gEarth ) !* GV%H_to_Z
+        pbar(i,j) = ( ( bc_ssh(i,j) / (p(i,j,nz+1) - p(i,j,1)) + 0.5 * (za(i,j,nz+1) + za(i,j,1)) ) * I_gEarth ) !* GV%H_to_Z
       enddo ; enddo
     endif
 
@@ -1976,7 +1976,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     endif
   endif
 
-  if (CS%id_bc_ssh > 0 .or. CS%id_pbar) then
+  if (CS%id_bc_ssh > 0 .or. CS%id_pbar>0) then
     bc_ssh(:,:) = 0.0
     do k=1,nz ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       ! [H R L2 T-2]
@@ -1985,7 +1985,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
       bc_ssh(i,j) = bc_ssh(i,j) - (pa(i,j,K) * h(i,j,k) + intz_dpa(i,j,k))
     enddo ; enddo ; enddo
 
-    if (CS%id_pbar) then
+    if (CS%id_pbar>0) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         pbar(i,j) = ( -( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * GxRho_ref * (e(i,j,nz+1) + e(i,j,1))) * I_g_rho ) * GV%H_to_Z
      enddo ; enddo
