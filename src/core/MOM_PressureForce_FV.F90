@@ -1811,10 +1811,11 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
     if (CS%id_pbar>0) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
         pbar(i,j) = ( -( bc_ssh(i,j) / (e(i,j,1) - e(i,j,nz+1)) + 0.5 * GxRho_ref * (e(i,j,nz+1) + e(i,j,1))) * I_g_rho ) * GV%H_to_Z
-     enddo ; enddo
+      enddo ; enddo
+      call post_data(CS%id_pbar, pbar, CS%diag)
     endif
-    call post_data(CS%id_pbar, pbar, CS%diag)
 
+    if (CS%id_bc_ssh > 0) then
     if (CS%bc_ssh_use_mean) then
       do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
       ! ! -( p_bar )
@@ -1851,6 +1852,7 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, p_atm
       enddo ; enddo
     endif
     call post_data(CS%id_bc_ssh, bc_ssh, CS%diag)
+  endif
   endif
 
 
