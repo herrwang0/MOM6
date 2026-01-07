@@ -3989,6 +3989,7 @@ subroutine apply_u_velocity_OBCs(ubt, uhbt, ubt_trans, eta, SpV_avg, ubt_old, BT
   ! Local variables
   real :: vel_prev    ! The previous velocity [L T-1 ~> m s-1].
   real :: cfl         ! The CFL number at the point in question [nondim]
+  real :: masked_cfl  ! A coefficient to zero out non-existent velocity point [nondim]
   real :: u_inlet     ! The zonal inflow velocity [L T-1 ~> m s-1]
   real :: uhbt_int_new ! The updated time-integrated zonal transport [H L2 ~> m3]
   real :: ssh_in      ! The inflow sea surface height [Z ~> m]
@@ -4015,17 +4016,19 @@ subroutine apply_u_velocity_OBCs(ubt, uhbt, ubt_trans, eta, SpV_avg, ubt_old, BT
       endif
     elseif (BT_OBC%u_OBC_type(I,j) == FLATHER_OBC) then  ! Eastern Flather OBC
       cfl = dtbt * BT_OBC%Cg_u(I,j) * G%IdxCu(I,j) ! CFL
-      u_inlet = cfl*ubt_old(I-1,j) + (1.0-cfl)*ubt_old(I,j)  ! Valid for cfl<1
+      masked_cfl = min(cfl, G%mask2dCu(I-1,j)) ! Reverts to u_inlet = ubt_old(I,j) if (I-1,j) is masked.
+      u_inlet = masked_cfl * ubt_old(I-1,j) + (1.0 - masked_cfl) * ubt_old(I,j)  ! Valid for cfl<1
       if (I <= MS%isdw) then
         ! Do not apply an Eastern Flather OBC at the western halo points on a PE, as doing so would
         ! create a segmentation fault and this velocity will not propagate through to the next iteration.
         ssh_in = BT_OBC%SSH_outer_u(I,j)
       elseif (GV%Boussinesq) then
-        ssh_in = GV%H_to_Z*(eta(i,j) + (0.5-cfl)*(eta(i,j)-eta(i-1,j)))      ! internal
+        ssh_in = &
+          GV%H_to_Z * (eta(i,j) + G%mask2dT(i-1,j) * (0.5 - cfl) * (eta(i,j) - eta(i-1,j))) ! internal
       else
         ssh_1 = GV%H_to_RZ * eta(i,j) * SpV_avg(i,j) - (CS%bathyT(i,j) + G%Z_ref)
         ssh_2 = GV%H_to_RZ * eta(i-1,j) * SpV_avg(i-1,j) - (CS%bathyT(i-1,j) + G%Z_ref)
-        ssh_in = ssh_1 + (0.5-cfl)*(ssh_1-ssh_2)      ! internal
+        ssh_in = ssh_1 + G%mask2dT(i-1,j) * (0.5 - cfl) * (ssh_1 - ssh_2) ! internal
       endif
       if (BT_OBC%dZ_u(I,j) > 0.0) then
         vel_prev = ubt(I,j)
@@ -4072,17 +4075,19 @@ subroutine apply_u_velocity_OBCs(ubt, uhbt, ubt_trans, eta, SpV_avg, ubt_old, BT
       endif
     elseif (BT_OBC%u_OBC_type(I,j) == -FLATHER_OBC) then  ! Western Flather OBC
       cfl = dtbt * BT_OBC%Cg_u(I,j) * G%IdxCu(I,j) ! CFL
-      u_inlet = cfl*ubt_old(I+1,j) + (1.0-cfl)*ubt_old(I,j)  ! Valid for cfl<1
+      masked_cfl = min(cfl, G%mask2dCu(I+1,j)) ! Reverts u_inlet to ubt_old(I,j) if (I+1,j) is masked.
+      u_inlet = masked_cfl * ubt_old(I+1,j) + (1.0 - masked_cfl) * ubt_old(I,j)  ! Valid for cfl<1
       if (I >= MS%iedw-1) then
         ! Do not apply a Western Flather OBC at the eastern halo points on a PE, as doing so would
         ! create a segmentation fault and this velocity will not propagate through to the next iteration.
         ssh_in = BT_OBC%SSH_outer_u(I,j)
       elseif (GV%Boussinesq) then
-        ssh_in = GV%H_to_Z*(eta(i+1,j) + (0.5-cfl)*(eta(i+1,j)-eta(i+2,j)))  ! internal
+        ssh_in = &
+          GV%H_to_Z * (eta(i+1,j) + G%mask2dT(i+2,j) * (0.5 - cfl) * (eta(i+1,j) - eta(i+2,j))) ! internal
       else
         ssh_1 = GV%H_to_RZ * eta(i+1,j) * SpV_avg(i+1,j) - (CS%bathyT(i+1,j) + G%Z_ref)
         ssh_2 = GV%H_to_RZ * eta(i+2,j) * SpV_avg(i+2,j) - (CS%bathyT(i+2,j) + G%Z_ref)
-        ssh_in = ssh_1 + (0.5-cfl)*(ssh_1-ssh_2)      ! internal
+        ssh_in = ssh_1 + G%mask2dT(i+2,j) * (0.5 - cfl) * (ssh_1 - ssh_2) ! internal
       endif
 
       if (BT_OBC%dZ_u(I,j) > 0.0) then
@@ -4177,6 +4182,7 @@ subroutine apply_v_velocity_OBCs(vbt, vhbt, vbt_trans, eta, SpV_avg, vbt_old, BT
   ! Local variables
   real :: vel_prev    ! The previous velocity [L T-1 ~> m s-1].
   real :: cfl         ! The CFL number at the point in question [nondim]
+  real :: masked_cfl  ! A coefficient to zero out non-existent velocity point [nondim]
   real :: v_inlet     ! The meridional inflow velocity [L T-1 ~> m s-1]
   real :: vhbt_int_new ! The updated time-integrated meridional transport [H L2 ~> m3]
   real :: ssh_in      ! The inflow sea surface height [Z ~> m]
@@ -4209,17 +4215,19 @@ subroutine apply_v_velocity_OBCs(vbt, vhbt, vbt_trans, eta, SpV_avg, vbt_old, BT
       endif
     elseif (BT_OBC%v_OBC_type(i,J) == FLATHER_OBC) then  ! Northern Flather OBC
       cfl = dtbt * BT_OBC%Cg_v(i,J) * G%IdyCv(i,J) ! CFL
-      v_inlet = cfl*vbt_old(i,J-1) + (1.0-cfl)*vbt_old(i,J)  ! Valid for cfl<1
+      masked_cfl = min(cfl, G%mask2dCv(i,J-1)) ! Reverts to v_inlet = vbt_old(i,J) if (i,J-1) is masked.
+      v_inlet = masked_cfl * vbt_old(i,J-1) + (1.0 - masked_cfl) * vbt_old(i,J)  ! Valid for cfl<1
       if (J <= MS%jsdw) then
         ! Do not apply a Northern Flather OBC at the southern halo points on a PE, as doing so would
         ! create a segmentation fault and this velocity will not propagate through to the next iteration.
         ssh_in = BT_OBC%SSH_outer_v(i,J)
       elseif (GV%Boussinesq) then
-        ssh_in = GV%H_to_Z*(eta(i,j) + (0.5-cfl)*(eta(i,j)-eta(i,j-1)))      ! internal
+        ssh_in = &
+          GV%H_to_Z * (eta(i,j) + G%mask2dT(i,j-1) * (0.5 - cfl) * (eta(i,j) - eta(i,j-1))) ! internal
       else
         ssh_1 = GV%H_to_RZ * eta(i,j) * SpV_avg(i,j) - (CS%bathyT(i,j) + G%Z_ref)
         ssh_2 = GV%H_to_RZ * eta(i,j-1) * SpV_avg(i,j-1) - (CS%bathyT(i,j-1) + G%Z_ref)
-        ssh_in = ssh_1 + (0.5-cfl)*(ssh_1-ssh_2)      ! internal
+        ssh_in = ssh_1 + G%mask2dT(i,j-1) * (0.5 - cfl) * (ssh_1 - ssh_2) ! internal
       endif
 
       if (BT_OBC%dZ_v(i,J) > 0.0) then
@@ -4267,17 +4275,19 @@ subroutine apply_v_velocity_OBCs(vbt, vhbt, vbt_trans, eta, SpV_avg, vbt_old, BT
       endif
     elseif (BT_OBC%v_OBC_type(i,J) == -FLATHER_OBC) then  ! Southern Flather OBC
       cfl = dtbt * BT_OBC%Cg_v(i,J) * G%IdyCv(i,J) ! CFL
-      v_inlet = cfl*vbt_old(i,J+1) + (1.0-cfl)*vbt_old(i,J)  ! Valid for cfl <1
+      masked_cfl = min(cfl, G%mask2dCv(i,J+1)) ! Reverts to v_inlet = vbt_old(i,J) if (i,J+1) is masked.
+      v_inlet = masked_cfl * vbt_old(i,J+1) + (1.0 - masked_cfl) * vbt_old(i,J)  ! Valid for cfl <1
       if (J >= MS%jedw-1) then
         ! Do not apply a Southern Flather OBC at the northern halo points on a PE, as doing so would
         ! create a segmentation fault and this velocity will not propagate through to the next iteration.
         ssh_in = BT_OBC%SSH_outer_v(i,J)
       elseif (GV%Boussinesq) then
-        ssh_in = GV%H_to_Z*(eta(i,j+1) + (0.5-cfl)*(eta(i,j+1)-eta(i,j+2)))  ! internal
+        ssh_in = &
+          GV%H_to_Z * (eta(i,j+1) + G%mask2dT(i,j+2) * (0.5 - cfl) * (eta(i,j+1) - eta(i,j+2))) ! internal
       else
         ssh_1 = GV%H_to_RZ * eta(i,j+1) * SpV_avg(i,j+1) - (CS%bathyT(i,j+1) + G%Z_ref)
         ssh_2 = GV%H_to_RZ * eta(i,j+2) * SpV_avg(i,j+2) - (CS%bathyT(i,j+2) + G%Z_ref)
-        ssh_in = ssh_1 + (0.5-cfl)*(ssh_1-ssh_2)      ! internal
+        ssh_in = ssh_1 + G%mask2dT(i,j+2) * (0.5 - cfl) * (ssh_1 - ssh_2) ! internal
       endif
 
       if (BT_OBC%dZ_v(i,J) > 0.0) then
