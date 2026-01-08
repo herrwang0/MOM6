@@ -656,9 +656,7 @@ subroutine open_boundary_config(G, US, param_file, OBC)
                  "If true, set the OBC tracer reservoirs at the startup of a new run from the "//&
                  "interior tracer concentrations regardless of properties that may be explicitly "//&
                  "specified for the reservoir concentrations.", default=enable_bugs, do_not_log=.true.)
-    reentrant_x = .false.
     call get_param(param_file, mdl, "REENTRANT_X", reentrant_x, default=.true.)
-    reentrant_y = .false.
     call get_param(param_file, mdl, "REENTRANT_Y", reentrant_y, default=.false.)
 
     ! Allocate everything
@@ -686,8 +684,8 @@ subroutine open_boundary_config(G, US, param_file, OBC)
       OBC%segment(n)%v_values_needed = .false.
       OBC%segment(n)%vamp_values_needed = OBC%add_tide_constituents
       OBC%segment(n)%vphase_values_needed = OBC%add_tide_constituents
-      OBC%segment(n)%t_values_needed = .false.
-      OBC%segment(n)%s_values_needed = .false.
+      OBC%segment(n)%t_values_needed = .false. ! This flag is always false.
+      OBC%segment(n)%s_values_needed = .false. ! This flag is always false.
       OBC%segment(n)%z_values_needed = .false.
       OBC%segment(n)%zamp_values_needed = OBC%add_tide_constituents
       OBC%segment(n)%zphase_values_needed = OBC%add_tide_constituents
@@ -1030,13 +1028,13 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
       if (trim(filename) /= 'none') then
         OBC%update_OBC = .true. ! Data is assumed to be time-dependent if we are reading from file
         OBC%needs_IO_for_data = .true. ! At least one segment is using I/O for OBC data
-!       segment%values_needed = .true. ! Indicates that i/o will be needed for this segment
+        ! segment%values_needed = .true. ! Indicates that i/o will be needed for this segment
         segment%field(m)%use_IO = .true.
 
         filename = trim(inputdir)//trim(filename)
         fieldname = trim(fieldname)//trim(suffix)
         call field_size(filename, fieldname, siz, no_domain=.true.)
-!       if (siz(4) == 1) segment%values_needed = .false.
+        ! if (siz(4) == 1) segment%values_needed = .false.
 
         if (.not.file_exists(filename)) &
           call MOM_error(FATAL," Unable to open OBC file " // trim(filename))
@@ -3961,6 +3959,7 @@ subroutine allocate_OBC_segment_data(OBC, segment)
 
   if (segment%is_E_or_W) then
     ! If these are just Flather, change update_OBC_segment_data accordingly
+    !   segment%Cg is never used. A version of Cg is calculated in MOM_barotropic.
     allocate(segment%Cg(IsdB:IedB,jsd:jed), source=0.0)
     allocate(segment%Htot(IsdB:IedB,jsd:jed), source=0.0)
     ! Allocate dZtot with extra values at the end to avoid segmentation faults in cases where
@@ -3999,6 +3998,7 @@ subroutine allocate_OBC_segment_data(OBC, segment)
 
   if (segment%is_N_or_S) then
     ! If these are just Flather, change update_OBC_segment_data accordingly
+    !   segment%Cg is never used. A version of Cg is calculated in MOM_barotropic.
     allocate(segment%Cg(isd:ied,JsdB:JedB), source=0.0)
     allocate(segment%Htot(isd:ied,JsdB:JedB), source=0.0)
     ! Allocate dZtot with extra values at the end to avoid segmentation faults in cases where
