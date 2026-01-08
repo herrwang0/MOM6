@@ -595,11 +595,11 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
   set_BT_cont = .false. ; if (present(BT_cont)) set_BT_cont = (associated(BT_cont))
 
   local_specified_BC = .false. ; local_Flather_OBC = .false. ; local_open_BC = .false.
-  if (associated(OBC)) then ; if (OBC%OBC_pe) then
-    local_specified_BC = OBC%specified_u_BCs_exist_globally
-    local_Flather_OBC = OBC%Flather_u_BCs_exist_globally
-    local_open_BC = OBC%open_u_BCs_exist_globally
-  endif ; endif
+  if (associated(OBC)) then
+    local_specified_BC = OBC%OBC_pe .and. OBC%specified_u_BCs_exist_globally
+    local_Flather_OBC = OBC%OBC_pe .and. OBC%Flather_u_BCs_exist_globally
+    local_open_BC = OBC%OBC_pe .and. OBC%open_u_BCs_exist_globally
+  endif
 
   if (present(du_cor)) du_cor(:,:) = 0.0
 
@@ -856,9 +856,8 @@ subroutine zonal_BT_mass_flux(u, h_in, h_W, h_E, uhbt, dt, G, GV, US, CS, OBC, p
   call cpu_clock_begin(id_clock_correct)
 
   local_specified_BC = .false.
-  if (associated(OBC)) then ; if (OBC%OBC_pe) then
-    local_specified_BC = OBC%specified_v_BCs_exist_globally
-  endif ; endif
+  if (associated(OBC)) &
+    local_specified_BC = OBC%OBC_pe .and. OBC%specified_v_BCs_exist_globally
 
   if (present(LB_in)) then
     ish = LB_in%ish ; ieh = LB_in%ieh ; jsh = LB_in%jsh ; jeh = LB_in%jeh ; nz = GV%ke
@@ -1496,11 +1495,11 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
   set_BT_cont = .false. ; if (present(BT_cont)) set_BT_cont = (associated(BT_cont))
 
   local_specified_BC = .false. ; local_Flather_OBC = .false. ; local_open_BC = .false.
-  if (associated(OBC)) then ; if (OBC%OBC_pe) then
-    local_specified_BC = OBC%specified_v_BCs_exist_globally
-    local_Flather_OBC = OBC%Flather_v_BCs_exist_globally
-    local_open_BC = OBC%open_v_BCs_exist_globally
-  endif ; endif
+  if (associated(OBC)) then
+    local_specified_BC = OBC%OBC_pe .and. OBC%specified_v_BCs_exist_globally
+    local_Flather_OBC = OBC%OBC_pe .and. OBC%Flather_v_BCs_exist_globally
+    local_open_BC = OBC%OBC_pe .and. OBC%open_v_BCs_exist_globally
+  endif
 
   if (present(dv_cor)) dv_cor(:,:) = 0.0
 
@@ -1754,9 +1753,8 @@ subroutine meridional_BT_mass_flux(v, h_in, h_S, h_N, vhbt, dt, G, GV, US, CS, O
   call cpu_clock_begin(id_clock_correct)
 
   local_specified_BC = .false.
-  if (associated(OBC)) then ; if (OBC%OBC_pe) then
-    local_specified_BC = OBC%specified_v_BCs_exist_globally
-  endif ; endif
+  if (associated(OBC)) &
+    local_specified_BC = OBC%OBC_pe .and. OBC%specified_v_BCs_exist_globally
 
   if (present(LB_in)) then
     ish = LB_in%ish ; ieh = LB_in%ieh ; jsh = LB_in%jsh ; jeh = LB_in%jeh ; nz = GV%ke
