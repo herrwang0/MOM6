@@ -4191,7 +4191,7 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
   real :: tidal_vel   ! Interpolated tidal velocity at the OBC points [L T-1 ~> m s-1]
   real :: tidal_elev  ! Interpolated tidal elevation at the OBC points [Z ~> m]
   real :: ramp_value  ! If OBC%ramp is True, where we are on the ramp from 0 to 1, or 1 otherwise [nondim].
-  real, allocatable :: normal_trans_bt(:,:) ! barotropic transport [H L2 T-1 ~> m3 s-1]
+  real :: normal_trans_bt ! barotropic transport [H L2 T-1 ~> m3 s-1]
   integer :: turns    ! Number of index quarter turns
   real :: time_delta  ! Time since tidal reference date [T ~> s]
   logical :: flip_buffer ! If true, the input buffer needs to be transposed
@@ -4243,7 +4243,6 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
     segment%Htot(:,:) = 0.0
     segment%dZtot(:,:) = 0.0
     if (segment%is_E_or_W) then
-      allocate(normal_trans_bt(segment%HI%IsdB:segment%HI%IedB,segment%HI%jsd:segment%HI%jed), source=0.0)
       if (segment%direction == OBC_DIRECTION_W) ishift = 1
       I=segment%HI%IsdB
       ! dZtot may extend one point past the end of the segment on the current PE for use at vorticity points
@@ -4258,7 +4257,6 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
         segment%Cg(I,j) = sqrt(GV%g_prime(1) * max(0.0, segment%dZtot(I,j)))
       enddo
     else ! (segment%direction == OBC_DIRECTION_N .or. segment%direction == OBC_DIRECTION_S)
-      allocate(normal_trans_bt(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB), source=0.0)
       if (segment%direction == OBC_DIRECTION_S) jshift = 1
       J=segment%HI%JsdB
       ! dZtot may extend one point past the end of the segment on the current PE for use at vorticity points
@@ -4597,7 +4595,6 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
         if (trim(segment%field(m)%name) == 'U' .and. segment%is_E_or_W) then
           I=is_obc
           do j=js_obc+1,je_obc
-            normal_trans_bt(I,j) = 0.0
             tidal_vel = 0.0
             if (OBC%add_tide_constituents) then
               do c=1,OBC%n_tide_constituents
@@ -4606,19 +4603,19 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
                       + (OBC%tide_eq_phases(c) + OBC%tide_un(c)))
               enddo
             endif
+            normal_trans_bt = 0.0
             do k=1,GV%ke
               segment%normal_vel(I,j,k) = segment%field(m)%buffer_dst(I,j,k) + tidal_vel
               segment%normal_trans(I,j,k) = segment%normal_vel(I,j,k)*segment%h(I,j,k) * G%dyCu(I,j)
-              normal_trans_bt(I,j) = normal_trans_bt(I,j) + segment%normal_trans(I,j,k)
+              normal_trans_bt = normal_trans_bt + segment%normal_trans(I,j,k)
             enddo
-            segment%normal_vel_bt(I,j) = normal_trans_bt(I,j) &
+            segment%normal_vel_bt(I,j) = normal_trans_bt &
                 / (max(segment%Htot(I,j), 1.e-12 * GV%m_to_H) * G%dyCu(I,j))
             if (allocated(segment%nudged_normal_vel)) segment%nudged_normal_vel(I,j,:) = segment%normal_vel(I,j,:)
           enddo
         elseif (trim(segment%field(m)%name) == 'V' .and. segment%is_N_or_S) then
           J=js_obc
           do i=is_obc+1,ie_obc
-            normal_trans_bt(i,J) = 0.0
             tidal_vel = 0.0
             if (OBC%add_tide_constituents) then
               do c=1,OBC%n_tide_constituents
@@ -4627,13 +4624,14 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
                       + (OBC%tide_eq_phases(c) + OBC%tide_un(c)))
               enddo
             endif
+            normal_trans_bt = 0.0
             do k=1,GV%ke
               segment%normal_vel(i,J,k) = segment%field(m)%buffer_dst(i,J,k) + tidal_vel
               segment%normal_trans(i,J,k) = segment%normal_vel(i,J,k)*segment%h(i,J,k) * &
                         G%dxCv(i,J)
-              normal_trans_bt(i,J) = normal_trans_bt(i,J) + segment%normal_trans(i,J,k)
+              normal_trans_bt = normal_trans_bt + segment%normal_trans(i,J,k)
             enddo
-            segment%normal_vel_bt(i,J) = normal_trans_bt(i,J) &
+            segment%normal_vel_bt(i,J) = normal_trans_bt &
                 / (max(segment%Htot(i,J), 1.e-12 * GV%m_to_H) * G%dxCv(i,J))
             if (allocated(segment%nudged_normal_vel)) segment%nudged_normal_vel(i,J,:) = segment%normal_vel(i,J,:)
           enddo
@@ -4774,7 +4772,6 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
 
     enddo ! end field loop
     deallocate(dz_stack)
-    deallocate(normal_trans_bt)
 
   enddo ! end segment loop
 
