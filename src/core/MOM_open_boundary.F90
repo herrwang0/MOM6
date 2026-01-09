@@ -1407,32 +1407,46 @@ end subroutine initialize_obc_tides
 !> Define indices for segment and store in hor_index_type
 !! using global segment bounds corresponding to q-points
 subroutine setup_segment_indices(G, seg, Is_obc, Ie_obc, Js_obc, Je_obc)
-  type(dyn_horgrid_type), intent(in) :: G !< grid type
+  type(dyn_horgrid_type), intent(in) :: G !< Ocean grid structure
   type(OBC_segment_type), intent(inout) :: seg  !< Open boundary segment
   integer, intent(in) :: Is_obc !< Q-point global i-index of start of segment
   integer, intent(in) :: Ie_obc !< Q-point global i-index of end of segment
   integer, intent(in) :: Js_obc !< Q-point global j-index of start of segment
   integer, intent(in) :: Je_obc !< Q-point global j-index of end of segment
+
   ! Local variables
-  integer :: IsgB, IegB, JsgB, JegB  ! Global corner point indices at the ends of the OBC segments
-  integer :: isg, ieg, jsg, jeg
+  logical :: dir_ns, dir_ew         ! Flags for segment direction
+  integer :: IsgB, IegB, JsgB, JegB ! Global q-point indices at the ends of the OBC segments
+  integer :: isg, ieg, jsg, jeg     ! Global h-point indices along the interior of OBC segments
+  integer :: hcell_offset           ! H-point indexing offset
+  integer :: IsB, IeB, JsB, JeB     ! Local q-point indices at the ends of the OBC segments
+  integer :: is, ie, js, je         ! Local h-point indices along the interior of OBC segments
 
-  ! Isg, Ieg will be I*_obc in global space
-  if (Ie_obc < Is_obc) then
-    IsgB = Ie_obc
-    IegB = Is_obc
-  else
-    IsgB = Is_obc
-    IegB = Ie_obc
+  dir_ns = (Js_obc == Je_obc)
+  dir_ew = (Is_obc == Ie_obc)
+
+  if (dir_ns .eqv. dir_ew) then
+    call MOM_error(FATAL, "setup_segment_indices: input indices are neither NS nor EW boundary.")
   endif
 
-  if (Je_obc < Js_obc) then
-    JsgB = Je_obc
-    JegB = Js_obc
+  ! Set direction. Recall that start>end for northern and western boundaries.
+  if (dir_ns) then
+    if (Is_obc > Ie_obc) then
+      seg%direction = OBC_DIRECTION_N
+    else
+      seg%direction = OBC_DIRECTION_S
+    endif
   else
-    JsgB = Js_obc
-    JegB = Je_obc
+    if (Js_obc < Je_obc) then
+      seg%direction = OBC_DIRECTION_E
+    else
+      seg%direction = OBC_DIRECTION_W
+    endif
   endif
+
+  ! Global q-point indices [IJ][se]g are sorted [IJ]*_obc.
+  IsgB = min(Is_obc, Ie_obc) ; IegB = max(Is_obc, Ie_obc)
+  JsgB = min(Js_obc, Je_obc) ; JegB = max(Js_obc, Je_obc)
 
   ! NOTE: h-points are defined along the interior of the segment q-points.
   !   For a given segment and its start and end index pairs, [IJ][se]gB, the
@@ -1449,81 +1463,89 @@ subroutine setup_segment_indices(G, seg, Is_obc, Ie_obc, Js_obc, Je_obc)
   ! For segment points on the west and south, h-point indices are incremented
   ! in order to move to the interior cell.
 
-  if (Is_obc > Ie_obc) then
-    ! Northern boundary
-    isg = IsgB + 1
-    jsg = JsgB
-    ieg = IegB
-    jeg = JegB
+  ! Global interior h-point indices
+  if ((seg%direction == OBC_DIRECTION_N) .or. (seg%direction == OBC_DIRECTION_E)) then
+    ! Eastern/Northern boundary
+    hcell_offset = 0
+  else
+    ! Western/Southern boundary
+    hcell_offset = 1
+  endif
+  if (dir_ns) then
+    isg = IsgB + 1 ; ieg = IegB
+    jsg = JsgB + hcell_offset ; jeg = jsg
+  else
+    jsg = JsgB + 1 ; jeg = JegB
+    isg = IsgB + hcell_offset ; ieg = isg
   endif
 
-  if (Is_obc < Ie_obc) then
-    ! Southern boundary
-    isg = IsgB + 1
-    jsg = JsgB + 1
-    ieg = IegB
-    jeg = JegB + 1
-  endif
+  ! Local indices (maybe outside of current PE)
+  IsB = IsgB - G%idg_offset ; IeB = IegB - G%idg_offset
+  JsB = JsgB - G%jdg_offset ; JeB = JegB - G%jdg_offset
+  is = isg - G%idg_offset ; ie = ieg - G%idg_offset
+  js = jsg - G%jdg_offset ; je = jeg - G%jdg_offset
 
-  if (Js_obc < Je_obc) then
-    ! Eastern boundary
-    isg = IsgB
-    jsg = JsgB + 1
-    ieg = IegB
-    jeg = JegB
-  endif
+  ! Assign indices to the segment's hor_index_type (seg%HI).
+  !
+  ! NOTE:
+  ! The indices stored in seg%HI have meanings and relationships that differ from those with the
+  ! same names in ocean grid structure G.
+  !
+  ! 1) Global vs local indices
+  !    - Global indices describe the full OBC segment. Therefore, [IJ][se]gB and [ij][se]g are
+  !      identical on all PEs.
+  !    - Local indices describe only the portion of the segment that resides on the current PE.
+  !
+  ! 2) Local indices for h-point and q-point
+  !    - q-point indices correspond to grid points located along the boundary.
+  !    - h-point indices correspond to grid points located just inside the boundary.
+  !    - Therefore the translation between [ij][se] and [IJ][se]B depends on segment direction.
 
-  if (Js_obc > Je_obc) then
-    ! Western boundary
-    isg = IsgB + 1
-    jsg = JsgB + 1
-    ieg = IegB + 1
-    jeg = JegB
-  endif
+  ! Global indices of the full segment
+  seg%HI%IsgB = IsgB ; seg%HI%IegB = IegB
+  seg%HI%JegB = JegB ; seg%HI%JsgB = JsgB
 
-  ! Global space I*_obc but sorted
-  seg%HI%IsgB = IsgB
-  seg%HI%JegB = JegB
-  seg%HI%IegB = IegB
-  seg%HI%JsgB = JsgB
+  seg%HI%isg = isg ; seg%HI%ieg = ieg
+  seg%HI%jsg = jsg ; seg%HI%jeg = jeg
 
-  seg%HI%isg = isg
-  seg%HI%jsg = jsg
-  seg%HI%ieg = ieg
-  seg%HI%jeg = jeg
-
-  ! Move into local index space
-  IsgB = IsgB - G%idg_offset
-  JsgB = JsgB - G%jdg_offset
-  IegB = IegB - G%idg_offset
-  JegB = JegB - G%jdg_offset
-
-  isg = isg - G%idg_offset
-  jsg = jsg - G%jdg_offset
-  ieg = ieg - G%idg_offset
-  jeg = jeg - G%jdg_offset
-
-  ! This is the i-extent of the segment on this PE.
+  ! Local indices for the portion of the segment on the current PE.
   ! The values are nonsense if the segment is not on this PE.
-  seg%HI%IsdB = min(max(IsgB, G%HI%IsdB), G%HI%IedB)
-  seg%HI%IedB = min(max(IegB, G%HI%IsdB), G%HI%IedB)
-  seg%HI%isd = min(max(isg, G%HI%isd), G%HI%ied)
-  seg%HI%ied = min(max(ieg, G%HI%isd), G%HI%ied)
-  seg%HI%IscB = min(max(IsgB, G%HI%IscB), G%HI%IecB)
-  seg%HI%IecB = min(max(IegB, G%HI%IscB), G%HI%IecB)
-  seg%HI%isc = min(max(isg, G%HI%isc), G%HI%iec)
-  seg%HI%iec = min(max(ieg, G%HI%isc), G%HI%iec)
 
-  ! This is the j-extent of the segment on this PE.
-  ! The values are nonsense if the segment is not on this PE.
-  seg%HI%JsdB = min(max(JsgB, G%HI%JsdB), G%HI%JedB)
-  seg%HI%JedB = min(max(JegB, G%HI%JsdB), G%HI%JedB)
-  seg%HI%jsd = min(max(jsg, G%HI%jsd), G%HI%jed)
-  seg%HI%jed = min(max(jeg, G%HI%jsd), G%HI%jed)
-  seg%HI%JscB = min(max(JsgB, G%HI%JscB), G%HI%JecB)
-  seg%HI%JecB = min(max(JegB, G%HI%JscB), G%HI%JecB)
-  seg%HI%jsc = min(max(jsg, G%HI%jsc), G%HI%jec)
-  seg%HI%jec = min(max(jeg, G%HI%jsc), G%HI%jec)
+  ! Portion of the segment within the current PE's data domain
+  !   Note: IsdB==IedB if direction is eastern/western and JsdB==JedB if direction is northern/southern
+  seg%HI%IsdB = min(max(IsB, G%IsdB), G%IedB) ; seg%HI%IedB = min(max(IeB, G%IsdB), G%IedB)
+  seg%HI%JsdB = min(max(JsB, G%JsdB), G%JedB) ; seg%HI%JedB = min(max(JeB, G%JsdB), G%JedB)
+
+  !   Note: isd==ied if direction is eastern/western and jsd==jed if direction is northern/southern
+  seg%HI%isd = min(max(is, G%isd), G%ied) ; seg%HI%ied = min(max(ie, G%isd), G%ied)
+  seg%HI%jsd = min(max(js, G%jsd), G%jed) ; seg%HI%jed = min(max(je, G%jsd), G%jed)
+
+  ! Portion of the segment within the current PE's computation domain
+  !   Note: IsB==Ied if direction is eastern/western and JsB==JeB if direction is northern/southern
+  seg%HI%IscB = min(max(IsB, G%IscB), G%IecB) ; seg%HI%IecB = min(max(IeB, G%IscB), G%IecB)
+  seg%HI%JscB = min(max(JsB, G%JscB), G%JecB) ; seg%HI%JecB = min(max(JeB, G%JscB), G%JecB)
+
+  !   Note: is==ie if direction is eastern/western and js==je if direction is northern/southern
+  seg%HI%isc = min(max(is, G%isc), G%iec) ; seg%HI%iec = min(max(ie, G%isc), G%iec)
+  seg%HI%jsc = min(max(js, G%jsc), G%jec) ; seg%HI%jec = min(max(je, G%jsc), G%jec)
+
+  ! Full segment extent relative to local starting indices
+  seg%Is_obc = IsB ; seg%Ie_obc = IeB
+  seg%Js_obc = JsB ; seg%Je_obc = JeB
+
+  !   Note: +1 and -1 exclude the trivial case that segment is on the outer boundary of the data domain.
+  if ((((seg%Is_obc <= G%IsdB + 1) .or. (seg%Ie_obc >= G%IedB - 1) .or. &
+        (seg%Je_obc <= G%JsdB) .or. (seg%Js_obc >= G%JedB)) .and. dir_ew) .or. &
+       ((seg%Js_obc <= G%JsdB + 1) .or. (seg%Je_obc >= G%JedB - 1) .or. &
+        (seg%Ie_obc <= G%IsdB) .or. (seg%Is_obc >= G%IedB)) .and. dir_ns) then
+    seg%on_pe = .false.
+  else
+    seg%on_pe = .true.
+  endif
+
+  seg%is_E_or_W = seg%on_pe .and. dir_ew
+  seg%is_N_or_S = seg%on_pe .and. dir_ns
+  seg%is_E_or_W_2 = dir_ew
 
 end subroutine setup_segment_indices
 
@@ -1535,31 +1557,21 @@ subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
   character(len=*),        intent(in) :: segment_str !< A string in form of "I=%,J=%:%,string"
   integer,                 intent(in) :: l_seg !< The internal segment number
   integer,                 intent(in) :: l_seg_io !< The segment number used for reading parameters
-  type(param_file_type), intent(in)   :: PF  !< Parameter file handle
+  type(param_file_type),   intent(in) :: PF  !< Parameter file handle
   logical, intent(in)                 :: reentrant_y !< is the domain reentrant in y?
+
   ! Local variables
   integer :: I_obc, Js_obc, Je_obc ! Position of segment in global index space
-  integer :: j, a_loop
+  integer :: I, j, a_loop
   character(len=32) :: action_str(8)
   character(len=128) :: segment_param_str
   real, allocatable, dimension(:)  :: tnudge ! Nudging timescales [T ~> s]
+
   ! This returns the global indices for the segment
   call parse_segment_str(G%ieg, G%jeg, segment_str, I_obc, Js_obc, Je_obc, action_str, reentrant_y)
 
-  call setup_segment_indices(G, OBC%segment(l_seg),I_obc,I_obc,Js_obc,Je_obc)
-
-  I_obc = I_obc - G%idg_offset ! Convert to local tile indices on this tile
-  Js_obc = Js_obc - G%jdg_offset ! Convert to local tile indices on this tile
-  Je_obc = Je_obc - G%jdg_offset ! Convert to local tile indices on this tile
-
-  if (Je_obc>Js_obc) then
-    OBC%segment(l_seg)%direction = OBC_DIRECTION_E
-  elseif (Je_obc<Js_obc) then
-    OBC%segment(l_seg)%direction = OBC_DIRECTION_W
-    j = js_obc ; js_obc = je_obc ; je_obc = j
-  endif
-
-  OBC%segment(l_seg)%on_pe = .false.
+  ! Set OBC%segment(l_seg)%HI, %direction and %on_pe from I_obc, Js_obc, Je_obc
+  call setup_segment_indices(G, OBC%segment(l_seg), I_obc, I_obc, Js_obc, Je_obc)
 
   do a_loop = 1,8 ! up to 8 options available
     if (len_trim(action_str(a_loop)) == 0) then
@@ -1624,45 +1636,35 @@ subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
       call MOM_error(FATAL, "MOM_open_boundary.F90, setup_u_point_obc: "//&
                      "String '"//trim(action_str(a_loop))//"' not understood.")
     endif
-    if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
-      write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
-      allocate(tnudge(2))
-      call get_param(PF, mdl, segment_param_str(1:43), tnudge, &
-                     "Timescales in days for nudging along a segment, "//&
-                     "for inflow, then outflow. Setting both to zero should "//&
-                     "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
-      deallocate(tnudge)
-    endif
-
   enddo ! a_loop
 
-  OBC%segment(l_seg)%is_E_or_W_2 = .true.
+  if (OBC%segment(l_seg)%oblique .and. OBC%segment(l_seg)%radiation) &
+    call MOM_error(FATAL, "MOM_open_boundary.F90, setup_u_point_obc: \n"//&
+                   "Orlanski and Oblique OBC options cannot be used together on one segment.")
 
-  if (I_obc<=G%HI%IsdB+1 .or. I_obc>=G%HI%IedB-1) return ! Boundary is not on tile
-  if (Je_obc<=G%HI%JsdB .or. Js_obc>=G%HI%JedB) return ! Segment is not on tile
+  if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
+    write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
+    allocate(tnudge(2))
+    call get_param(PF, mdl, segment_param_str(1:43), tnudge, "Timescales in days for nudging "//&
+                   "along a segment, for inflow, then outflow. Setting both to zero should "//&
+                   "behave like SIMPLE OBCs for the baroclinic velocities.", &
+                   fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
+    OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
+    OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
+    deallocate(tnudge)
+  endif
 
-  OBC%segment(l_seg)%on_pe = .true.
-  OBC%segment(l_seg)%is_E_or_W = .true.
-
-  do j=G%HI%jsd, G%HI%jed
-    if (j>Js_obc .and. j<=Je_obc) then
-      OBC%segnum_u(I_obc,j) = l_seg
-      if (OBC%segment(l_seg)%direction == OBC_DIRECTION_W) OBC%segnum_u(I_obc,j) = -l_seg
-      OBC%u_OBCs_on_PE = .true.
-    endif
+  ! Set ocean_OBC_type components
+  I = OBC%segment(l_seg)%HI%IsdB
+  do j=OBC%segment(l_seg)%HI%jsd, OBC%segment(l_seg)%HI%jed
+    OBC%segnum_u(I,j) = l_seg
+    if (OBC%segment(l_seg)%direction == OBC_DIRECTION_W) OBC%segnum_u(I,j) = -l_seg
   enddo
-  OBC%segment(l_seg)%Is_obc = I_obc
-  OBC%segment(l_seg)%Ie_obc = I_obc
-  OBC%segment(l_seg)%Js_obc = Js_obc
-  OBC%segment(l_seg)%Je_obc = Je_obc
-  call allocate_OBC_segment_data(OBC, OBC%segment(l_seg))
 
-  if (OBC%segment(l_seg)%oblique .and.  OBC%segment(l_seg)%radiation) &
-         call MOM_error(FATAL, "MOM_open_boundary.F90, setup_u_point_obc: \n"//&
-         "Orlanski and Oblique OBC options cannot be used together on one segment.")
+  if (OBC%segment(l_seg)%on_pe) then
+    OBC%u_OBCs_on_PE = .true.
+    call allocate_OBC_segment_data(OBC, OBC%segment(l_seg))
+  endif
 
 end subroutine setup_u_point_obc
 
@@ -1678,7 +1680,7 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
   logical, intent(in)                 :: reentrant_x !< is the domain reentrant in x?
   ! Local variables
   integer :: J_obc, Is_obc, Ie_obc ! Position of segment in global index space
-  integer :: i, a_loop
+  integer :: i, J, a_loop
   character(len=32) :: action_str(8)
   character(len=128) :: segment_param_str
   real, allocatable, dimension(:)  :: tnudge ! Nudging timescales [T ~> s]
@@ -1686,20 +1688,8 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
   ! This returns the global indices for the segment
   call parse_segment_str(G%ieg, G%jeg, segment_str, J_obc, Is_obc, Ie_obc, action_str, reentrant_x)
 
-  call setup_segment_indices(G, OBC%segment(l_seg),Is_obc,Ie_obc,J_obc,J_obc)
-
-  J_obc = J_obc - G%jdg_offset ! Convert to local tile indices on this tile
-  Is_obc = Is_obc - G%idg_offset ! Convert to local tile indices on this tile
-  Ie_obc = Ie_obc - G%idg_offset ! Convert to local tile indices on this tile
-
-  if (Ie_obc>Is_obc) then
-    OBC%segment(l_seg)%direction = OBC_DIRECTION_S
-  elseif (Ie_obc<Is_obc) then
-    OBC%segment(l_seg)%direction = OBC_DIRECTION_N
-    i = Is_obc ; Is_obc = Ie_obc ; Ie_obc = i
-  endif
-
-  OBC%segment(l_seg)%on_pe = .false.
+  ! Set OBC%segment(l_seg)%HI, %direction and %on_pe from Is_obc, Ie_obc, J_obc
+  call setup_segment_indices(G, OBC%segment(l_seg), Is_obc, Ie_obc, J_obc, J_obc)
 
   do a_loop = 1,8
     if (len_trim(action_str(a_loop)) == 0) then
@@ -1764,43 +1754,35 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
       call MOM_error(FATAL, "MOM_open_boundary.F90, setup_v_point_obc: "//&
                      "String '"//trim(action_str(a_loop))//"' not understood.")
     endif
-    if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
-      write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
-      allocate(tnudge(2))
-      call get_param(PF, mdl, segment_param_str(1:43), tnudge, &
-                     "Timescales in days for nudging along a segment, "//&
-                     "for inflow, then outflow. Setting both to zero should "//&
-                     "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
-      deallocate(tnudge)
-    endif
-
   enddo ! a_loop
 
-  if (J_obc<=G%HI%JsdB+1 .or. J_obc>=G%HI%JedB-1) return ! Boundary is not on tile
-  if (Ie_obc<=G%HI%IsdB .or. Is_obc>=G%HI%IedB) return ! Segment is not on tile
+  if (OBC%segment(l_seg)%oblique .and. OBC%segment(l_seg)%radiation) &
+    call MOM_error(FATAL, "MOM_open_boundary.F90, setup_v_point_obc: \n"//&
+                   "Orlanski and Oblique OBC options cannot be used together on one segment.")
 
-  OBC%segment(l_seg)%on_pe = .true.
-  OBC%segment(l_seg)%is_N_or_S = .true.
+  if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
+    write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
+    allocate(tnudge(2))
+    call get_param(PF, mdl, segment_param_str(1:43), tnudge, "Timescales in days for nudging "//&
+                   "along a segment, for inflow, then outflow. Setting both to zero should "//&
+                   "behave like SIMPLE OBCs for the baroclinic velocities.", &
+                   fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
+    OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
+    OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
+    deallocate(tnudge)
+  endif
 
-  do i=G%HI%isd, G%HI%ied
-    if (i>Is_obc .and. i<=Ie_obc) then
-      OBC%segnum_v(i,J_obc) = l_seg
-      if (OBC%segment(l_seg)%direction == OBC_DIRECTION_S) OBC%segnum_v(i,J_obc) = -l_seg
-      OBC%v_OBCs_on_PE = .true.
-    endif
+  ! Set ocean_OBC_type components
+  J = OBC%segment(l_seg)%HI%JsdB
+  do i=OBC%segment(l_seg)%HI%isd, OBC%segment(l_seg)%HI%ied
+    OBC%segnum_v(i,J) = l_seg
+    if (OBC%segment(l_seg)%direction == OBC_DIRECTION_S) OBC%segnum_v(i,J) = -l_seg
   enddo
-  OBC%segment(l_seg)%Is_obc = Is_obc
-  OBC%segment(l_seg)%Ie_obc = Ie_obc
-  OBC%segment(l_seg)%Js_obc = J_obc
-  OBC%segment(l_seg)%Je_obc = J_obc
-  call allocate_OBC_segment_data(OBC, OBC%segment(l_seg))
 
-  if (OBC%segment(l_seg)%oblique .and.  OBC%segment(l_seg)%radiation) &
-         call MOM_error(FATAL, "MOM_open_boundary.F90, setup_v_point_obc: \n"//&
-         "Orlanski and Oblique OBC options cannot be used together on one segment.")
+  if (OBC%segment(l_seg)%on_pe) then
+    OBC%v_OBCs_on_PE = .true.
+    call allocate_OBC_segment_data(OBC, OBC%segment(l_seg))
+  endif
 
 end subroutine setup_v_point_obc
 
@@ -6570,9 +6552,6 @@ subroutine rotate_OBC_segment_config(segment_in, G_in, segment, G, turns)
   !   setup_[uv]_point_obc to set up most of this.  For now, we just copy/swap
   !   flags and manually rotate the indices.
 
-  ! This is set if the segment is in the local grid
-  segment%on_pe = segment_in%on_pe
-
   qturns = modulo(turns, 4)
 
   ! Transfer configuration flags
@@ -6639,33 +6618,6 @@ subroutine rotate_OBC_segment_config(segment_in, G_in, segment, G, turns)
   ! Orientation is based on the index ordering, and setup_segment_indices
   ! is based on the the original order in the intput files.
   call setup_segment_indices(G, segment, Is_obc, Ie_obc, Js_obc, Je_obc)
-
-  ! Re-order [IJ][se]_obc back to ascending, and remove the global indexing offset.
-  if (Is_obc > Ie_obc) then
-    segment%Is_obc = Ie_obc - G%idg_offset
-    segment%Ie_obc = Is_obc - G%idg_offset
-  else
-    segment%Is_obc = Is_obc - G%idg_offset
-    segment%Ie_obc = Ie_obc - G%idg_offset
-  endif
-
-  if (Js_obc > Je_obc) then
-    segment%Js_obc = Je_obc - G%jdg_offset
-    segment%Je_obc = Js_obc - G%jdg_offset
-  else
-    segment%Js_obc = Js_obc - G%jdg_offset
-    segment%Je_obc = Je_obc - G%jdg_offset
-  endif
-
-  ! Reconfigure the directional flags
-  segment%direction = rotate_OBC_segment_direction(segment_in%direction, turns)
-
-  segment%is_E_or_W_2 = ((segment%direction == OBC_DIRECTION_E) .or. &
-                         (segment%direction == OBC_DIRECTION_W))
-  segment%is_E_or_W = segment_in%on_PE .and. segment%is_E_or_W_2
-  segment%is_N_or_S = segment_in%on_PE .and. &
-                        ((segment%direction == OBC_DIRECTION_N) .or. &
-                         (segment%direction == OBC_DIRECTION_S))
 
   ! These are conditionally set if Lscale_{in,out} are present
   segment%Tr_InvLscale_in = segment_in%Tr_InvLscale_in
