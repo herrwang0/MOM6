@@ -188,7 +188,6 @@ type, public :: OBC_segment_type
   logical :: open           !< Boundary is open for continuity solver, and there are no other
                             !! parameterized mass fluxes at the open boundary.
   logical :: gradient       !< Zero gradient at boundary.
-  logical :: values_needed  !< Whether or not any external OBC fields are needed.
   logical :: u_values_needed      !< Whether or not external u OBC fields are needed.
   logical :: uamp_values_needed   !< Whether or not external u amplitude OBC fields are needed.
   logical :: uphase_values_needed !< Whether or not external u phase OBC fields are needed.
@@ -292,6 +291,9 @@ type, public :: OBC_segment_type
   real :: Th_InvLscale_in                                   !< An effective inverse length scale for restoring
                                                             !! the layer thickness towards an externally
                                                             !! imposed value when flow is entering [L-1 ~> m-1]
+  contains
+    !> True if any value from the 12 external fields is needed.
+    procedure :: values_needed
 end type OBC_segment_type
 
 !> Open-boundary data
@@ -493,6 +495,17 @@ character(len=40)  :: mdl = "MOM_open_boundary" !< This module's name.
 
 contains
 
+!> True if any value from the 12 external fields is needed.
+logical function values_needed(this)
+  class(OBC_segment_type), intent(in) :: this !< This segment
+
+  values_needed = this%on_pe .and. &
+      (this%u_values_needed .or. this%uamp_values_needed .or. this%uphase_values_needed .or. &
+       this%v_values_needed .or. this%vamp_values_needed .or. this%vphase_values_needed .or. &
+       this%z_values_needed .or. this%zamp_values_needed .or. this%zphase_values_needed .or. &
+       this%g_values_needed .or. this%t_values_needed .or. this%s_values_needed)
+end function values_needed
+
 !> Enables OBC module and reads configuration parameters
 !! This routine is called from MOM_initialize_fixed which
 !! occurs before the initialization of the vertical coordinate
@@ -677,7 +690,6 @@ subroutine open_boundary_config(G, US, param_file, OBC)
       OBC%segment(n)%specified_grad = .false.
       OBC%segment(n)%open = .false.
       OBC%segment(n)%gradient = .false.
-      OBC%segment(n)%values_needed = .false.
       OBC%segment(n)%u_values_needed = .false.
       OBC%segment(n)%uamp_values_needed = OBC%add_tide_constituents
       OBC%segment(n)%uphase_values_needed = OBC%add_tide_constituents
@@ -957,7 +969,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
     n_seg = n ; if (OBC%reverse_segment_order) n_seg = OBC%number_of_segments + 1 - n
     segment => OBC%segment(n_seg)
     ! segment%values_needed is only true if this segment is on the local PE and some values need to be read.
-    if (.not. OBC%segment(n_seg)%values_needed) cycle
+    if (.not. OBC%segment(n_seg)%values_needed()) cycle
 
     write(segname, "('OBC_SEGMENT_',i3.3,'_DATA')") n
     write(suffix, "('_segment_',i3.3)") n
@@ -1135,10 +1147,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
     enddo
 
     ! Check for any values that have not been provided.
-    if (segment%u_values_needed .or. segment%uamp_values_needed .or. segment%uphase_values_needed .or. &
-        segment%v_values_needed .or. segment%vamp_values_needed .or. segment%vphase_values_needed .or. &
-        segment%t_values_needed .or. segment%s_values_needed .or. segment%g_values_needed .or. &
-        segment%z_values_needed .or. segment%zamp_values_needed .or. segment%zphase_values_needed ) then
+    if (segment%values_needed()) then
       write(mesg,'("Values needed for OBC segment ",I0)') n
       call MOM_error(FATAL, mesg)
     endif
@@ -1655,10 +1664,6 @@ subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
          call MOM_error(FATAL, "MOM_open_boundary.F90, setup_u_point_obc: \n"//&
          "Orlanski and Oblique OBC options cannot be used together on one segment.")
 
-  if (OBC%segment(l_seg)%u_values_needed .or. OBC%segment(l_seg)%v_values_needed .or. &
-      OBC%segment(l_seg)%t_values_needed .or. OBC%segment(l_seg)%s_values_needed .or. &
-      OBC%segment(l_seg)%z_values_needed .or. OBC%segment(l_seg)%g_values_needed) &
-    OBC%segment(l_seg)%values_needed = .true.
 end subroutine setup_u_point_obc
 
 !> Parse an OBC_SEGMENT_%%% string starting with "J=" and configure placement and type of OBC accordingly
@@ -1797,10 +1802,6 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
          call MOM_error(FATAL, "MOM_open_boundary.F90, setup_v_point_obc: \n"//&
          "Orlanski and Oblique OBC options cannot be used together on one segment.")
 
-  if (OBC%segment(l_seg)%u_values_needed .or. OBC%segment(l_seg)%v_values_needed .or. &
-      OBC%segment(l_seg)%t_values_needed .or. OBC%segment(l_seg)%s_values_needed .or. &
-      OBC%segment(l_seg)%z_values_needed .or. OBC%segment(l_seg)%g_values_needed) &
-    OBC%segment(l_seg)%values_needed = .true.
 end subroutine setup_v_point_obc
 
 !> Parse an OBC_SEGMENT_%%% string
@@ -6763,7 +6764,6 @@ subroutine rotate_OBC_segment_values_needed(segment_in, segment, turns)
   segment%zphase_values_needed = segment_in%zphase_values_needed
   segment%zamp_index = segment_in%zamp_index
   segment%zphase_index = segment_in%zphase_index
-  segment%values_needed = segment_in%values_needed
 
 end subroutine rotate_OBC_segment_values_needed
 
@@ -6949,7 +6949,7 @@ subroutine write_OBC_info(OBC, G, GV, US)
     if (segment%specified_grad) call MOM_mesg("  specified_grad", verb=1)
     if (segment%open)           call MOM_mesg("  open", verb=1)
     if (segment%gradient)       call MOM_mesg("  gradient", verb=1)
-    if (segment%values_needed)  call MOM_mesg("  values_needed", verb=1)
+    if (segment%values_needed())  call MOM_mesg("  values_needed", verb=1)
     if (modulo(turns, 2) == 0) then
       if (segment%is_N_or_S)      call MOM_mesg("  is_N_or_S", verb=1)
       if (segment%is_E_or_W)      call MOM_mesg("  is_E_or_W", verb=1)
