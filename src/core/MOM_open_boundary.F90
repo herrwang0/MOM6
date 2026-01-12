@@ -56,7 +56,7 @@ public parse_segment_manifest_str
 public parse_segment_data_str
 public register_OBC, OBC_registry_init
 public register_file_OBC, file_OBC_end
-public segment_tracer_registry_init
+! public segment_tracer_registry_init
 public segment_tracer_registry_end
 public segment_thickness_reservoir_init
 public register_segment_tracer
@@ -4884,30 +4884,30 @@ subroutine file_OBC_end(CS)
   endif
 end subroutine file_OBC_end
 
-!> Initialize the segment tracer registry.
-subroutine segment_tracer_registry_init(param_file, segment)
-  type(param_file_type),      intent(in)      :: param_file !< open file to parse for model parameters
-  type(OBC_segment_type), intent(inout)       :: segment    !<  the segment
+! !> Initialize the segment tracer registry.
+! subroutine segment_tracer_registry_init(param_file, segment)
+!   type(param_file_type),      intent(in)      :: param_file !< open file to parse for model parameters
+!   type(OBC_segment_type), intent(inout)       :: segment    !<  the segment
 
-  integer, save :: init_calls = 0
+!   integer, save :: init_calls = 0
 
-! This include declares and sets the variable "version".
-# include "version_variable.h"
-  character(len=40)  :: mdl = "segment_tracer_registry_init" ! This routine's name.
-  !character(len=256) :: mesg    ! Message for error messages.
+! ! This include declares and sets the variable "version".
+! # include "version_variable.h"
+!   character(len=40)  :: mdl = "segment_tracer_registry_init" ! This routine's name.
+!   !character(len=256) :: mesg    ! Message for error messages.
 
-  if (.not.associated(segment%tr_Reg)) then
-    allocate(segment%tr_Reg)
-  else
-    return
-  endif
+!   if (.not.associated(segment%tr_Reg)) then
+!     allocate(segment%tr_Reg)
+!   else
+!     return
+!   endif
 
-  init_calls = init_calls + 1
+!   init_calls = init_calls + 1
 
-  ! Read all relevant parameters and write them to the model log.
-  if (init_calls == 1) call log_version(param_file, mdl, version, "")
+!   ! Read all relevant parameters and write them to the model log.
+!   if (init_calls == 1) call log_version(param_file, mdl, version, "")
 
-end subroutine segment_tracer_registry_init
+! end subroutine segment_tracer_registry_init
 
 !> Initialize all the segment thickness reservoirs.
 subroutine segment_thickness_reservoir_init(GV, US, OBC, param_file)
@@ -5016,7 +5016,8 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
   integer :: ntseg, m, isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   character(len=256) :: mesg    ! Message for error messages.
 
-  call segment_tracer_registry_init(param_file, segment)
+  if (.not.associated(segment%tr_Reg)) &
+    allocate(segment%tr_Reg)
 
   if (segment%tr_Reg%ntseg>=MAX_FIELDS_) then
     write(mesg,'("Increase MAX_FIELDS_ in MOM_memory.h to at least ",I0," to allow for &
