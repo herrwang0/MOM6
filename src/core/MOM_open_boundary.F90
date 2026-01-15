@@ -3004,15 +3004,15 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
           Je_obc = min(segment%HI%JedB,G%jed-1)
           do k=1,nz ; do J=Js_obc,Je_obc
             rx_avg = rx_tang_rad(I,J,k)
-!           if (G%mask2dCu(I-1,j) > 0.0 .and. G%mask2dCu(I-1,j+1) > 0.0) then
-!             rx_avg = 0.5*(u_new(I-1,j,k) + u_new(I-1,j+1,k)) * dt * G%IdxBu(I-1,J)
-!           elseif (G%mask2dCu(I-1,j) > 0.0) then
-!             rx_avg = u_new(I-1,j,k) * dt * G%IdxBu(I-1,J)
-!           elseif (G%mask2dCu(I-1,j+1) > 0.0) then
-!             rx_avg = u_new(I-1,j+1,k) * dt * G%IdxBu(I-1,J)
-!           else
-!             rx_avg = 0.0
-!           endif
+            !           if (G%mask2dCu(I-1,j) > 0.0 .and. G%mask2dCu(I-1,j+1) > 0.0) then
+            !             rx_avg = 0.5*(u_new(I-1,j,k) + u_new(I-1,j+1,k)) * dt * G%IdxBu(I-1,J)
+            !           elseif (G%mask2dCu(I-1,j) > 0.0) then
+            !             rx_avg = u_new(I-1,j,k) * dt * G%IdxBu(I-1,J)
+            !           elseif (G%mask2dCu(I-1,j+1) > 0.0) then
+            !             rx_avg = u_new(I-1,j+1,k) * dt * G%IdxBu(I-1,J)
+            !           else
+            !             rx_avg = 0.0
+            !           endif
             segment%tangential_grad(I,J,k) = ((v_new(i,J,k) - v_new(i-1,J,k))*G%IdxBu(I-1,J) + &
                               rx_avg*(v_new(i-1,J,k) - v_new(i-2,J,k))*G%IdxBu(I-2,J)) / (1.0+rx_avg)
           enddo ; enddo
@@ -3249,15 +3249,15 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
           Je_obc = min(segment%HI%JedB,G%jed-1)
           do k=1,nz ;  do J=Js_obc,Je_obc
             rx_avg = rx_tang_rad(I,J,k)
-!           if (G%mask2dCu(I+1,j) > 0.0 .and. G%mask2dCu(I+1,j+1) > 0.0) then
-!             rx_avg = 0.5*(u_new(I+1,j,k) + u_new(I+1,j+1,k)) * dt * G%IdxBu(I+1,J)
-!           elseif (G%mask2dCu(I+1,j) > 0.0) then
-!             rx_avg = u_new(I+1,j,k) * dt * G%IdxBu(I+1,J)
-!           elseif (G%mask2dCu(I+1,j+1) > 0.0) then
-!             rx_avg = u_new(I+1,j+1,k) * dt * G%IdxBu(I+1,J)
-!           else
-!             rx_avg = 0.0
-!           endif
+            !           if (G%mask2dCu(I+1,j) > 0.0 .and. G%mask2dCu(I+1,j+1) > 0.0) then
+            !             rx_avg = 0.5*(u_new(I+1,j,k) + u_new(I+1,j+1,k)) * dt * G%IdxBu(I+1,J)
+            !           elseif (G%mask2dCu(I+1,j) > 0.0) then
+            !             rx_avg = u_new(I+1,j,k) * dt * G%IdxBu(I+1,J)
+            !           elseif (G%mask2dCu(I+1,j+1) > 0.0) then
+            !             rx_avg = u_new(I+1,j+1,k) * dt * G%IdxBu(I+1,J)
+            !           else
+            !             rx_avg = 0.0
+            !           endif
             segment%tangential_grad(I,J,k) = ((v_new(i+2,J,k) - v_new(i+1,J,k))*G%IdxBu(I+1,J) + &
                               rx_avg*(v_new(i+3,J,k) - v_new(i+2,J,k))*G%IdxBu(I+2,J)) / (1.0+rx_avg)
           enddo ; enddo
@@ -3493,15 +3493,15 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
           Ie_obc = min(segment%HI%IedB,G%ied-1)
           do k=1,nz ;  do I=Is_obc,Ie_obc
             ry_avg = ry_tang_rad(I,J,k)
-!           if (G%mask2dCv(i,J-1) > 0.0 .and. G%mask2dCv(i+1,J-1) > 0.0) then
-!             ry_avg = 0.5*(v_new(i,J-1,k) + v_new(i+1,J-1,k) * dt * G%IdyBu(I,J-1))
-!           elseif (G%mask2dCv(i,J-1) > 0.0) then
-!             ry_avg = v_new(i,J-1,k) * dt *G%IdyBu(I,J-1)
-!           elseif (G%mask2dCv(i+1,J-1) > 0.0) then
-!             ry_avg = v_new(i+1,J-1,k) * dt *G%IdyBu(I,J-1)
-!           else
-!             ry_avg = 0.0
-!           endif
+            !           if (G%mask2dCv(i,J-1) > 0.0 .and. G%mask2dCv(i+1,J-1) > 0.0) then
+            !             ry_avg = 0.5*(v_new(i,J-1,k) + v_new(i+1,J-1,k) * dt * G%IdyBu(I,J-1))
+            !           elseif (G%mask2dCv(i,J-1) > 0.0) then
+            !             ry_avg = v_new(i,J-1,k) * dt *G%IdyBu(I,J-1)
+            !           elseif (G%mask2dCv(i+1,J-1) > 0.0) then
+            !             ry_avg = v_new(i+1,J-1,k) * dt *G%IdyBu(I,J-1)
+            !           else
+            !             ry_avg = 0.0
+            !           endif
             segment%tangential_grad(I,J,k) = ((u_new(I,j,k) - u_new(I,j-1,k))*G%IdyBu(I,J-1) + &
                               ry_avg*(u_new(I,j-1,k) - u_new(I,j-2,k))*G%IdyBu(I,J-2)) / (1.0+ry_avg)
           enddo ; enddo
@@ -3738,15 +3738,15 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
           Ie_obc = min(segment%HI%IedB,G%ied-1)
           do k=1,nz ;  do I=Is_obc,Ie_obc
             ry_avg = ry_tang_rad(I,J,k)
-!           if (G%mask2dCv(i,J+1) > 0.0 .and. G%mask2dCv(i+1,J+1) > 0.0) then
-!             ry_avg = 0.5*(v_new(i,J+1,k) + v_new(i+1,J+1,k)) * dt * G%IdyBu(I,J+1)
-!           elseif (G%mask2dCv(i,J+1) > 0.0) then
-!             ry_avg = v_new(i,J+1,k) * dt * G%IdyBu(I,J+1)
-!           elseif (G%mask2dCv(i+1,J+1) > 0.0) then
-!             ry_avg = v_new(i+1,J+1,k) * dt * G%IdyBu(I,J+1)
-!           else
-!             ry_avg = 0.0
-!           endif
+            !           if (G%mask2dCv(i,J+1) > 0.0 .and. G%mask2dCv(i+1,J+1) > 0.0) then
+            !             ry_avg = 0.5*(v_new(i,J+1,k) + v_new(i+1,J+1,k)) * dt * G%IdyBu(I,J+1)
+            !           elseif (G%mask2dCv(i,J+1) > 0.0) then
+            !             ry_avg = v_new(i,J+1,k) * dt * G%IdyBu(I,J+1)
+            !           elseif (G%mask2dCv(i+1,J+1) > 0.0) then
+            !             ry_avg = v_new(i+1,J+1,k) * dt * G%IdyBu(I,J+1)
+            !           else
+            !             ry_avg = 0.0
+            !           endif
             segment%tangential_grad(I,J,k) = ((u_new(I,j+2,k) - u_new(I,j+1,k))*G%IdyBu(I,J+1) + &
                               ry_avg*(u_new(I,j+3,k) - u_new(I,j+2,k))*G%IdyBu(I,J+2)) / (1.0+ry_avg)
           enddo ; enddo
@@ -5963,7 +5963,7 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
   real :: I_scale         ! The inverse of the scaling factor for the tracers.
                           ! For salinity the units would be [ppt S-1 ~> 1]
   integer :: i, j, k, m, n, ntr, nz, ntr_id, fd_id
-  integer :: ishift, idir, jshift, jdir
+  integer :: ishift, jshift, dir
   real :: resrv_lfac_out  ! The reservoir inverse length scale scaling factor for the outward
                           ! direction per field [nondim]
   real :: resrv_lfac_in   ! The reservoir inverse length scale scaling factor for the inward
@@ -5974,10 +5974,16 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
                           ! e.g. a_in is -1 only if b_in ==1 and uhr or vhr is inward
                           ! e.g. a_out is 1 only if b_out==1 and uhr or vhr is outward
                           ! It's clear that a_in and a_out cannot be both non-zero [nondim]
+  real :: flux_to_res     ! Inflow to the reservoir, flux_to_res = dir * [uv]hr, positive if the
+                          ! flow is from the interior to the reservoir [H L2 ~> m3 or kg].
+
+  if (.not. associated(OBC)) return
+  if (.not. OBC%OBC_pe) return
+
   nz = GV%ke
   ntr = Reg%ntr
 
-  if (associated(OBC)) then ; if (OBC%OBC_pe) then ; do n=1,OBC%number_of_segments
+  do n=1,OBC%number_of_segments
     segment => OBC%segment(n)
     if (.not. associated(segment%tr_Reg)) cycle
     b_in  = 0.0 ; if (segment%Tr_InvLscale_in  == 0.0) b_in  = 1.0
@@ -5988,9 +5994,9 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
         ! ishift+I corresponds to the nearest interior tracer cell index
         ! idir switches the sign of the flow so that positive is into the reservoir
         if (segment%direction == OBC_DIRECTION_W) then
-          ishift = 1 ; idir = -1
+          ishift = 1 ; dir = -1
         else
-          ishift = 0 ; idir = 1
+          ishift = 0 ; dir = 1
         endif
         ! Can keep this or take it out, either way
         if (G%mask2dT(I+ishift,j) == 0.0) cycle
@@ -6011,17 +6017,18 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
             ! However, since they cannot be both non-zero, adding them works like a switch.
             ! When InvLscale_out is 0 and outflow, only interior data is applied to reservoirs
             ! When InvLscale_in is 0 and inflow, only nudged data is applied to reservoirs
-            a_out = b_out * max(0.0, sign(1.0, idir*uhr(I,j,k)))
-            a_in  = b_in  * min(0.0, sign(1.0, idir*uhr(I,j,k)))
-            u_L_out = max(0.0, (idir*uhr(I,j,k))*segment%Tr_InvLscale_out*resrv_lfac_out / &
-                      ((h(i+ishift,j,k) + GV%H_subroundoff)*G%dyCu(I,j)))
-            u_L_in  = min(0.0, (idir*uhr(I,j,k))*segment%Tr_InvLscale_in*resrv_lfac_in  / &
-                      ((h(i+ishift,j,k) + GV%H_subroundoff)*G%dyCu(I,j)))
-            fac1 = (1.0 - (a_out - a_in)) + ((u_L_out + a_out) - (u_L_in + a_in))
-            segment%tr_Reg%Tr(m)%tres(I,j,k) = (1.0/fac1) * &
-                              ((1.0-a_out+a_in)*segment%tr_Reg%Tr(m)%tres(I,j,k)+ &
-                              ((u_L_out+a_out)*Reg%Tr(ntr_id)%t(I+ishift,j,k) - &
-                               (u_L_in+a_in)*segment%tr_Reg%Tr(m)%t(I,j,k)))
+            flux_to_res = dir * uhr(I,j,k)
+            a_out = b_out * max(0.0, sign(1.0, flux_to_res))
+            a_in  = b_in  * min(0.0, sign(1.0, flux_to_res))
+            u_L_out = max(0.0, flux_to_res * segment%Tr_InvLscale_out * resrv_lfac_out / &
+                               ((h(i+ishift,j,k) + GV%H_subroundoff) * G%dyCu(I,j)))
+            u_L_in  = min(0.0, flux_to_res * segment%Tr_InvLscale_in * resrv_lfac_in  / &
+                               ((h(i+ishift,j,k) + GV%H_subroundoff) * G%dyCu(I,j)))
+            fac1 = 1.0 + (u_L_out - u_L_in)
+            segment%tr_Reg%Tr(m)%tres(I,j,k) = (1.0 / fac1) * &
+                              ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(I,j,k) + &
+                               ((u_L_out + a_out) * Reg%Tr(ntr_id)%t(I+ishift,j,k) - &
+                                (u_L_in + a_in) * segment%tr_Reg%Tr(m)%t(I,j,k)))
             if (allocated(OBC%tres_x)) OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
           enddo ; endif
         enddo
@@ -6032,9 +6039,9 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
         ! jshift+J corresponds to the nearest interior tracer cell index
         ! jdir switches the sign of the flow so that positive is into the reservoir
         if (segment%direction == OBC_DIRECTION_S) then
-          jshift = 1 ; jdir = -1
+          jshift = 1 ; dir = -1
         else
-          jshift = 0 ; jdir = 1
+          jshift = 0 ; dir = 1
         endif
         ! Can keep this or take it out, either way
         if (G%mask2dT(i,j+jshift) == 0.0) cycle
@@ -6051,23 +6058,24 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
           endif
           I_scale = 1.0 ; if (segment%tr_Reg%Tr(m)%scale /= 0.0) I_scale = 1.0 / segment%tr_Reg%Tr(m)%scale
           if (allocated(segment%tr_Reg%Tr(m)%tres)) then ; do k=1,nz
-            a_out = b_out * max(0.0, sign(1.0, jdir*vhr(i,J,k)))
-            a_in  = b_in  * min(0.0, sign(1.0, jdir*vhr(i,J,k)))
-            v_L_out = max(0.0, (jdir*vhr(i,J,k))*segment%Tr_InvLscale_out*resrv_lfac_out / &
-                      ((h(i,j+jshift,k) + GV%H_subroundoff)*G%dxCv(i,J)))
-            v_L_in  = min(0.0, (jdir*vhr(i,J,k))*segment%Tr_InvLscale_in*resrv_lfac_in  / &
-                      ((h(i,j+jshift,k) + GV%H_subroundoff)*G%dxCv(i,J)))
-            fac1 = (1.0 - (a_out - a_in)) + ((v_L_out + a_out) - (v_L_in + a_in))
-            segment%tr_Reg%Tr(m)%tres(i,J,k) = (1.0/fac1) * &
-                              ((1.0-a_out+a_in)*segment%tr_Reg%Tr(m)%tres(i,J,k) + &
-                              ((v_L_out+a_out)*Reg%Tr(ntr_id)%t(i,J+jshift,k) - &
-                               (v_L_in+a_in)*segment%tr_Reg%Tr(m)%t(i,J,k)))
+            flux_to_res = dir * vhr(I,j,k)
+            a_out = b_out * max(0.0, sign(1.0, flux_to_res))
+            a_in  = b_in  * min(0.0, sign(1.0, flux_to_res))
+            v_L_out = max(0.0, flux_to_res * segment%Tr_InvLscale_out * resrv_lfac_out / &
+                               ((h(i,j+jshift,k) + GV%H_subroundoff) * G%dxCv(i,J)))
+            v_L_in  = min(0.0, flux_to_res * segment%Tr_InvLscale_in * resrv_lfac_in  / &
+                               ((h(i,j+jshift,k) + GV%H_subroundoff) * G%dxCv(i,J)))
+            fac1 = 1.0 + (v_L_out - v_L_in)
+            segment%tr_Reg%Tr(m)%tres(i,J,k) = (1.0 / fac1) * &
+                              ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(i,J,k) + &
+                               ((v_L_out + a_out) * Reg%Tr(ntr_id)%t(i,J+jshift,k) - &
+                                (v_L_in + a_in) * segment%tr_Reg%Tr(m)%t(i,J,k)))
             if (allocated(OBC%tres_y)) OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
           enddo ; endif
         enddo
       enddo
     endif
-  enddo ; endif ; endif
+  enddo
 
 end subroutine update_segment_tracer_reservoirs
 
