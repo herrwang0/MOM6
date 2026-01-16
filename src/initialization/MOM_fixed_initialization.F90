@@ -59,7 +59,6 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
                                                  !! to parse for model parameter values.
 
   ! Local variables
-  character(len=200) :: inputdir   ! The directory where NetCDF input files are.
   character(len=200) :: config
   logical            :: read_porous_file, OBC_projection_bug, open_corners, enable_bugs
   character(len=40)  :: mdl = "MOM_fixed_initialization" ! This module's name.
@@ -69,12 +68,7 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
 # include "version_variable.h"
 
   call callTree_enter("MOM_initialize_fixed(), MOM_fixed_initialization.F90")
-  call log_version(PF, mdl, version, "")
   call get_param(PF, mdl, "DEBUG", debug, default=.false.)
-
-  call get_param(PF, mdl, "INPUTDIR", inputdir, &
-         "The directory in which input files are found.", default=".")
-  inputdir = slasher(inputdir)
 
   ! Set up the parameters of the physical domain (i.e. the grid), G
   call set_grid_metrics(G, PF, US)
@@ -122,6 +116,8 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
                   G%mask2dCv, G%HI)
     call qchksum(G%mask2dBu, 'MOM_initialize_fixed: mask2dBu ', G%HI)
   endif
+
+  call log_version(PF, mdl, version, "")
 
   ! Modulate geometric scales according to geography.
   call get_param(PF, mdl, "CHANNEL_CONFIG", config, &
