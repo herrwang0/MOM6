@@ -69,7 +69,7 @@ public set_obgc_segments_props
 public setup_OBC_tracer_reservoirs
 public setup_OBC_thickness_reservoirs
 public open_boundary_register_restarts
-public copy_thickness_reservoirs
+public copy_thickness_reservoirs, copy_OBC_tracer_reservoirs
 public update_segment_tracer_reservoirs
 public update_segment_thickness_reservoirs
 public set_initialized_OBC_tracer_reservoirs
@@ -2492,6 +2492,36 @@ subroutine set_initialized_OBC_tracer_reservoirs(G, OBC, restart_CS)
 
 end subroutine set_initialized_OBC_tracer_reservoirs
 
+subroutine copy_OBC_tracer_reservoirs(GV, OBC)
+  type(verticalGrid_type), intent(in) :: GV  !< The ocean's vertical grid structure
+  type(ocean_OBC_type),    pointer    :: OBC !< Open boundary control structure
+
+  ! Local variables
+  type(OBC_segment_type), pointer :: segment => NULL()
+  integer :: n, m, i, j, k, is, ie, js, je
+
+  do n=1, OBC%number_of_segments
+    segment => OBC%segment(n)
+    if (associated(segment%tr_Reg)) then
+      if (segment%is_E_or_W) then ! EW segment
+        I = segment%HI%IsdB ; js = segment%HI%jsd ; je = segment%HI%jed
+        do m=1, OBC%ntr
+          if (allocated(segment%tr_Reg%Tr(m)%tres)) then ; do k=1,GV%ke ; do j=js,je
+            segment%tr_Reg%Tr(m)%tres(I,j,k) = segment%tr_Reg%Tr(m)%scale * OBC%tres_x(I,j,k,m)
+          enddo ; enddo ; endif
+        enddo
+      else ! NS segment
+        J = segment%HI%JsdB ; is = segment%HI%isd ; ie = segment%HI%ied
+        do m=1, OBC%ntr
+          if (allocated(segment%tr_Reg%Tr(m)%tres)) then ; do k=1,GV%ke ; do i=is,ie
+            segment%tr_Reg%Tr(m)%tres(i,J,k) = segment%tr_Reg%Tr(m)%scale * OBC%tres_y(i,J,k,m)
+          enddo ; enddo ; endif
+        enddo
+      endif
+    endif
+  enddo
+end subroutine copy_OBC_tracer_reservoirs
+
 !> Fill segment%h_Reg from restart fields.
 subroutine copy_thickness_reservoirs(OBC, G, GV)
   type(ocean_grid_type),          intent(inout) :: G     !< Ocean grid structure
@@ -2640,36 +2670,6 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
       endif
     enddo
   endif
-
-  ! Now tracers (if any)
-  do n=1,OBC%number_of_segments
-    segment => OBC%segment(n)
-    if (associated(segment%tr_Reg)) then
-      if (segment%is_E_or_W) then
-        I = segment%HI%IsdB
-        do m=1,OBC%ntr
-          if (allocated(segment%tr_Reg%Tr(m)%tres)) then
-            do k=1,GV%ke
-              do j=segment%HI%jsd,segment%HI%jed
-                segment%tr_Reg%Tr(m)%tres(I,j,k) = segment%tr_Reg%Tr(m)%scale * OBC%tres_x(I,j,k,m)
-              enddo
-            enddo
-          endif
-        enddo
-      else
-        J = segment%HI%JsdB
-        do m=1,OBC%ntr
-          if (allocated(segment%tr_Reg%Tr(m)%tres)) then
-            do k=1,GV%ke
-              do i=segment%HI%isd,segment%HI%ied
-                segment%tr_Reg%Tr(m)%tres(i,J,k) = segment%tr_Reg%Tr(m)%scale * OBC%tres_y(i,J,k,m)
-              enddo
-            enddo
-          endif
-        enddo
-      endif
-    endif
-  enddo
 
   gamma_u = OBC%gamma_uv
   rx_max = OBC%rx_max ; ry_max = OBC%rx_max
