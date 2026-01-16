@@ -63,6 +63,7 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
   logical            :: read_porous_file, OBC_projection_bug, open_corners, enable_bugs
   character(len=40)  :: mdl = "MOM_fixed_initialization" ! This module's name.
   integer :: I, J
+  integer :: num_of_segs ! Number of open boundary segments
   logical :: debug
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
@@ -81,33 +82,36 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
   ! To initialize masks, the bathymetry in halo regions must be filled in
   call pass_var(G%bathyT, G%Domain)
 
-  ! Determine the position of any open boundaries
-  call open_boundary_config(G, US, PF, OBC)
+  ! Set up open boundary and modify masks accordingly
+  call get_param(PF, mdl, "OBC_NUMBER_OF_SEGMENTS", num_of_segs, default=0, do_not_log=.true.)
+  if (num_of_segs > 0) then
+    ! Determine the position of any open boundaries
+    call open_boundary_config(G, US, PF, OBC)
 
-  ! Make bathymetry consistent with open boundaries
-  call get_param(PF, mdl, "ENABLE_BUGS_BY_DEFAULT", enable_bugs, &
-                 default=.true., do_not_log=.true.)  ! This is logged from MOM.F90.
-  call get_param(PF, mdl, "OBC_PROJECTION_BUG", OBC_projection_bug, &
-                 "If false, use only interior ocean points at OBCs to specify several "//&
-                 "calculations at OBC points, and it avoids applying a land mask at the bay-like "//&
-                 "intersection of orthogonal OBC segments.  Otherwise the calculation of terms "//&
-                 "like the potential vorticity used in the barotropic solver relies on bathymetry "//&
-                 "or other fields being projected outward across OBCs.  This option changes "//&
-                 "answers for some configurations that use OBCs.", &
-                 default=enable_bugs, do_not_log=.not.associated(OBC))
-  open_corners = .not.OBC_projection_bug
+    ! Make bathymetry consistent with open boundaries
+    call get_param(PF, mdl, "ENABLE_BUGS_BY_DEFAULT", enable_bugs, &
+                  default=.true., do_not_log=.true.)  ! This is logged from MOM.F90.
+    call get_param(PF, mdl, "OBC_PROJECTION_BUG", OBC_projection_bug, &
+                  "If false, use only interior ocean points at OBCs to specify several "//&
+                  "calculations at OBC points, and it avoids applying a land mask at the bay-like "//&
+                  "intersection of orthogonal OBC segments.  Otherwise the calculation of terms "//&
+                  "like the potential vorticity used in the barotropic solver relies on bathymetry "//&
+                  "or other fields being projected outward across OBCs.  This option changes "//&
+                  "answers for some configurations that use OBCs.", &
+                  default=enable_bugs, do_not_log=.not.associated(OBC))
+    open_corners = .not.OBC_projection_bug
 
-  ! This call sets masks that prohibit flow over any point interpreted as land
-  if (associated(OBC)) then
+    ! This call sets masks that prohibit flow over any point interpreted as land
     if (OBC_projection_bug) &
       call open_boundary_impose_normal_slope(OBC, G, G%bathyT)
-    call initialize_masks(G, PF, US, OBC_dir_u=OBC%segnum_u, OBC_dir_v=OBC%segnum_v, open_corner_OBCs=open_corners)
+    call initialize_masks(G, PF, US, OBC_dir_u=OBC%segnum_u, OBC_dir_v=OBC%segnum_v, &
+                          open_corner_OBCs=open_corners)
+
+    ! Make OBC mask consistent with land mask
+    call open_boundary_impose_land_mask(OBC, G, G%areaCu, G%areaCv, US)
   else
     call initialize_masks(G, PF, US)
   endif
-
-  ! Make OBC mask consistent with land mask
-  call open_boundary_impose_land_mask(OBC, G, G%areaCu, G%areaCv, US)
 
   if (debug) then
     call hchksum(G%bathyT, 'MOM_initialize_fixed: depth ', G%HI, haloshift=1, unscale=US%Z_to_m)
@@ -117,8 +121,9 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
     call qchksum(G%mask2dBu, 'MOM_initialize_fixed: mask2dBu ', G%HI)
   endif
 
+  ! Set up other fixed quantities
+  ! Parameters below are logged under "module MOM_fixed_initialization".
   call log_version(PF, mdl, version, "")
-
   ! Modulate geometric scales according to geography.
   call get_param(PF, mdl, "CHANNEL_CONFIG", config, &
                  "A parameter that determines which set of channels are \n"//&
@@ -163,12 +168,12 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
   if (read_porous_file) &
     call set_subgrid_topo_at_vel_from_file(G, PF, US)
 
-!    Calculate the value of the Coriolis parameter at the latitude   !
-!  of the q grid points [T-1 ~> s-1].
+  !    Calculate the value of the Coriolis parameter at the latitude   !
+  !  of the q grid points [T-1 ~> s-1].
   call MOM_initialize_rotation(G%CoriolisBu, G, PF, US=US)
-!   Calculate the components of grad f (beta)
+  !   Calculate the components of grad f (beta)
   call MOM_calculate_grad_Coriolis(G%dF_dx, G%dF_dy, G, US=US)
-!   Calculate the square of the Coriolis parameter
+  !   Calculate the square of the Coriolis parameter
   do I=G%IsdB,G%IedB ; do J=G%JsdB,G%JedB
     G%Coriolis2Bu(I,J) = G%CoriolisBu(I,J)**2
   enddo ; enddo
@@ -182,7 +187,7 @@ subroutine MOM_initialize_fixed(G, US, OBC, PF)
 
   call initialize_grid_rotation_angle(G, PF)
 
-! Compute global integrals of grid values for later use in scalar diagnostics !
+  ! Compute global integrals of grid values for later use in scalar diagnostics !
   call compute_global_grid_integrals(G, US=US)
 
   call callTree_leave('MOM_initialize_fixed()')
