@@ -88,6 +88,20 @@ integer, parameter, public :: OBC_DIRECTION_S = 200 !< Indicates the boundary is
 integer, parameter, public :: OBC_DIRECTION_E = 300 !< Indicates the boundary is an effective eastern boundary
 integer, parameter, public :: OBC_DIRECTION_W = 400 !< Indicates the boundary is an effective western boundary
 integer, parameter         :: MAX_OBC_FIELDS = 100  !< Maximum number of data fields needed for OBC segments
+integer, parameter :: &
+  F_U      =  1, &
+  F_V      =  2, &
+  F_T      =  3, &
+  F_S      =  4, &
+  F_Z      =  5, &
+  F_G      =  6, &
+  F_UAMP   =  7, &
+  F_UPHASE =  8, &
+  F_VAMP   =  9, &
+  F_VPHASE = 10, &
+  F_ZAMP   = 11, &
+  F_ZPHASE = 12
+integer, parameter :: N_FIELDS = 12
 
 !> Open boundary segment data from files (mostly).
 type, public :: OBC_segment_data_type
@@ -188,18 +202,7 @@ type, public :: OBC_segment_type
   logical :: open           !< Boundary is open for continuity solver, and there are no other
                             !! parameterized mass fluxes at the open boundary.
   logical :: gradient       !< Zero gradient at boundary.
-  logical :: u_values_needed      !< Whether or not external u OBC fields are needed.
-  logical :: uamp_values_needed   !< Whether or not external u amplitude OBC fields are needed.
-  logical :: uphase_values_needed !< Whether or not external u phase OBC fields are needed.
-  logical :: v_values_needed      !< Whether or not external v OBC fields are needed.
-  logical :: vamp_values_needed   !< Whether or not external v amplitude OBC fields are needed.
-  logical :: vphase_values_needed !< Whether or not external v phase OBC fields are needed.
-  logical :: t_values_needed!< Whether or not external T OBC fields are needed.
-  logical :: s_values_needed!< Whether or not external S OBC fields are needed.
-  logical :: z_values_needed!< Whether or not external zeta OBC fields are needed.
-  logical :: zamp_values_needed   !< Whether or not external zeta amplitude OBC fields are needed.
-  logical :: zphase_values_needed !< Whether or not external zeta phase OBC fields are needed.
-  logical :: g_values_needed!< Whether or not external gradient OBC fields are needed.
+  logical, dimension(N_FIELDS) :: values_needed = .false.
   integer :: direction      !< Boundary faces one of the four directions.
   logical :: is_N_or_S      !< True if the OB is facing North or South and exists on this PE.
   logical :: is_E_or_W      !< True if the OB is facing East or West and exists on this PE.
@@ -293,7 +296,9 @@ type, public :: OBC_segment_type
                                                             !! imposed value when flow is entering [L-1 ~> m-1]
   contains
     !> True if any value from the 12 external fields is needed.
-    procedure :: values_needed
+    procedure :: update_values_needed
+    procedure :: update_values_needed_from_field
+    procedure :: apply_OBC_mode
 end type OBC_segment_type
 
 !> Open-boundary data
@@ -495,16 +500,140 @@ character(len=40)  :: mdl = "MOM_open_boundary" !< This module's name.
 
 contains
 
-!> True if any value from the 12 external fields is needed.
-logical function values_needed(this)
-  class(OBC_segment_type), intent(in) :: this !< This segment
+!> Turn on switches in segment%values_needed
+subroutine update_values_needed(this, tides, temp_salt)
+  class(OBC_segment_type), intent(inout) :: this
+  logical, optional, intent(in) :: tides
+  logical, optional, intent(in) :: temp_salt
 
-  values_needed = this%on_pe .and. &
-      (this%u_values_needed .or. this%uamp_values_needed .or. this%uphase_values_needed .or. &
-       this%v_values_needed .or. this%vamp_values_needed .or. this%vphase_values_needed .or. &
-       this%z_values_needed .or. this%zamp_values_needed .or. this%zphase_values_needed .or. &
-       this%g_values_needed .or. this%t_values_needed .or. this%s_values_needed)
-end function values_needed
+  ! Local variables
+  logical :: use_tide
+  logical :: use_temp
+
+  use_tide = .false. ; if (present(tides)) use_tide = tides
+  use_temp = .false. ; if (present(temp_salt)) use_temp = temp_salt
+
+  if (use_tide) &
+    this%values_needed([F_UAMP, F_UPHASE, F_VAMP, F_VPHASE, F_ZAMP, F_ZPHASE]) = .true.
+  if (use_temp) &
+    this%values_needed([F_T, F_S]) = .true.
+end subroutine update_values_needed
+
+!> Turn off switches in segment%values_needed from a field name
+subroutine update_values_needed_from_field(this, name, m)
+  class(OBC_segment_type), intent(inout) :: this
+  character(len=*), intent(in) :: name
+  integer, intent(in) :: m
+
+  select case (trim(name))
+    case ('TEMP')
+      this%values_needed(F_T) = .false.
+    case ('SALT')
+      this%values_needed(F_S) = .false.
+    case ('U')
+      this%values_needed(F_U) = .false.
+    case ('V')
+      this%values_needed(F_V) = .false.
+    case ('SSH')
+      this%values_needed(F_Z) = .false.
+    case ('DUDY')
+      if (this%is_N_or_S) this%values_needed(F_G) = .false.
+    case ('DVDX')
+      if (this%is_E_or_W) this%values_needed(F_G) = .false.
+    case ('Uamp')
+      this%values_needed(F_UAMP) = .false.
+      this%uamp_index = m
+    case ('Uphase')
+      this%values_needed(F_UPHASE) = .false.
+      this%uphase_index = m
+    case('Vamp')
+      this%values_needed(F_VAMP) = .false.
+      this%vamp_index = m
+    case('Vphase')
+      this%values_needed(F_VPHASE) = .false.
+      this%vphase_index = m
+    case('SSHamp')
+      this%values_needed(F_ZAMP) = .false.
+      this%zamp_index = m
+    case('SSHphase')
+      this%values_needed(F_ZPHASE) = .false.
+      this%zphase_index = m
+  end select
+end subroutine update_values_needed_from_field
+
+subroutine apply_OBC_mode(this, mode)
+  class(OBC_segment_type), intent(inout) :: this
+  character(len=*), intent(in) :: mode
+
+  select case (trim(mode))
+    case ('FLATHER')
+      this%Flather = .true.
+      this%open = .true.
+      if (this%is_E_or_W_2) then
+        this%values_needed([F_U, F_Z]) = .true.
+      else
+        this%values_needed([F_V, F_Z]) = .true.
+      endif
+    case ('ORLANSKI')
+      this%radiation = .true.
+      this%open = .true.
+    case ('ORLANSKI_TAN')
+      this%radiation = .true.
+      this%radiation_tan = .true.
+    case ('ORLANSKI_GRAD')
+      this%radiation = .true.
+      this%radiation_grad = .true.
+    case ('OBLIQUE')
+      this%oblique = .true.
+      this%open = .true.
+    case ('OBLIQUE_TAN')
+      this%oblique = .true.
+      this%oblique_tan = .true.
+    case ('OBLIQUE_GRAD')
+      this%oblique = .true.
+      this%oblique_grad = .true.
+    case ('NUDGED')
+      this%nudged = .true.
+      if (this%is_E_or_W_2) then
+        this%values_needed(F_U) = .true.
+      else
+        this%values_needed(F_V) = .true.
+      endif
+    case ('NUDGED_TAN')
+      this%nudged_tan = .true.
+      if (this%is_E_or_W_2) then
+        this%values_needed(F_V) = .true.
+      else
+        this%values_needed(F_U) = .true.
+      endif
+    case ('NUDGED_GRAD')
+      this%nudged_grad = .true.
+      this%values_needed(F_G) = .true.
+    case ('GRADIENT')
+      this%gradient = .true.
+      this%open = .true.
+    case ('SIMPLE')
+      this%specified = .true.
+      if (this%is_E_or_W_2) then
+        this%values_needed(F_U) = .true.
+      else
+        this%values_needed(F_V) = .true.
+      endif
+    case ('SIMPLE_TAN')
+      this%specified_tan = .true.
+      if (this%is_E_or_W_2) then
+        this%values_needed(F_V) = .true.
+      else
+        this%values_needed(F_U) = .true.
+      endif
+    case ('SIMPLE_GRAD')
+      this%specified_grad = .true.
+      this%values_needed(F_G) = .true.
+    case default
+      call MOM_error(FATAL, "MOM_open_boundary.F90, apply_bc_mode: "//&
+                     "String '"//trim(mode)//"' not understood.")
+  end select
+end subroutine apply_OBC_mode
 
 !> Enables OBC module and reads configuration parameters
 !! This routine is called from MOM_initialize_fixed which
@@ -684,18 +813,8 @@ subroutine open_boundary_config(G, US, param_file, OBC)
     OBC%segment(n)%specified_grad = .false.
     OBC%segment(n)%open = .false.
     OBC%segment(n)%gradient = .false.
-    OBC%segment(n)%u_values_needed = .false.
-    OBC%segment(n)%uamp_values_needed = OBC%add_tide_constituents
-    OBC%segment(n)%uphase_values_needed = OBC%add_tide_constituents
-    OBC%segment(n)%v_values_needed = .false.
-    OBC%segment(n)%vamp_values_needed = OBC%add_tide_constituents
-    OBC%segment(n)%vphase_values_needed = OBC%add_tide_constituents
-    OBC%segment(n)%t_values_needed = .false. ! This flag is always false.
-    OBC%segment(n)%s_values_needed = .false. ! This flag is always false.
-    OBC%segment(n)%z_values_needed = .false.
-    OBC%segment(n)%zamp_values_needed = OBC%add_tide_constituents
-    OBC%segment(n)%zphase_values_needed = OBC%add_tide_constituents
-    OBC%segment(n)%g_values_needed = .false.
+    OBC%segment(n)%values_needed(:) = .false.
+    call OBC%segment(n)%update_values_needed(tides=OBC%add_tide_constituents)
     OBC%segment(n)%direction = OBC_NONE
     OBC%segment(n)%is_N_or_S = .false.
     OBC%segment(n)%is_E_or_W = .false.
@@ -960,8 +1079,9 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
   do n=1,OBC%number_of_segments
     n_seg = n ; if (OBC%reverse_segment_order) n_seg = OBC%number_of_segments + 1 - n
     segment => OBC%segment(n_seg)
+
     ! segment%values_needed is only true if this segment is on the local PE and some values need to be read.
-    if (.not. OBC%segment(n_seg)%values_needed()) cycle
+    if (.not. (segment%on_pe .and. any(segment%values_needed))) cycle
 
     write(segname, "('OBC_SEGMENT_',i3.3,'_DATA')") n
     write(suffix, "('_segment_',i3.3)") n
@@ -1113,35 +1233,15 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
         endif
       endif
 
-      ! Check on which values this field is providing.
-      if (segment%field(m)%name == 'TEMP') segment%t_values_needed = .false.
-      if (segment%field(m)%name == 'SALT') segment%s_values_needed = .false.
-      if (segment%field(m)%name == 'U') segment%u_values_needed = .false.
-      if (segment%field(m)%name == 'V') segment%v_values_needed = .false.
-      if (segment%field(m)%name == 'SSH') segment%z_values_needed = .false.
-      if ((segment%is_N_or_S .and. segment%field(m)%name == 'DUDY') .or. &
-          (segment%is_E_or_W .and. segment%field(m)%name == 'DVDX')) segment%g_values_needed = .false.
-      if (segment%field(m)%name == 'Uamp') segment%uamp_values_needed = .false.
-      if (segment%field(m)%name == 'Uphase') segment%uphase_values_needed = .false.
-      if (segment%field(m)%name == 'Vamp') segment%vamp_values_needed = .false.
-      if (segment%field(m)%name == 'Vphase') segment%vphase_values_needed = .false.
-      if (segment%field(m)%name == 'SSHamp') segment%zamp_values_needed = .false.
-      if (segment%field(m)%name == 'SSHphase') segment%zphase_values_needed = .false.
+      ! Check on which values this field is providing and store the field number for later retrievals.
+      call segment%update_values_needed_from_field(segment%field(m)%name, m)
 
-      ! Store the field number for later retrievals.
-      if (segment%field(m)%name == 'Uamp') segment%uamp_index = m
-      if (segment%field(m)%name == 'Uphase') segment%uphase_index = m
-      if (segment%field(m)%name == 'Vamp') segment%vamp_index = m
-      if (segment%field(m)%name == 'Vphase') segment%vphase_index = m
-      if (segment%field(m)%name == 'SSHamp') segment%zamp_index = m
-      if (segment%field(m)%name == 'SSHphase') segment%zphase_index = m
-
-    enddo
+    enddo ! m-loop for fields
 
     ! Check for any values that have not been provided.
-    if (segment%values_needed()) then
+    if (any(segment%values_needed)) then
       write(mesg,'("Values needed for OBC segment ",I0)') n
-      call MOM_error(FATAL, mesg)
+      call MOM_error(FATAL, mesg, all_print=.true.)
     endif
 
     ! write(stderr, '(A)') trim(suffix)//" segment checksum"
@@ -1566,85 +1666,49 @@ subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
   call setup_segment_indices(G, OBC%segment(l_seg), I_obc, I_obc, Js_obc, Je_obc)
 
   do a_loop = 1,8 ! up to 8 options available
-    if (len_trim(action_str(a_loop)) == 0) then
-      cycle
-    elseif (trim(action_str(a_loop)) == 'FLATHER') then
-      OBC%segment(l_seg)%Flather = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%Flather_u_BCs_exist_globally = .true.
-      OBC%open_u_BCs_exist_globally = .true.
-      OBC%segment(l_seg)%z_values_needed = .true.
-      OBC%segment(l_seg)%u_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'ORLANSKI') then
-      OBC%segment(l_seg)%radiation = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%open_u_BCs_exist_globally = .true.
-      OBC%radiation_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'ORLANSKI_TAN') then
-      OBC%segment(l_seg)%radiation = .true.
-      OBC%segment(l_seg)%radiation_tan = .true.
-      OBC%radiation_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'ORLANSKI_GRAD') then
-      OBC%segment(l_seg)%radiation = .true.
-      OBC%segment(l_seg)%radiation_grad = .true.
-    elseif (trim(action_str(a_loop)) == 'OBLIQUE') then
-      OBC%segment(l_seg)%oblique = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%oblique_BCs_exist_globally = .true.
-      OBC%open_u_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'OBLIQUE_TAN') then
-      OBC%segment(l_seg)%oblique = .true.
-      OBC%segment(l_seg)%oblique_tan = .true.
-      OBC%oblique_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'OBLIQUE_GRAD') then
-      OBC%segment(l_seg)%oblique = .true.
-      OBC%segment(l_seg)%oblique_grad = .true.
-    elseif (trim(action_str(a_loop)) == 'NUDGED') then
-      OBC%segment(l_seg)%nudged = .true.
-      OBC%nudged_u_BCs_exist_globally = .true.
-      OBC%segment(l_seg)%u_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'NUDGED_TAN') then
-      OBC%segment(l_seg)%nudged_tan = .true.
-      OBC%nudged_u_BCs_exist_globally = .true.
-      OBC%segment(l_seg)%v_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'NUDGED_GRAD') then
-      OBC%segment(l_seg)%nudged_grad = .true.
-      OBC%segment(l_seg)%g_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'GRADIENT') then
-      OBC%segment(l_seg)%gradient = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%open_u_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'SIMPLE') then
-      OBC%segment(l_seg)%specified = .true.
-      OBC%specified_u_BCs_exist_globally = .true. ! This avoids deallocation
-      OBC%segment(l_seg)%u_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'SIMPLE_TAN') then
-      OBC%segment(l_seg)%specified_tan = .true.
-      OBC%segment(l_seg)%v_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'SIMPLE_GRAD') then
-      OBC%segment(l_seg)%specified_grad = .true.
-      OBC%segment(l_seg)%g_values_needed = .true.
-    else
-      call MOM_error(FATAL, "MOM_open_boundary.F90, setup_u_point_obc: "//&
-                     "String '"//trim(action_str(a_loop))//"' not understood.")
+    if (len_trim(action_str(a_loop)) == 0) cycle
+
+    ! Segment flags
+    call OBC%segment(l_seg)%apply_OBC_mode(trim(action_str(a_loop)))
+
+    ! OBC flags
+    select case (trim(action_str(a_loop)))
+      case('FLATHER')
+        OBC%Flather_u_BCs_exist_globally = .true.
+        OBC%open_u_BCs_exist_globally = .true.
+      case('ORLANSKI')
+        OBC%open_u_BCs_exist_globally = .true.
+        OBC%radiation_BCs_exist_globally = .true.
+      case('ORLANSKI_TAN')
+        OBC%radiation_BCs_exist_globally = .true.
+      case('OBLIQUE')
+        OBC%oblique_BCs_exist_globally = .true.
+        OBC%open_u_BCs_exist_globally = .true.
+      case('OBLIQUE_TAN')
+        OBC%oblique_BCs_exist_globally = .true.
+      case('NUDGED')
+        OBC%nudged_u_BCs_exist_globally = .true.
+      case('NUDGED_TAN')
+        OBC%nudged_u_BCs_exist_globally = .true.
+      case('GRADIENT')
+        OBC%open_u_BCs_exist_globally = .true.
+      case('SIMPLE')
+        OBC%specified_u_BCs_exist_globally = .true. ! This avoids deallocation
+    end select
+
+    if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
+      write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
+      allocate(tnudge(2))
+      call get_param(PF, mdl, segment_param_str(1:43), tnudge, &
+                     "Timescales in days for nudging along a segment, "//&
+                     "for inflow, then outflow. Setting both to zero should "//&
+                     "behave like SIMPLE obcs for the baroclinic velocities.", &
+                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
+      OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
+      OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
+      deallocate(tnudge)
     endif
-  enddo ! a_loop
-
-  if (OBC%segment(l_seg)%oblique .and. OBC%segment(l_seg)%radiation) &
-    call MOM_error(FATAL, "MOM_open_boundary.F90, setup_u_point_obc: \n"//&
-                   "Orlanski and Oblique OBC options cannot be used together on one segment.")
-
-  if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
-    write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
-    allocate(tnudge(2))
-    call get_param(PF, mdl, segment_param_str(1:43), tnudge, "Timescales in days for nudging "//&
-                   "along a segment, for inflow, then outflow. Setting both to zero should "//&
-                   "behave like SIMPLE OBCs for the baroclinic velocities.", &
-                   fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
-    OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
-    OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
-    deallocate(tnudge)
-  endif
+  end do
 
   ! Set ocean_OBC_type components
   I = OBC%segment(l_seg)%HI%IsdB
@@ -1684,85 +1748,49 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
   call setup_segment_indices(G, OBC%segment(l_seg), Is_obc, Ie_obc, J_obc, J_obc)
 
   do a_loop = 1,8
-    if (len_trim(action_str(a_loop)) == 0) then
-      cycle
-    elseif (trim(action_str(a_loop)) == 'FLATHER') then
-      OBC%segment(l_seg)%Flather = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%Flather_v_BCs_exist_globally = .true.
-      OBC%open_v_BCs_exist_globally = .true.
-      OBC%segment(l_seg)%z_values_needed = .true.
-      OBC%segment(l_seg)%v_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'ORLANSKI') then
-      OBC%segment(l_seg)%radiation = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%open_v_BCs_exist_globally = .true.
-      OBC%radiation_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'ORLANSKI_TAN') then
-      OBC%segment(l_seg)%radiation = .true.
-      OBC%segment(l_seg)%radiation_tan = .true.
-      OBC%radiation_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'ORLANSKI_GRAD') then
-      OBC%segment(l_seg)%radiation = .true.
-      OBC%segment(l_seg)%radiation_grad = .true.
-    elseif (trim(action_str(a_loop)) == 'OBLIQUE') then
-      OBC%segment(l_seg)%oblique = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%oblique_BCs_exist_globally = .true.
-      OBC%open_v_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'OBLIQUE_TAN') then
-      OBC%segment(l_seg)%oblique = .true.
-      OBC%segment(l_seg)%oblique_tan = .true.
-      OBC%oblique_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'OBLIQUE_GRAD') then
-      OBC%segment(l_seg)%oblique = .true.
-      OBC%segment(l_seg)%oblique_grad = .true.
-    elseif (trim(action_str(a_loop)) == 'NUDGED') then
-      OBC%segment(l_seg)%nudged = .true.
-      OBC%nudged_v_BCs_exist_globally = .true.
-      OBC%segment(l_seg)%v_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'NUDGED_TAN') then
-      OBC%segment(l_seg)%nudged_tan = .true.
-      OBC%nudged_v_BCs_exist_globally = .true.
-      OBC%segment(l_seg)%u_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'NUDGED_GRAD') then
-      OBC%segment(l_seg)%nudged_grad = .true.
-      OBC%segment(l_seg)%g_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'GRADIENT') then
-      OBC%segment(l_seg)%gradient = .true.
-      OBC%segment(l_seg)%open = .true.
-      OBC%open_v_BCs_exist_globally = .true.
-    elseif (trim(action_str(a_loop)) == 'SIMPLE') then
-      OBC%segment(l_seg)%specified = .true.
-      OBC%specified_v_BCs_exist_globally = .true. ! This avoids deallocation
-      OBC%segment(l_seg)%v_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'SIMPLE_TAN') then
-      OBC%segment(l_seg)%specified_tan = .true.
-      OBC%segment(l_seg)%u_values_needed = .true.
-    elseif (trim(action_str(a_loop)) == 'SIMPLE_GRAD') then
-      OBC%segment(l_seg)%specified_grad = .true.
-      OBC%segment(l_seg)%g_values_needed = .true.
-    else
-      call MOM_error(FATAL, "MOM_open_boundary.F90, setup_v_point_obc: "//&
-                     "String '"//trim(action_str(a_loop))//"' not understood.")
+    if (len_trim(action_str(a_loop)) == 0) cycle
+
+    ! Segment flags
+    call OBC%segment(l_seg)%apply_OBC_mode(trim(action_str(a_loop)))
+
+    ! OBC flags
+    select case (trim(action_str(a_loop)))
+      case('FLATHER')
+        OBC%Flather_v_BCs_exist_globally = .true.
+        OBC%open_v_BCs_exist_globally = .true.
+      case('ORLANSKI')
+        OBC%open_v_BCs_exist_globally = .true.
+        OBC%radiation_BCs_exist_globally = .true.
+      case('ORLANSKI_TAN')
+        OBC%radiation_BCs_exist_globally = .true.
+      case('OBLIQUE')
+        OBC%oblique_BCs_exist_globally = .true.
+        OBC%open_v_BCs_exist_globally = .true.
+      case('OBLIQUE_TAN')
+        OBC%oblique_BCs_exist_globally = .true.
+      case('NUDGED')
+        OBC%nudged_v_BCs_exist_globally = .true.
+      case('NUDGED_TAN')
+        OBC%nudged_v_BCs_exist_globally = .true.
+      case('GRADIENT')
+        OBC%open_v_BCs_exist_globally = .true.
+      case('SIMPLE')
+        OBC%specified_v_BCs_exist_globally = .true. ! This avoids deallocation
+    end select
+
+    if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
+      write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
+      allocate(tnudge(2))
+      call get_param(PF, mdl, segment_param_str(1:43), tnudge, &
+                     "Timescales in days for nudging along a segment, "//&
+                     "for inflow, then outflow. Setting both to zero should "//&
+                     "behave like SIMPLE obcs for the baroclinic velocities.", &
+                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
+      OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
+      OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
+      deallocate(tnudge)
     endif
-  enddo ! a_loop
-
-  if (OBC%segment(l_seg)%oblique .and. OBC%segment(l_seg)%radiation) &
-    call MOM_error(FATAL, "MOM_open_boundary.F90, setup_v_point_obc: \n"//&
-                   "Orlanski and Oblique OBC options cannot be used together on one segment.")
-
-  if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
-    write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
-    allocate(tnudge(2))
-    call get_param(PF, mdl, segment_param_str(1:43), tnudge, "Timescales in days for nudging "//&
-                   "along a segment, for inflow, then outflow. Setting both to zero should "//&
-                   "behave like SIMPLE OBCs for the baroclinic velocities.", &
-                   fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
-    OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
-    OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
-    deallocate(tnudge)
-  endif
+  enddo
 
   ! Set ocean_OBC_type components
   J = OBC%segment(l_seg)%HI%JsdB
@@ -6703,34 +6731,34 @@ subroutine rotate_OBC_segment_values_needed(segment_in, segment, turns)
   qturns = modulo(turns, 4)
 
   if ((qturns == 0) .or. (qturns == 2)) then
-    segment%u_values_needed = segment_in%u_values_needed
-    segment%v_values_needed = segment_in%v_values_needed
-    segment%uamp_values_needed = segment_in%uamp_values_needed
-    segment%vamp_values_needed = segment_in%vamp_values_needed
-    segment%uphase_values_needed = segment_in%uphase_values_needed
-    segment%vphase_values_needed = segment_in%vphase_values_needed
+    segment%values_needed(F_U) = segment_in%values_needed(F_U)
+    segment%values_needed(F_V) = segment_in%values_needed(F_V)
+    segment%values_needed(F_UAMP) = segment_in%values_needed(F_UAMP)
+    segment%values_needed(F_VAMP) = segment_in%values_needed(F_VAMP)
+    segment%values_needed(F_UPHASE) = segment_in%values_needed(F_UPHASE)
+    segment%values_needed(F_VPHASE) = segment_in%values_needed(F_VPHASE)
     segment%uamp_index = segment_in%uamp_index
     segment%vamp_index = segment_in%vamp_index
     segment%uphase_index = segment_in%uphase_index
     segment%vphase_index = segment_in%vphase_index
   else ! NOTE: [uv]_values_needed are swapped
-    segment%u_values_needed = segment_in%v_values_needed
-    segment%v_values_needed = segment_in%u_values_needed
-    segment%uamp_values_needed = segment_in%vamp_values_needed
-    segment%vamp_values_needed = segment_in%uamp_values_needed
-    segment%uphase_values_needed = segment_in%vphase_values_needed
-    segment%vphase_values_needed = segment_in%uphase_values_needed
+    segment%values_needed(F_U) = segment_in%values_needed(F_V)
+    segment%values_needed(F_V) = segment_in%values_needed(F_U)
+    segment%values_needed(F_UAMP) = segment_in%values_needed(F_VAMP)
+    segment%values_needed(F_VAMP) = segment_in%values_needed(F_UAMP)
+    segment%values_needed(F_UPHASE) = segment_in%values_needed(F_VPHASE)
+    segment%values_needed(F_VPHASE) = segment_in%values_needed(F_UPHASE)
     segment%uamp_index = segment_in%vamp_index
     segment%vamp_index = segment_in%uamp_index
     segment%uphase_index = segment_in%vphase_index
     segment%vphase_index = segment_in%uphase_index
   endif
-  segment%z_values_needed = segment_in%z_values_needed
-  segment%g_values_needed = segment_in%g_values_needed
-  segment%t_values_needed = segment_in%t_values_needed
-  segment%s_values_needed = segment_in%s_values_needed
-  segment%zamp_values_needed = segment_in%zamp_values_needed
-  segment%zphase_values_needed = segment_in%zphase_values_needed
+  segment%values_needed(F_Z) = segment_in%values_needed(F_Z)
+  segment%values_needed(F_G) = segment_in%values_needed(F_G)
+  segment%values_needed(F_T) = segment_in%values_needed(F_T)
+  segment%values_needed(F_S) = segment_in%values_needed(F_S)
+  segment%values_needed(F_ZAMP) = segment_in%values_needed(F_ZAMP)
+  segment%values_needed(F_ZPHASE) = segment_in%values_needed(F_ZPHASE)
   segment%zamp_index = segment_in%zamp_index
   segment%zphase_index = segment_in%zphase_index
 
@@ -6918,32 +6946,32 @@ subroutine write_OBC_info(OBC, G, GV, US)
     if (segment%specified_grad) call MOM_mesg("  specified_grad", verb=1)
     if (segment%open)           call MOM_mesg("  open", verb=1)
     if (segment%gradient)       call MOM_mesg("  gradient", verb=1)
-    if (segment%values_needed())  call MOM_mesg("  values_needed", verb=1)
+    if (any(segment%values_needed))  call MOM_mesg("  values_needed", verb=1)
     if (modulo(turns, 2) == 0) then
       if (segment%is_N_or_S)      call MOM_mesg("  is_N_or_S", verb=1)
       if (segment%is_E_or_W)      call MOM_mesg("  is_E_or_W", verb=1)
-      if (segment%u_values_needed) call MOM_mesg("  u_values_needed", verb=1)
-      if (segment%uamp_values_needed) call MOM_mesg("  uamp_values_needed", verb=1)
-      if (segment%uphase_values_needed) call MOM_mesg("  uphase_values_needed", verb=1)
-      if (segment%v_values_needed) call MOM_mesg("  v_values_needed", verb=1)
-      if (segment%vamp_values_needed) call MOM_mesg("  vamp_values_needed", verb=1)
-      if (segment%vphase_values_needed) call MOM_mesg("  vphase_values_needed", verb=1)
+      if (segment%values_needed(F_U)) call MOM_mesg("  u_values_needed", verb=1)
+      if (segment%values_needed(F_UAMP)) call MOM_mesg("  uamp_values_needed", verb=1)
+      if (segment%values_needed(F_UPHASE)) call MOM_mesg("  uphase_values_needed", verb=1)
+      if (segment%values_needed(F_V)) call MOM_mesg("  v_values_needed", verb=1)
+      if (segment%values_needed(F_VAMP)) call MOM_mesg("  vamp_values_needed", verb=1)
+      if (segment%values_needed(F_VPHASE)) call MOM_mesg("  vphase_values_needed", verb=1)
     else  ! The x- and y-directions are swapped.
       if (segment%is_E_or_W)      call MOM_mesg("  is_N_or_S", verb=1)
       if (segment%is_N_or_S)      call MOM_mesg("  is_E_or_W", verb=1)
-      if (segment%v_values_needed) call MOM_mesg("  u_values_needed", verb=1)
-      if (segment%vamp_values_needed) call MOM_mesg("  uamp_values_needed", verb=1)
-      if (segment%vphase_values_needed) call MOM_mesg("  uphase_values_needed", verb=1)
-      if (segment%u_values_needed) call MOM_mesg("  v_values_needed", verb=1)
-      if (segment%uamp_values_needed) call MOM_mesg("  vamp_values_needed", verb=1)
-      if (segment%uphase_values_needed) call MOM_mesg("  vphase_values_needed", verb=1)
+      if (segment%values_needed(F_V)) call MOM_mesg("  u_values_needed", verb=1)
+      if (segment%values_needed(F_VAMP)) call MOM_mesg("  uamp_values_needed", verb=1)
+      if (segment%values_needed(F_VPHASE)) call MOM_mesg("  uphase_values_needed", verb=1)
+      if (segment%values_needed(F_U)) call MOM_mesg("  v_values_needed", verb=1)
+      if (segment%values_needed(F_UAMP)) call MOM_mesg("  vamp_values_needed", verb=1)
+      if (segment%values_needed(F_UPHASE)) call MOM_mesg("  vphase_values_needed", verb=1)
     endif
-    if (segment%t_values_needed) call MOM_mesg("  t_values_needed", verb=1)
-    if (segment%s_values_needed) call MOM_mesg("  s_values_needed", verb=1)
-    if (segment%z_values_needed) call MOM_mesg("  z_values_needed", verb=1)
-    if (segment%zamp_values_needed) call MOM_mesg("  zamp_values_needed", verb=1)
-    if (segment%zphase_values_needed) call MOM_mesg("  zphase_values_needed", verb=1)
-    if (segment%g_values_needed) call MOM_mesg("  g_values_needed", verb=1)
+    if (segment%values_needed(F_T)) call MOM_mesg("  t_values_needed", verb=1)
+    if (segment%values_needed(F_S)) call MOM_mesg("  s_values_needed", verb=1)
+    if (segment%values_needed(F_Z)) call MOM_mesg("  z_values_needed", verb=1)
+    if (segment%values_needed(F_ZAMP)) call MOM_mesg("  zamp_values_needed", verb=1)
+    if (segment%values_needed(F_ZPHASE)) call MOM_mesg("  zphase_values_needed", verb=1)
+    if (segment%values_needed(F_G)) call MOM_mesg("  g_values_needed", verb=1)
 !    if (segment%is_E_or_W_2)    call MOM_mesg("  is_E_or_W_2", verb=1)
     if (segment%temp_segment_data_exists) call MOM_mesg("  temp_segment_data_exists", verb=1)
     if (segment%salt_segment_data_exists) call MOM_mesg("  salt_segment_data_exists", verb=1)
