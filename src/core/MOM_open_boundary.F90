@@ -88,20 +88,12 @@ integer, parameter, public :: OBC_DIRECTION_S = 200 !< Indicates the boundary is
 integer, parameter, public :: OBC_DIRECTION_E = 300 !< Indicates the boundary is an effective eastern boundary
 integer, parameter, public :: OBC_DIRECTION_W = 400 !< Indicates the boundary is an effective western boundary
 integer, parameter         :: MAX_OBC_FIELDS = 100  !< Maximum number of data fields needed for OBC segments
+!>@{ Indices for field positions in OBC_segment_type%values_needed array
 integer, parameter :: &
-  F_U      =  1, &
-  F_V      =  2, &
-  F_T      =  3, &
-  F_S      =  4, &
-  F_Z      =  5, &
-  F_G      =  6, &
-  F_UAMP   =  7, &
-  F_UPHASE =  8, &
-  F_VAMP   =  9, &
-  F_VPHASE = 10, &
-  F_ZAMP   = 11, &
-  F_ZPHASE = 12
-integer, parameter :: N_FIELDS = 12
+    F_U = 1, F_V = 2, F_T = 3, F_S = 4, F_Z = 5, F_G = 6, &
+    F_UAMP = 7, F_UPHASE = 8, F_VAMP = 9, F_VPHASE = 10, F_ZAMP = 11, F_ZPHASE = 12
+!>@}
+integer, parameter :: N_FIELDS = 12 !< Number of fields in OBC_segment_type%values_needed array
 
 !> Open boundary segment data from files (mostly).
 type, public :: OBC_segment_data_type
@@ -296,9 +288,9 @@ type, public :: OBC_segment_type
                                                             !! imposed value when flow is entering [L-1 ~> m-1]
   contains
     !> True if any value from the 12 external fields is needed.
-    procedure :: update_values_needed
-    procedure :: update_values_needed_from_field
-    procedure :: apply_OBC_mode
+    procedure :: enable_values_needed
+    procedure :: disable_values_needed_from_field
+    procedure :: update_OBC_mode
 end type OBC_segment_type
 
 !> Open-boundary data
@@ -501,7 +493,7 @@ character(len=40)  :: mdl = "MOM_open_boundary" !< This module's name.
 contains
 
 !> Turn on switches in segment%values_needed
-subroutine update_values_needed(this, tides, temp_salt)
+subroutine enable_values_needed(this, tides, temp_salt)
   class(OBC_segment_type), intent(inout) :: this
   logical, optional, intent(in) :: tides
   logical, optional, intent(in) :: temp_salt
@@ -517,10 +509,10 @@ subroutine update_values_needed(this, tides, temp_salt)
     this%values_needed([F_UAMP, F_UPHASE, F_VAMP, F_VPHASE, F_ZAMP, F_ZPHASE]) = .true.
   if (use_temp) &
     this%values_needed([F_T, F_S]) = .true.
-end subroutine update_values_needed
+end subroutine enable_values_needed
 
 !> Turn off switches in segment%values_needed from a field name
-subroutine update_values_needed_from_field(this, name, m)
+subroutine disable_values_needed_from_field(this, name, m)
   class(OBC_segment_type), intent(inout) :: this
   character(len=*), intent(in) :: name
   integer, intent(in) :: m
@@ -559,9 +551,9 @@ subroutine update_values_needed_from_field(this, name, m)
       this%values_needed(F_ZPHASE) = .false.
       this%zphase_index = m
   end select
-end subroutine update_values_needed_from_field
+end subroutine disable_values_needed_from_field
 
-subroutine apply_OBC_mode(this, mode)
+subroutine update_OBC_mode(this, mode)
   class(OBC_segment_type), intent(inout) :: this
   character(len=*), intent(in) :: mode
 
@@ -633,7 +625,44 @@ subroutine apply_OBC_mode(this, mode)
       call MOM_error(FATAL, "MOM_open_boundary.F90, apply_bc_mode: "//&
                      "String '"//trim(mode)//"' not understood.")
   end select
-end subroutine apply_OBC_mode
+end subroutine update_OBC_mode
+
+subroutine update_OBC_flags(OBC, seg)
+  type(ocean_OBC_type), intent(inout) :: OBC
+  type(OBC_segment_type), intent(in) :: seg
+
+  ! OBC flags
+  if (seg%Flather) then ; if (seg%is_E_or_W_2) then
+    OBC%Flather_u_BCs_exist_globally = .true.
+  else
+    OBC%Flather_v_BCs_exist_globally = .true.
+  endif ; endif
+
+  if (seg%radiation .or. seg%radiation_tan) &
+    OBC%radiation_BCs_exist_globally = .true.
+
+  if (seg%oblique .or. seg%oblique_tan) &
+    OBC%oblique_BCs_exist_globally = .true.
+
+  if (seg%nudged .or. seg%nudged_tan) then ; if (seg%is_E_or_W_2) then
+    OBC%nudged_u_BCs_exist_globally = .true.
+  else
+    OBC%nudged_v_BCs_exist_globally = .true.
+  endif ; endif
+
+  ! This avoids deallocation
+  if (seg%specified) then ; if (seg%is_E_or_W_2) then
+    OBC%specified_u_BCs_exist_globally = .true.
+  else
+    OBC%specified_v_BCs_exist_globally = .true.
+  endif ; endif
+
+  if (seg%open) then ; if (seg%is_E_or_W_2) then
+    OBC%open_u_BCs_exist_globally = .true.
+  else
+    OBC%open_v_BCs_exist_globally = .true.
+  endif ; endif
+end subroutine
 
 !> Enables OBC module and reads configuration parameters
 !! This routine is called from MOM_initialize_fixed which
@@ -814,7 +843,7 @@ subroutine open_boundary_config(G, US, param_file, OBC)
     OBC%segment(n)%open = .false.
     OBC%segment(n)%gradient = .false.
     OBC%segment(n)%values_needed(:) = .false.
-    call OBC%segment(n)%update_values_needed(tides=OBC%add_tide_constituents)
+    call OBC%segment(n)%enable_values_needed(tides=OBC%add_tide_constituents)
     OBC%segment(n)%direction = OBC_NONE
     OBC%segment(n)%is_N_or_S = .false.
     OBC%segment(n)%is_E_or_W = .false.
@@ -835,14 +864,8 @@ subroutine open_boundary_config(G, US, param_file, OBC)
           "Documentation needs to be dynamic?????", &
           fail_if_missing=.true.)
     segment_str = remove_spaces(segment_str)
-    if (segment_str(1:2) == 'I=') then
-      call setup_u_point_obc(OBC, G, US, segment_str, n_seg, n, param_file, reentrant_y)
-    elseif (segment_str(1:2) == 'J=') then
-      call setup_v_point_obc(OBC, G, US, segment_str, n_seg, n, param_file, reentrant_x)
-    else
-      call MOM_error(FATAL, "MOM_open_boundary.F90, open_boundary_config: "//&
-            "Unable to interpret "//segment_param_str//" = "//trim(segment_str))
-    endif
+    call setup_OBC_segment_config(OBC, G, US, segment_str, n_seg, n, param_file, &
+                                  (/reentrant_x, reentrant_y/))
   enddo
   ! Set arrays indicating the segment number and segment direction, and also store the
   ! range of indices within which various orientations of OBCs can be found on this PE.
@@ -1234,7 +1257,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
       endif
 
       ! Check on which values this field is providing and store the field number for later retrievals.
-      call segment%update_values_needed_from_field(segment%field(m)%name, m)
+      call segment%disable_values_needed_from_field(segment%field(m)%name, m)
 
     enddo ! m-loop for fields
 
@@ -1641,8 +1664,8 @@ subroutine setup_segment_indices(G, seg, Is_obc, Ie_obc, Js_obc, Je_obc)
 
 end subroutine setup_segment_indices
 
-!> Parse an OBC_SEGMENT_%%% string starting with "I=" and configure placement and type of OBC accordingly
-subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reentrant_y)
+!> Parse an OBC_SEGMENT_%%% string and configure placement and type of OBC accordingly
+subroutine setup_OBC_segment_config(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reentrants)
   type(ocean_OBC_type),    intent(inout) :: OBC !< Open boundary control structure
   type(dyn_horgrid_type),  intent(in) :: G   !< Ocean grid structure
   type(unit_scale_type),   intent(in) :: US  !< A dimensional unit scaling type
@@ -1650,165 +1673,80 @@ subroutine setup_u_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
   integer,                 intent(in) :: l_seg !< The internal segment number
   integer,                 intent(in) :: l_seg_io !< The segment number used for reading parameters
   type(param_file_type),   intent(in) :: PF  !< Parameter file handle
-  logical, intent(in)                 :: reentrant_y !< is the domain reentrant in y?
+  logical, intent(in)                 :: reentrants(2) !< is the domain reentrant in y?
 
   ! Local variables
-  integer :: I_obc, Js_obc, Je_obc ! Position of segment in global index space
+  logical :: dir_ew
+  integer :: l_obc, m_obc, n_obc ! Positions of segment in global index space
   integer :: I, j, a_loop
   character(len=32) :: action_str(8)
   character(len=128) :: segment_param_str
   real, allocatable, dimension(:)  :: tnudge ! Nudging timescales [T ~> s]
 
-  ! This returns the global indices for the segment
-  call parse_segment_str(G%ieg, G%jeg, segment_str, I_obc, Js_obc, Je_obc, action_str, reentrant_y)
+  ! This returns the global indices and orientation for the segment
+  call parse_segment_str(G%ieg, G%jeg, segment_str, l_obc, m_obc, n_obc, action_str, &
+                         .false., reentrants=reentrants, dir_ew=dir_ew)
 
-  ! Set OBC%segment(l_seg)%HI, %direction and %on_pe from I_obc, Js_obc, Je_obc
-  call setup_segment_indices(G, OBC%segment(l_seg), I_obc, I_obc, Js_obc, Je_obc)
+  ! Set OBC%segment(l_seg)%HI, %direction and %on_pe from l_obc, m_obc, n_obc
+  if (dir_ew) then
+    call setup_segment_indices(G, OBC%segment(l_seg), l_obc, l_obc, m_obc, n_obc)
+  else
+    call setup_segment_indices(G, OBC%segment(l_seg), m_obc, n_obc, l_obc, l_obc)
+  endif
 
+  ! Update OBC%segment(l_seg) flags from OBC modes
   do a_loop = 1,8 ! up to 8 options available
     if (len_trim(action_str(a_loop)) == 0) cycle
-
-    ! Segment flags
-    call OBC%segment(l_seg)%apply_OBC_mode(trim(action_str(a_loop)))
-
-    ! OBC flags
-    select case (trim(action_str(a_loop)))
-      case('FLATHER')
-        OBC%Flather_u_BCs_exist_globally = .true.
-        OBC%open_u_BCs_exist_globally = .true.
-      case('ORLANSKI')
-        OBC%open_u_BCs_exist_globally = .true.
-        OBC%radiation_BCs_exist_globally = .true.
-      case('ORLANSKI_TAN')
-        OBC%radiation_BCs_exist_globally = .true.
-      case('OBLIQUE')
-        OBC%oblique_BCs_exist_globally = .true.
-        OBC%open_u_BCs_exist_globally = .true.
-      case('OBLIQUE_TAN')
-        OBC%oblique_BCs_exist_globally = .true.
-      case('NUDGED')
-        OBC%nudged_u_BCs_exist_globally = .true.
-      case('NUDGED_TAN')
-        OBC%nudged_u_BCs_exist_globally = .true.
-      case('GRADIENT')
-        OBC%open_u_BCs_exist_globally = .true.
-      case('SIMPLE')
-        OBC%specified_u_BCs_exist_globally = .true. ! This avoids deallocation
-    end select
-
-    if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
-      write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
-      allocate(tnudge(2))
-      call get_param(PF, mdl, segment_param_str(1:43), tnudge, &
-                     "Timescales in days for nudging along a segment, "//&
-                     "for inflow, then outflow. Setting both to zero should "//&
-                     "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
-      deallocate(tnudge)
-    endif
-  end do
-
-  ! Set ocean_OBC_type components
-  I = OBC%segment(l_seg)%HI%IsdB
-  do j=OBC%segment(l_seg)%HI%jsd, OBC%segment(l_seg)%HI%jed
-    OBC%segnum_u(I,j) = l_seg
-    if (OBC%segment(l_seg)%direction == OBC_DIRECTION_W) OBC%segnum_u(I,j) = -l_seg
+    call OBC%segment(l_seg)%update_OBC_mode(trim(action_str(a_loop)))
   enddo
 
-  if (OBC%segment(l_seg)%on_pe) then
-    OBC%u_OBCs_on_PE = .true.
-    call allocate_OBC_segment_data(OBC, OBC%segment(l_seg))
+  if (OBC%segment(l_seg)%oblique .and. OBC%segment(l_seg)%radiation) &
+    call MOM_error(FATAL, "MOM_open_boundary.F90, segment_config: \n"//&
+                   "Orlanski and Oblique OBC options cannot be used together on one segment.")
+
+  if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
+    write(segment_param_str(1:43), "('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
+    allocate(tnudge(2))
+    call get_param(PF, mdl, segment_param_str(1:43), tnudge, "Timescales in days for nudging "//&
+                   "along a segment, for inflow, then outflow. Setting both to zero should "//&
+                   "behave like SIMPLE OBCs for the baroclinic velocities.", &
+                   fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
+    OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
+    OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
+    deallocate(tnudge)
   endif
 
-end subroutine setup_u_point_obc
-
-!> Parse an OBC_SEGMENT_%%% string starting with "J=" and configure placement and type of OBC accordingly
-subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reentrant_x)
-  type(ocean_OBC_type),    intent(inout) :: OBC !< Open boundary control structure
-  type(dyn_horgrid_type),  intent(in) :: G   !< Ocean grid structure
-  type(unit_scale_type),   intent(in) :: US  !< A dimensional unit scaling type
-  character(len=*),        intent(in) :: segment_str !< A string in form of "J=%,I=%:%,string"
-  integer,                 intent(in) :: l_seg !< The internal segment number
-  integer,                 intent(in) :: l_seg_io !< The segment number used for reading parameters
-  type(param_file_type),   intent(in) :: PF  !< Parameter file handle
-  logical, intent(in)                 :: reentrant_x !< is the domain reentrant in x?
-  ! Local variables
-  integer :: J_obc, Is_obc, Ie_obc ! Position of segment in global index space
-  integer :: i, J, a_loop
-  character(len=32) :: action_str(8)
-  character(len=128) :: segment_param_str
-  real, allocatable, dimension(:)  :: tnudge ! Nudging timescales [T ~> s]
-
-  ! This returns the global indices for the segment
-  call parse_segment_str(G%ieg, G%jeg, segment_str, J_obc, Is_obc, Ie_obc, action_str, reentrant_x)
-
-  ! Set OBC%segment(l_seg)%HI, %direction and %on_pe from Is_obc, Ie_obc, J_obc
-  call setup_segment_indices(G, OBC%segment(l_seg), Is_obc, Ie_obc, J_obc, J_obc)
-
-  do a_loop = 1,8
-    if (len_trim(action_str(a_loop)) == 0) cycle
-
-    ! Segment flags
-    call OBC%segment(l_seg)%apply_OBC_mode(trim(action_str(a_loop)))
-
-    ! OBC flags
-    select case (trim(action_str(a_loop)))
-      case('FLATHER')
-        OBC%Flather_v_BCs_exist_globally = .true.
-        OBC%open_v_BCs_exist_globally = .true.
-      case('ORLANSKI')
-        OBC%open_v_BCs_exist_globally = .true.
-        OBC%radiation_BCs_exist_globally = .true.
-      case('ORLANSKI_TAN')
-        OBC%radiation_BCs_exist_globally = .true.
-      case('OBLIQUE')
-        OBC%oblique_BCs_exist_globally = .true.
-        OBC%open_v_BCs_exist_globally = .true.
-      case('OBLIQUE_TAN')
-        OBC%oblique_BCs_exist_globally = .true.
-      case('NUDGED')
-        OBC%nudged_v_BCs_exist_globally = .true.
-      case('NUDGED_TAN')
-        OBC%nudged_v_BCs_exist_globally = .true.
-      case('GRADIENT')
-        OBC%open_v_BCs_exist_globally = .true.
-      case('SIMPLE')
-        OBC%specified_v_BCs_exist_globally = .true. ! This avoids deallocation
-    end select
-
-    if (OBC%segment(l_seg)%nudged .or. OBC%segment(l_seg)%nudged_tan) then
-      write(segment_param_str(1:43),"('OBC_SEGMENT_',i3.3,'_VELOCITY_NUDGING_TIMESCALES')") l_seg_io
-      allocate(tnudge(2))
-      call get_param(PF, mdl, segment_param_str(1:43), tnudge, &
-                     "Timescales in days for nudging along a segment, "//&
-                     "for inflow, then outflow. Setting both to zero should "//&
-                     "behave like SIMPLE obcs for the baroclinic velocities.", &
-                     fail_if_missing=.true., units="days", scale=86400.0*US%s_to_T)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_in = tnudge(1)
-      OBC%segment(l_seg)%Velocity_nudging_timescale_out = tnudge(2)
-      deallocate(tnudge)
-    endif
-  enddo
-
   ! Set ocean_OBC_type components
-  J = OBC%segment(l_seg)%HI%JsdB
-  do i=OBC%segment(l_seg)%HI%isd, OBC%segment(l_seg)%HI%ied
-    OBC%segnum_v(i,J) = l_seg
-    if (OBC%segment(l_seg)%direction == OBC_DIRECTION_S) OBC%segnum_v(i,J) = -l_seg
-  enddo
+  call update_OBC_flags(OBC, OBC%segment(l_seg))
 
-  if (OBC%segment(l_seg)%on_pe) then
-    OBC%v_OBCs_on_PE = .true.
-    call allocate_OBC_segment_data(OBC, OBC%segment(l_seg))
+  if (dir_ew) then
+    I = OBC%segment(l_seg)%HI%IsdB
+    do j=OBC%segment(l_seg)%HI%jsd, OBC%segment(l_seg)%HI%jed
+      OBC%segnum_u(I,j) = l_seg
+      if (OBC%segment(l_seg)%direction == OBC_DIRECTION_W) OBC%segnum_u(I,j) = -l_seg
+    enddo
+  else
+    J = OBC%segment(l_seg)%HI%JsdB
+    do i=OBC%segment(l_seg)%HI%isd, OBC%segment(l_seg)%HI%ied
+      OBC%segnum_v(i,J) = l_seg
+      if (OBC%segment(l_seg)%direction == OBC_DIRECTION_S) OBC%segnum_v(i,J) = -l_seg
+    enddo
   endif
 
-end subroutine setup_v_point_obc
+  if (OBC%segment(l_seg)%on_pe) then
+    if (dir_ew) then
+      OBC%u_OBCs_on_PE = .true.
+    else
+      OBC%v_OBCs_on_PE = .true.
+    endif
+    call allocate_OBC_segment_data(OBC, OBC%segment(l_seg))
+  endif
+end subroutine setup_OBC_segment_config
 
-!> Parse an OBC_SEGMENT_%%% string. The last two fields are made optional for backward compatibility in SIS2.
+!> Parse an OBC_SEGMENT_%%% string. The subroutine interface is for backward compatibility in SIS2.
+!! A more concise form would be outputting Is, Ie, Js, Je directly.
 subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_str, reentrant, &
-                             reentrants, dir_ns)
+                             reentrants, dir_ew)
   integer,          intent(in)  :: ni_global !< Number of h-points in zonal direction
   integer,          intent(in)  :: nj_global !< Number of h-points in meridional direction
   character(len=*), intent(in)  :: segment_str !< A string in form of "I=l,J=m:n,string" or "J=l,I=m,n,string"
@@ -1818,8 +1756,8 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
   character(len=*), intent(out) :: action_str(:) !< The "string" part of segment_str
   logical,          intent(in)  :: reentrant !< is domain reentrant in relevant direction?
   logical, optional,intent(in)  :: reentrants(2) !< If true, the domain is reentrant in
-                                                 !! x [reetrants(1)] and y [reentrants(2)]
-  logical, optional,intent(out) :: dir_ns !< If true, the segment is north-south.
+                                                 !! x [reentrants(1)] and y [reentrants(2)].
+  logical, optional,intent(out) :: dir_ew !< If true, the segment orientation is east-west.
 
   ! Local variables
   character(len=24) :: word1, word2, m_word, n_word ! Words delineated by commas in a string in form of
@@ -1830,7 +1768,7 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
   integer :: j
   integer, parameter :: halo = 10
   logical :: reentr_x, reentr_y, reentr ! local reentrant copies
-  logical :: is_ns ! local dir_ns copy
+  logical :: is_ew ! local dir_ew copy
 
   reentr_x = reentrant ; if (present(reentrants)) reentr_x = reentrants(1)
   reentr_y = reentrant ; if (present(reentrants)) reentr_y = reentrants(2)
@@ -1843,7 +1781,7 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
       l_max = ni_global
       mn_max = nj_global
       reentr = reentr_y
-      is_ns = .false.
+      is_ew = .true.
       if (.not. (word2(1:2)=='J=')) &
         call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
                        "Second word of string '"//trim(segment_str)//"' must start with 'J='.")
@@ -1851,7 +1789,7 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
       l_max = nj_global
       mn_max = ni_global
       reentr = reentr_x
-      is_ns = .true.
+      is_ew = .false.
       if (.not. (word2(1:2)=='I=')) &
         call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
                        "Second word of string '"//trim(segment_str)//"' must start with 'I='.")
@@ -1860,7 +1798,7 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
                      "String '"//segment_str//"' must start with 'I=' or 'J='.")
   end select
 
-  if (present(dir_ns)) dir_ns = is_ns
+  if (present(dir_ew)) dir_ew = is_ew
 
   ! Read l
   l = interpret_int_expr( word1(3:24), l_max )
