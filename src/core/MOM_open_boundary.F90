@@ -1778,8 +1778,9 @@ subroutine setup_v_point_obc(OBC, G, US, segment_str, l_seg, l_seg_io, PF, reent
 
 end subroutine setup_v_point_obc
 
-!> Parse an OBC_SEGMENT_%%% string
-subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_str, reentrant)
+!> Parse an OBC_SEGMENT_%%% string. The last two fields are made optional for backward compatibility in SIS2.
+subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_str, reentrant, &
+                             reentrants, dir_ns)
   integer,          intent(in)  :: ni_global !< Number of h-points in zonal direction
   integer,          intent(in)  :: nj_global !< Number of h-points in meridional direction
   character(len=*), intent(in)  :: segment_str !< A string in form of "I=l,J=m:n,string" or "J=l,I=m,n,string"
@@ -1788,32 +1789,50 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
   integer,          intent(out) :: n !< The value of J=n, if segment_str begins with I=, or the value of I=n
   character(len=*), intent(out) :: action_str(:) !< The "string" part of segment_str
   logical,          intent(in)  :: reentrant !< is domain reentrant in relevant direction?
+  logical, optional,intent(in)  :: reentrants(2) !< If true, the domain is reentrant in
+                                                 !! x [reetrants(1)] and y [reentrants(2)]
+  logical, optional,intent(out) :: dir_ns !< If true, the segment is north-south.
+
   ! Local variables
-  character(len=24) :: word1, word2, m_word, n_word !< Words delineated by commas in a string in form of
-                                                    !! "I=%,J=%:%,string"
-  character(len=3) :: max_words !< maximum number of OBC types per segment
-  integer :: l_max !< Either ni_global or nj_global, depending on whether segment_str begins with "I=" or "J="
-  integer :: mn_max !< Either nj_global or ni_global, depending on whether segment_str begins with "I=" or "J="
+  character(len=24) :: word1, word2, m_word, n_word ! Words delineated by commas in a string in form of
+                                                    ! "I=%,J=%:%,string"
+  character(len=3) :: max_words ! maximum number of OBC types per segment
+  integer :: l_max ! Either ni_global or nj_global, depending on whether segment_str begins with "I=" or "J="
+  integer :: mn_max ! Either nj_global or ni_global, depending on whether segment_str begins with "I=" or "J="
   integer :: j
   integer, parameter :: halo = 10
+  logical :: reentr_x, reentr_y, reentr ! local reentrant copies
+  logical :: is_ns ! local dir_ns copy
+
+  reentr_x = reentrant ; if (present(reentrants)) reentr_x = reentrants(1)
+  reentr_y = reentrant ; if (present(reentrants)) reentr_y = reentrants(2)
 
   ! Process first word which will started with either 'I=' or 'J='
   word1 = extract_word(segment_str,',',1)
   word2 = extract_word(segment_str,',',2)
-  if (word1(1:2)=='I=') then
-    l_max = ni_global
-    mn_max = nj_global
-    if (.not. (word2(1:2)=='J=')) call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
-                     "Second word of string '"//trim(segment_str)//"' must start with 'J='.")
-  elseif (word1(1:2)=='J=') then ! Note that the file_parser uniformly expands "=" to " = "
-    l_max = nj_global
-    mn_max = ni_global
-    if (.not. (word2(1:2)=='I=')) call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
-                     "Second word of string '"//trim(segment_str)//"' must start with 'I='.")
-  else
-    call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str"//&
-                   "String '"//segment_str//"' must start with 'I=' or 'J='.")
-  endif
+  select case (word1(1:2))
+    case('I=')
+      l_max = ni_global
+      mn_max = nj_global
+      reentr = reentr_y
+      is_ns = .false.
+      if (.not. (word2(1:2)=='J=')) &
+        call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
+                       "Second word of string '"//trim(segment_str)//"' must start with 'J='.")
+    case('J=') ! Note that the file_parser uniformly expands "=" to " = "
+      l_max = nj_global
+      mn_max = ni_global
+      reentr = reentr_x
+      is_ns = .true.
+      if (.not. (word2(1:2)=='I=')) &
+        call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
+                       "Second word of string '"//trim(segment_str)//"' must start with 'I='.")
+    case default
+      call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str"//&
+                     "String '"//segment_str//"' must start with 'I=' or 'J='.")
+  end select
+
+  if (present(dir_ns)) dir_ns = is_ns
 
   ! Read l
   l = interpret_int_expr( word1(3:24), l_max )
@@ -1825,7 +1844,7 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
   ! Read m
   m_word = extract_word(word2(3:24),':',1)
   m = interpret_int_expr( m_word, mn_max )
-  if (reentrant) then
+  if (reentr) then
     if (m<-halo .or. m>mn_max+halo) then
       call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
                      "Beginning of range in string '"//trim(segment_str)//"' is outside of the physical domain.")
@@ -1840,7 +1859,7 @@ subroutine parse_segment_str(ni_global, nj_global, segment_str, l, m, n, action_
   ! Read n
   n_word = extract_word(word2(3:24),':',2)
   n = interpret_int_expr( n_word, mn_max )
-  if (reentrant) then
+  if (reentr) then
     if (n<-halo .or. n>mn_max+halo) then
       call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_str: "//&
                      "End of range in string '"//trim(segment_str)//"' is outside of the physical domain.")
