@@ -67,7 +67,7 @@ type, public :: continuity_PPM_CS ; private
                              !! continuity solver for use as the weights in the
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
-  logical :: use_clamp
+  logical :: use_clamp, print_clamp
   logical :: split_limiter
 end type continuity_PPM_CS
 
@@ -702,7 +702,7 @@ subroutine zonal_mass_flux(u, h_in, h_W, h_E, uh, dt, G, GV, US, CS, OBC, por_fa
       call zonal_flux_layer(u(:,j,k), h_in(:,j,k), h_W(:,j,k), h_E(:,j,k), &
                             uh(:,j,k), duhdu(:,k), visc_rem(:,k), &
                             dt, G, US, j, ish, ieh, do_I, CS%vol_CFL, por_face_areaU(:,j,k), &
-                            CS%h_marg_min, OBC)
+                            CS%h_marg_min, OBC, clamp=CS%use_clamp, print_clamp=CS%print_clamp)
       if (local_specified_BC) then
         do I=ish-1,ieh ; if (OBC%segnum_u(I,j) /= 0) then
           l_seg = abs(OBC%segnum_u(I,j))
@@ -972,7 +972,7 @@ end subroutine zonal_BT_mass_flux
 
 !> Evaluates the zonal mass or volume fluxes in a layer.
 subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
-                            ish, ieh, do_I, vol_CFL, por_face_areaU, h_marg_min, OBC, clamp)
+                            ish, ieh, do_I, vol_CFL, por_face_areaU, h_marg_min, OBC, clamp, print_clamp)
   type(ocean_grid_type),        intent(in)    :: G        !< Ocean's grid structure.
   real, dimension(SZIB_(G)),    intent(in)    :: u        !< Zonal velocity [L T-1 ~> m s-1].
   real, dimension(SZIB_(G)),    intent(in)    :: visc_rem !< Both the fraction of the
@@ -998,7 +998,7 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
           !! ratio of face areas to the cell areas when estimating the CFL number.
   real,                         intent(in)    :: h_marg_min !< Negligible floor on h_marg [H ~> m or kg m-2]
   type(ocean_OBC_type), optional, pointer     :: OBC !< Open boundaries control structure.
-  logical, optional, intent(in) :: clamp
+  logical, optional, intent(in) :: clamp, print_clamp
   ! Local variables
   real :: CFL  ! The CFL number based on the local velocity and grid spacing [nondim]
   real :: curv_3 ! A measure of the thickness curvature over a grid length [H ~> m or kg m-2]
@@ -1007,9 +1007,11 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
   integer :: l_seg
   logical :: local_open_BC
   real :: a, b, c, dx
-  logical :: do_clamp
+  logical :: do_clamp, do_print_clamp
+  character(len=1000) :: msg
 
   do_clamp = .false. ; if (present(clamp)) do_clamp = clamp
+  do_print_clamp = .false. ; if (present(print_clamp)) do_print_clamp = print_clamp
 
   local_open_BC = .false.
   if (present(OBC)) then ; if (associated(OBC)) then
@@ -1029,6 +1031,11 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       c = h_W(i)
       call find_int_limit_left(a, b, c, CFL, dx)
 
+      if (do_print_clamp .and. (dx < CFL)) then
+        write(msg, *) 'Clamped transport (u>0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hw, he, h', h_w(i), h_e(i), h(i), 'D', G%bathyT(i,j)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
+
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (dx * G%IdxT(i,j) / dt) * &
           (h_E(i) + dx * (0.5*(h_W(i) - h_E(i)) + curv_3*(dx - 1.5)))
       else
@@ -1046,6 +1053,11 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       b = h_E(i+1) - h_W(i+1) - 3 * curv_3
       c = h_W(i+1)
       call find_int_limit_right(a, b, c, CFL, dx)
+
+      if (do_print_clamp .and. (dx < CFL)) then
+        write(msg, *) 'Clamped transport (u<0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hw, he, h', h_w(i), h_e(i), h(i), 'D', G%bathyT(i,j)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
 
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (dx * G%IdxT(i+1,j) / dt) * &
           (h_W(i+1) + dx * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(dx - 1.5)))
@@ -1630,7 +1642,7 @@ subroutine meridional_mass_flux(v, h_in, h_S, h_N, vh, dt, G, GV, US, CS, OBC, p
       call merid_flux_layer(v(:,J,k), h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), &
                             vh(:,J,k), dvhdv(:,k), visc_rem(:,k), &
                             dt, G, US, J, ish, ieh, do_I, CS%vol_CFL, por_face_areaV(:,:,k), &
-                            CS%h_marg_min, OBC)
+                            CS%h_marg_min, OBC, clamp=CS%use_clamp, print_clamp=CS%print_clamp)
       if (local_specified_BC) then
         do i=ish,ieh ; if (OBC%segnum_v(i,J) /= 0) then
           l_seg = abs(OBC%segnum_v(i,J))
@@ -1898,7 +1910,7 @@ end subroutine meridional_BT_mass_flux
 
 !> Evaluates the meridional mass or volume fluxes in a layer.
 subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
-                            ish, ieh, do_I, vol_CFL, por_face_areaV, h_marg_min, OBC, clamp)
+                            ish, ieh, do_I, vol_CFL, por_face_areaV, h_marg_min, OBC, clamp, print_clamp)
   type(ocean_grid_type),        intent(in)    :: G        !< Ocean's grid structure.
   real, dimension(SZI_(G)),     intent(in)    :: v        !< Meridional velocity [L T-1 ~> m s-1].
   real, dimension(SZI_(G)),     intent(in)    :: visc_rem !< Both the fraction of the
@@ -1928,7 +1940,7 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
                              intent(in) :: por_face_areaV !< fractional open area of V-faces [nondim]
   real,                         intent(in)    :: h_marg_min !< Negligible floor on h_marg [H ~> m or kg m-2]
   type(ocean_OBC_type), optional, pointer :: OBC !< Open boundaries control structure.
-  logical, optional, intent(in) :: clamp
+  logical, optional, intent(in) :: clamp, print_clamp
   ! Local variables
   real :: CFL ! The CFL number based on the local velocity and grid spacing [nondim]
   real :: curv_3 ! A measure of the thickness curvature over a grid length,
@@ -1937,9 +1949,11 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
   integer :: i
   logical :: local_open_BC
   real :: a, b, c, dx
-  logical :: do_clamp
+  logical :: do_clamp, do_print_clamp
+  character(len=1000) :: msg
 
   do_clamp = .false. ; if (present(clamp)) do_clamp = clamp
+  do_print_clamp = .false. ; if (present(print_clamp)) do_print_clamp = print_clamp
 
   local_open_BC = .false.
   if (present(OBC)) then ; if (associated(OBC)) then
@@ -1957,6 +1971,13 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       b = h_N(i,j) - h_S(i,j)- 3 * curv_3
       c = h_S(i,j)
       call find_int_limit_left(a, b, c, CFL, dx)
+
+
+      if (do_print_clamp .and. (dx < CFL)) then
+        write(msg, *) 'Clamped transport (v>0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hs, hn, h', h_s(i,j), h_n(i,j), h(i,j), 'D', G%bathyT(i,j)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
+
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j) / dt)* ( h_N(i,j) + dx * &
           (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(dx - 1.5)) )
       else
@@ -1975,6 +1996,12 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       b = h_N(i,j+1) - h_S(i,j+1) - 3 * curv_3
       c = h_S(i,j+1)
       call find_int_limit_right(a, b, c, CFL, dx)
+
+      if (do_print_clamp .and. (dx < CFL)) then
+        write(msg, *) 'Clamped transport (v<0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hs, hn, h', h_s(i,j), h_n(i,j), h(i,j), 'D', G%bathyT(i,j)
+        call MOM_error(WARNING, trim(msg), all_print=.true.)
+      endif
+
 
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j+1) / dt) * ( h_S(i,j+1) + dx * &
           (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(dx - 1.5)) )
@@ -2955,6 +2982,8 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
                  "is bounded from below by a sub-roundoff value. Otherwise the "//&
                  "minimum is 0.", default=.false.)
   call get_param(param_file, mdl, "CONT_USE_CLAMP", CS%use_clamp, &
+                 "If true, clamp by topography.", default=.false.)
+  call get_param(param_file, mdl, "CONT_PRINT_CLAMP", CS%print_clamp, &
                  "If true, clamp by topography.", default=.false.)
   call get_param(param_file, mdl, "CONT_USE_SPLIT_LIMITER", CS%split_limiter, &
                  "If true, use split limiter.", default=.false.)
