@@ -84,6 +84,23 @@ end interface continuity_fluxes
 
 contains
 
+subroutine find_eta(G, GV, h, eta)
+  type(ocean_grid_type),   intent(in)    :: G   !< The ocean's grid structure.
+  type(verticalGrid_type), intent(in)    :: GV  !< Vertical grid structure.
+  real, dimension(SZI_(G),SZJ_(G),SZK_(GV)), &
+                           intent(in) :: h   !< Final layer thickness [H ~> m or kg m-2].
+  real, intent(out) :: eta(SZI_(G),SZJ_(G),SZK_(GV)+1) ! eta
+
+  integer :: i, j, k
+
+  do j = G%jsd, G%jed ; do i = G%isd, G%ied
+    eta(i,j,GV%ke+1) = -G%bathyT(i,j)
+  enddo ; enddo
+  do k = GV%ke, 1, -1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+    eta(i,j,K) = eta(i,j,K+1) + h(i,j,k)
+  enddo ; enddo ; enddo
+end subroutine
+
 !> Time steps the layer thicknesses, using a monotonically limit, directionally split PPM scheme,
 !! based on Lin (1994).
 subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhbt, vhbt, &
@@ -144,6 +161,15 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
                                                  !! as the depth-integrated transports [L T-1 ~> m s-1].
 
   ! Local variables
+  real :: eta(SZI_(G),SZJ_(G),SZK_(GV)+1) ! eta
+  real :: D_W(SZI_(G),SZJ_(G)) ! West edge thicknesses in the zonal PPM reconstruction [H ~> m or kg m-2]
+  real :: D_E(SZI_(G),SZJ_(G)) ! East edge thicknesses in the zonal PPM reconstruction [H ~> m or kg m-2]
+  real :: D_S(SZI_(G),SZJ_(G)) ! South edge thicknesses in the meridional PPM reconstruction [H ~> m or kg m-2]
+  real :: D_N(SZI_(G),SZJ_(G)) ! North edge thicknesses in the meridional PPM reconstruction [H ~> m or kg m-2]
+
+  real :: h_L(SZI_(G),SZJ_(G),SZK_(GV)) ! West edge thicknesses in the zonal PPM reconstruction [H ~> m or kg m-2]
+  real :: h_R(SZI_(G),SZJ_(G),SZK_(GV)) ! East edge thicknesses in the zonal PPM reconstruction [H ~> m or kg m-2]
+
   real :: h_W(SZI_(G),SZJ_(G),SZK_(GV)) ! West edge thicknesses in the zonal PPM reconstruction [H ~> m or kg m-2]
   real :: h_E(SZI_(G),SZJ_(G),SZK_(GV)) ! East edge thicknesses in the zonal PPM reconstruction [H ~> m or kg m-2]
   real :: h_S(SZI_(G),SZJ_(G),SZK_(GV)) ! South edge thicknesses in the meridional PPM reconstruction [H ~> m or kg m-2]
@@ -151,6 +177,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
   real :: h_min  ! The minimum layer thickness [H ~> m or kg m-2].  h_min could be 0.
   type(cont_loop_bounds_type) :: LB ! A type indicating the loop range for a phase of the updates
   logical :: x_first
+  integer :: i, j, k
 
   h_min = GV%Angstrom_H
 
@@ -163,18 +190,48 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
       "MOM_continuity_PPM: Either both visc_rem_u and visc_rem_v or neither"// &
       " one must be present in call to continuity_PPM.")
 
+  ! Reconstruct topo with simple 2nd
+  LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.true.)
+  call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
+                          2.0*GV%Angstrom_H, .true., .true., OBC, 0, no_limiter=.true.)
+  call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
+                          2.0*GV%Angstrom_H, .true., .true., OBC, 0, no_limiter=.true.)
+
   if (x_first) then
     !  First advect zonally, with loop bounds that accomodate the subsequent meridional advection.
+    call find_eta(G, GV, hin, eta)
+
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
-    call zonal_edge_thickness(hin, h_W, h_E, G, GV, US, CS, OBC, LB)
-    call zonal_mass_flux(u, hin, h_W, h_E, uh, dt, G, GV, US, CS, OBC, pbv%por_face_areaU, &
+    call zonal_edge_thickness(eta(:,:,1:GV%ke), h_W, h_E, G, GV, US, CS, OBC, LB)
+
+    do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+      h_L(i,j,k) = max(h_W(i,j,K) - h_W(i,j,K+1), h_min)
+      h_R(i,j,k) = max(h_E(i,j,K) - h_E(i,j,K+1), h_min)
+    enddo ; enddo ; enddo
+    do j = G%jsd, G%jed ; do i = G%isd, G%ied
+      h_L(i,j,GV%ke) = h_W(i,j,GV%ke) + D_W(i,j)
+      h_R(i,j,GV%ke) = h_E(i,j,GV%ke) + D_E(i,j)
+    enddo ; enddo
+
+    call zonal_mass_flux(u, hin, h_L, h_R, uh, dt, G, GV, US, CS, OBC, pbv%por_face_areaU, &
                          LB, uhbt, visc_rem_u, u_cor, BT_cont, du_cor)
     call continuity_zonal_convergence(h, uh, dt, G, GV, LB, hin)
 
     !  Now advect meridionally, using the updated thicknesses to determine the fluxes.
+    call find_eta(G, GV, h, eta)
+
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.false.)
-    call meridional_edge_thickness(h, h_S, h_N, G, GV, US, CS, OBC, LB)
-    call meridional_mass_flux(v, h, h_S, h_N, vh, dt, G, GV, US, CS, OBC, pbv%por_face_areaV, &
+    call meridional_edge_thickness(eta(:,:,1:GV%ke), h_S, h_N, G, GV, US, CS, OBC, LB)
+
+    do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+      h_L(i,j,k) = max(h_S(i,j,K) - h_S(i,j,K+1), h_min)
+      h_R(i,j,k) = max(h_N(i,j,K) - h_N(i,j,K+1), h_min)
+    enddo ; enddo ; enddo
+    do j = G%jsd, G%jed ; do i = G%isd, G%ied
+      h_L(i,j,GV%ke) = h_S(i,j,GV%ke) + D_S(i,j)
+      h_R(i,j,GV%ke) = h_N(i,j,GV%ke) + D_N(i,j)
+    enddo ; enddo
+    call meridional_mass_flux(v, h, h_L, h_R, vh, dt, G, GV, US, CS, OBC, pbv%por_face_areaV, &
                               LB, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor)
     call continuity_merdional_convergence(h, vh, dt, G, GV, LB, hmin=h_min)
 
@@ -932,6 +989,7 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
   integer :: i
   integer :: l_seg
   logical :: local_open_BC
+  real :: a, b, c, dx
 
   local_open_BC = .false.
   if (present(OBC)) then ; if (associated(OBC)) then
@@ -944,15 +1002,27 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       if (vol_CFL) then ; CFL = (u(I) * dt) * (G%dy_Cu(I,j) * G%IareaT(i,j))
       else ; CFL = u(I) * dt * G%IdxT(i,j) ; endif
       curv_3 = (h_W(i) + h_E(i)) - 2.0*h(i)
-      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
-          (h_E(i) + CFL * (0.5*(h_W(i) - h_E(i)) + curv_3*(CFL - 1.5)))
+
+      a = 3 * curv_3
+      b = h_W(i) - h_E(i) - 3 * curv_3
+      c = h_W(i)
+      call find_int_limit_left(a, b, c, CFL, dx)
+
+      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (dx * G%IdxT(i,j) / dt) * &
+          (h_E(i) + dx * (0.5*(h_W(i) - h_E(i)) + curv_3*(dx - 1.5)))
       h_marg = h_E(i) + CFL * ((h_W(i) - h_E(i)) + 3.0*curv_3*(CFL - 1.0))
     elseif (u(I) < 0.0) then
       if (vol_CFL) then ; CFL = (-u(I) * dt) * (G%dy_Cu(I,j) * G%IareaT(i+1,j))
       else ; CFL = -u(I) * dt * G%IdxT(i+1,j) ; endif
       curv_3 = (h_W(i+1) + h_E(i+1)) - 2.0*h(i+1)
-      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
-          (h_W(i+1) + CFL * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(CFL - 1.5)))
+
+      a = 3 * curv_3
+      b = h_W(i+1) - h_E(i+1) - 3 * curv_3
+      c = h_W(i+1)
+      call find_int_limit_right(a, b, c, CFL, dx)
+
+      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (dx * G%IdxT(i+1,j) / dt) * &
+          (h_W(i+1) + dx * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(dx - 1.5)))
       h_marg = h_W(i+1) + CFL * ((h_E(i+1)-h_W(i+1)) + 3.0*curv_3*(CFL - 1.0))
     else
       uh(I) = 0.0
@@ -1835,6 +1905,7 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
   real :: h_marg ! The marginal thickness of a flux [H ~> m or kg m-2].
   integer :: i
   logical :: local_open_BC
+  real :: a, b, c, dx
 
   local_open_BC = .false.
   if (present(OBC)) then ; if (associated(OBC)) then
@@ -1846,16 +1917,28 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       if (vol_CFL) then ; CFL = (v(i) * dt) * (G%dx_Cv(i,J) * G%IareaT(i,j))
       else ; CFL = v(i) * dt * G%IdyT(i,j) ; endif
       curv_3 = (h_S(i,j) + h_N(i,j)) - 2.0*h(i,j)
-      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_N(i,j) + CFL * &
-          (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(CFL - 1.5)) )
+
+      a = 3 * curv_3
+      b = h_S(i,j) - h_N(i,j) - 3 * curv_3
+      c = h_S(i,j)
+      call find_int_limit_left(a, b, c, CFL, dx)
+
+      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j) / dt)* ( h_N(i,j) + dx * &
+          (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(dx - 1.5)) )
       h_marg = h_N(i,j) + CFL * ((h_S(i,j) - h_N(i,j)) + &
                                   3.0*curv_3*(CFL - 1.0))
     elseif (v(i) < 0.0) then
       if (vol_CFL) then ; CFL = (-v(i) * dt) * (G%dx_Cv(i,J) * G%IareaT(i,j+1))
       else ; CFL = -v(i) * dt * G%IdyT(i,j+1) ; endif
       curv_3 = (h_S(i,j+1) + h_N(i,j+1)) - 2.0*h(i,j+1)
-      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_S(i,j+1) + CFL * &
-          (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(CFL - 1.5)) )
+
+      a = 3 * curv_3
+      b = h_S(i,j+1) - h_N(i,j+1) - 3 * curv_3
+      c = h_S(i,j+1)
+      call find_int_limit_right(a, b, c, CFL, dx)
+
+      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j+1) / dt) * ( h_S(i,j+1) + dx * &
+          (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(dx - 1.5)) )
       h_marg = h_S(i,j+1) + CFL * ((h_N(i,j+1)-h_S(i,j+1)) + &
                                     3.0*curv_3*(CFL - 1.0))
     else
@@ -2323,7 +2406,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
 end subroutine set_merid_BT_cont
 
 !> Calculates left/right edge values for PPM reconstruction.
-subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_2nd, OBC, k)
+subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_2nd, OBC, k, no_limiter)
   type(ocean_grid_type),             intent(in)  :: G    !< Ocean's grid structure.
   real, dimension(SZI_(G),SZJ_(G)),  intent(in)  :: h_in !< Layer thickness [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJ_(G)),  intent(out) :: h_W  !< West edge thickness in the reconstruction,
@@ -2341,6 +2424,7 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
                     !! for a simple 2nd order scheme.
   type(ocean_OBC_type),              pointer     :: OBC !< Open boundaries control structure.
   integer :: k      !< vertical grid index
+  logical, optional, intent(in) :: no_limiter
 
   ! Local variables with useful mnemonic names.
   real, dimension(SZI_(G),SZJ_(G))  :: slp ! The slopes per grid point [H ~> m or kg m-2]
@@ -2352,6 +2436,9 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
   integer :: i, j, isl, iel, jsl, jel, n, stencil
   logical :: local_open_BC
   type(OBC_segment_type), pointer :: segment => NULL()
+  logical :: do_limiter
+
+  do_limiter = .true. ; if (present(no_limiter)) do_limiter = .not. no_limiter
 
   local_open_BC = .false.
   if (associated(OBC)) then
@@ -2467,17 +2554,19 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
     enddo
   endif
 
+  if (do_limiter) then
   if (monotonic) then
     call PPM_limit_CW84(h_in, h_W, h_E, G, isl, iel, jsl, jel)
   else
     call PPM_limit_pos(h_in, h_W, h_E, h_min, G, isl, iel, jsl, jel)
+  endif
   endif
 
   return
 end subroutine PPM_reconstruction_x
 
 !> Calculates left/right edge values for PPM reconstruction.
-subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_2nd, OBC, k)
+subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_2nd, OBC, k, no_limiter)
   type(ocean_grid_type),             intent(in)  :: G    !< Ocean's grid structure.
   real, dimension(SZI_(G),SZJ_(G)),  intent(in)  :: h_in !< Layer thickness [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJ_(G)),  intent(out) :: h_S  !< South edge thickness in the reconstruction,
@@ -2495,6 +2584,7 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
                     !! for a simple 2nd order scheme.
   type(ocean_OBC_type),              pointer     :: OBC !< Open boundaries control structure.
   integer :: k      !< vertical grid index
+  logical, optional, intent(in) :: no_limiter
 
   ! Local variables with useful mnemonic names.
   real, dimension(SZI_(G),SZJ_(G))  :: slp ! The slopes per grid point [H ~> m or kg m-2]
@@ -2506,6 +2596,9 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
   integer :: i, j, isl, iel, jsl, jel, n, stencil
   logical :: local_open_BC
   type(OBC_segment_type), pointer :: segment => NULL()
+  logical :: do_limiter
+
+  do_limiter = .true. ; if (present(no_limiter)) do_limiter = .not. no_limiter
 
   local_open_BC = .false.
   if (associated(OBC)) then
@@ -2619,10 +2712,12 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
     enddo
   endif
 
+  if (do_limiter) then
   if (monotonic) then
     call PPM_limit_CW84(h_in, h_S, h_N, G, isl, iel, jsl, jel)
   else
     call PPM_limit_pos(h_in, h_S, h_N, h_min, G, isl, iel, jsl, jel)
+  endif
   endif
 
   return
