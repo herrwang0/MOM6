@@ -3019,6 +3019,7 @@ subroutine find_int_limit_left(a, b, c, CFL, dx)
   real, intent(out) :: dx
 
   real :: disc, xp, xm, xmax, xmin
+  character(len=1000) :: msg
 
   disc = b * b - 4 * a * c
   if (a /=0 ) then
@@ -3045,7 +3046,8 @@ subroutine find_int_limit_left(a, b, c, CFL, dx)
       if (a > 0) then
         dx = CFL
       else
-        call MOM_error(FATAL, 'Not possible')
+        write(msg, *), 'a=', a, 'b=', b, 'c=', c
+        call MOM_error(FATAL, 'Not possible: left lim' // trim(msg))
       endif
     endif
   else
@@ -3067,7 +3069,8 @@ subroutine find_int_limit_left(a, b, c, CFL, dx)
       if (c>0) then
         dx = CFL
       else
-        call MOM_error(FATAL, 'Not possible')
+        write(msg, *), 'a=', a, 'b=', b, 'c=', c
+        call MOM_error(FATAL, 'Not possible: left lim' // trim(msg))
       endif
     endif
   endif
@@ -3078,6 +3081,7 @@ subroutine find_int_limit_right(a, b, c, CFL, dx)
   real, intent(out) :: dx
 
   real :: disc, xp, xm, xmax, xmin
+  character(len=1000) :: msg
 
   disc = b * b - 4 * a * c
 
@@ -3106,7 +3110,8 @@ subroutine find_int_limit_right(a, b, c, CFL, dx)
         dx = CFL
       else
         dx = 0
-        call MOM_error(FATAL, 'Not possible')
+        write(msg, *), 'a=', a, 'b=', b, 'c=', c
+        call MOM_error(FATAL, 'Not possible: right lim' // trim(msg))
       endif
     endif
   else
@@ -3128,7 +3133,8 @@ subroutine find_int_limit_right(a, b, c, CFL, dx)
       if (c>0) then
         dx = CFL
       else
-        call MOM_error(FATAL, 'Not possible')
+        write(msg, *), 'a=', a, 'b=', b, 'c=', c
+        call MOM_error(FATAL, 'Not possible: right lim' // trim(msg))
       endif
     endif
   endif
