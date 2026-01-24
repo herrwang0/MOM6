@@ -1033,7 +1033,7 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
           (h_E(i) + dx * (0.5*(h_W(i) - h_E(i)) + curv_3*(dx - 1.5)))
       else
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
-          (h_E(i) + dx * (0.5*(h_W(i) - h_E(i)) + curv_3*(dx - 1.5)))
+          (h_E(i) + CFL * (0.5*(h_W(i) - h_E(i)) + curv_3*(CFL - 1.5)))
       endif
       h_marg = h_E(i) + CFL * ((h_W(i) - h_E(i)) + 3.0*curv_3*(CFL - 1.0))
     elseif (u(I) < 0.0) then
@@ -1051,7 +1051,7 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
           (h_W(i+1) + dx * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(dx - 1.5)))
       else
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
-          (h_W(i+1) + dx * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(dx - 1.5)))
+          (h_W(i+1) + CFL * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(CFL - 1.5)))
       endif
       h_marg = h_W(i+1) + CFL * ((h_E(i+1)-h_W(i+1)) + 3.0*curv_3*(CFL - 1.0))
     else
@@ -1960,8 +1960,8 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j) / dt)* ( h_N(i,j) + dx * &
           (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(dx - 1.5)) )
       else
-      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_N(i,j) + dx * &
-          (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(dx - 1.5)) )
+      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_N(i,j) + CFL * &
+          (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(CFL - 1.5)) )
       endif
       h_marg = h_N(i,j) + CFL * ((h_S(i,j) - h_N(i,j)) + &
                                   3.0*curv_3*(CFL - 1.0))
@@ -1979,8 +1979,8 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j+1) / dt) * ( h_S(i,j+1) + dx * &
           (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(dx - 1.5)) )
       else
-      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_S(i,j+1) + dx * &
-          (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(dx - 1.5)) )
+      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_S(i,j+1) + CFL * &
+          (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(CFL - 1.5)) )
       endif
       h_marg = h_S(i,j+1) + CFL * ((h_N(i,j+1)-h_S(i,j+1)) + &
                                     3.0*curv_3*(CFL - 1.0))
