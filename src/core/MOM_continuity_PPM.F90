@@ -1005,7 +1005,7 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       curv_3 = (h_W(i) + h_E(i)) - 2.0*h(i)
 
       a = 3 * curv_3
-      b = h_W(i) - h_E(i) - 3 * curv_3
+      b = h_E(i) - h_W(i) - 3 * curv_3
       c = h_W(i)
       call find_int_limit_left(a, b, c, CFL, dx)
 
@@ -1018,7 +1018,7 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       curv_3 = (h_W(i+1) + h_E(i+1)) - 2.0*h(i+1)
 
       a = 3 * curv_3
-      b = h_W(i+1) - h_E(i+1) - 3 * curv_3
+      b = h_E(i+1) - h_W(i+1) - 3 * curv_3
       c = h_W(i+1)
       call find_int_limit_right(a, b, c, CFL, dx)
 
@@ -1920,7 +1920,7 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       curv_3 = (h_S(i,j) + h_N(i,j)) - 2.0*h(i,j)
 
       a = 3 * curv_3
-      b = h_S(i,j) - h_N(i,j) - 3 * curv_3
+      b = h_N(i,j) - h_S(i,j)- 3 * curv_3
       c = h_S(i,j)
       call find_int_limit_left(a, b, c, CFL, dx)
 
@@ -1934,7 +1934,7 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       curv_3 = (h_S(i,j+1) + h_N(i,j+1)) - 2.0*h(i,j+1)
 
       a = 3 * curv_3
-      b = h_S(i,j+1) - h_N(i,j+1) - 3 * curv_3
+      b = h_N(i,j+1) - h_S(i,j+1) - 3 * curv_3
       c = h_S(i,j+1)
       call find_int_limit_right(a, b, c, CFL, dx)
 
