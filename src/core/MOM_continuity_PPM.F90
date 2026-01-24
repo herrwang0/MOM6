@@ -3060,8 +3060,8 @@ subroutine find_int_limit_right(a, b, c, CFL, dx)
       if (a > 0) then
         if (xmax <= 0) then
           dx = CFL
-        elseif (xmin <= 0) then
-          dx = max(xmin, CFL)
+        elseif (xmin >= 0) then
+          dx = min(xmin, CFL)
         else
           dx = 0.0
         endif
