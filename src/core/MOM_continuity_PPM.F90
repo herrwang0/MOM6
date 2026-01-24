@@ -3066,7 +3066,7 @@ subroutine find_int_limit_left(a, b, c, CFL, dx)
         dx = 0.0
       endif
     else ! b==0
-      if (c>0) then
+      if (c>=0) then
         dx = CFL
       else
         write(msg, *), 'a=', a, 'b=', b, 'c=', c
@@ -3130,7 +3130,7 @@ subroutine find_int_limit_right(a, b, c, CFL, dx)
         dx = 0.0
       endif
     else ! b==0
-      if (c>0) then
+      if (c>=0) then
         dx = CFL
       else
         write(msg, *), 'a=', a, 'b=', b, 'c=', c
