@@ -68,6 +68,7 @@ type, public :: continuity_PPM_CS ; private
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
   logical :: use_clamp
+  logical :: split_limiter
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -201,38 +202,51 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
 
   if (x_first) then
     !  First advect zonally, with loop bounds that accomodate the subsequent meridional advection.
-    call find_eta(G, GV, hin, eta)
-
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
-    call zonal_edge_thickness(eta(:,:,1:GV%ke), h_W, h_E, G, GV, US, CS, OBC, LB)
 
-    do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
-      h_L(i,j,k) = max(h_W(i,j,K) - h_W(i,j,K+1), h_min)
-      h_R(i,j,k) = max(h_E(i,j,K) - h_E(i,j,K+1), h_min)
-    enddo ; enddo ; enddo
-    do j = G%jsd, G%jed ; do i = G%isd, G%ied
-      h_L(i,j,GV%ke) = h_W(i,j,GV%ke) + D_W(i,j)
-      h_R(i,j,GV%ke) = h_E(i,j,GV%ke) + D_E(i,j)
-    enddo ; enddo
-
+    if (CS%split_limiter) then
+     call find_eta(G, GV, hin, eta)
+     call zonal_edge_thickness(eta(:,:,1:GV%ke), h_W, h_E, G, GV, US, CS, OBC, LB)
+     do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+        h_L(i,j,k) = max(h_W(i,j,K) - h_W(i,j,K+1), h_min)
+        h_R(i,j,k) = max(h_E(i,j,K) - h_E(i,j,K+1), h_min)
+      enddo ; enddo ; enddo
+      do j = G%jsd, G%jed ; do i = G%isd, G%ied
+        h_L(i,j,GV%ke) = h_W(i,j,GV%ke) + D_W(i,j)
+        h_R(i,j,GV%ke) = h_E(i,j,GV%ke) + D_E(i,j)
+      enddo ; enddo
+    else
+     call zonal_edge_thickness(hin, h_W, h_E, G, GV, US, CS, OBC, LB)
+     do k = 1, GV%ke ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+        h_L(i,j,k) = h_W(i,j,K)
+        h_R(i,j,k) = h_E(i,j,K)
+      enddo ; enddo ; enddo
+    endif
     call zonal_mass_flux(u, hin, h_L, h_R, uh, dt, G, GV, US, CS, OBC, pbv%por_face_areaU, &
                          LB, uhbt, visc_rem_u, u_cor, BT_cont, du_cor)
     call continuity_zonal_convergence(h, uh, dt, G, GV, LB, hin)
 
     !  Now advect meridionally, using the updated thicknesses to determine the fluxes.
-    call find_eta(G, GV, h, eta)
-
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.false.)
-    call meridional_edge_thickness(eta(:,:,1:GV%ke), h_S, h_N, G, GV, US, CS, OBC, LB)
 
-    do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
-      h_L(i,j,k) = max(h_S(i,j,K) - h_S(i,j,K+1), h_min)
-      h_R(i,j,k) = max(h_N(i,j,K) - h_N(i,j,K+1), h_min)
-    enddo ; enddo ; enddo
-    do j = G%jsd, G%jed ; do i = G%isd, G%ied
-      h_L(i,j,GV%ke) = h_S(i,j,GV%ke) + D_S(i,j)
-      h_R(i,j,GV%ke) = h_N(i,j,GV%ke) + D_N(i,j)
-    enddo ; enddo
+    if (CS%split_limiter) then
+      call find_eta(G, GV, h, eta)
+      call meridional_edge_thickness(eta(:,:,1:GV%ke), h_S, h_N, G, GV, US, CS, OBC, LB)
+      do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+        h_L(i,j,k) = max(h_S(i,j,K) - h_S(i,j,K+1), h_min)
+        h_R(i,j,k) = max(h_N(i,j,K) - h_N(i,j,K+1), h_min)
+      enddo ; enddo ; enddo
+      do j = G%jsd, G%jed ; do i = G%isd, G%ied
+        h_L(i,j,GV%ke) = h_S(i,j,GV%ke) + D_S(i,j)
+        h_R(i,j,GV%ke) = h_N(i,j,GV%ke) + D_N(i,j)
+      enddo ; enddo
+    else
+      call meridional_edge_thickness(h, h_S, h_N, G, GV, US, CS, OBC, LB)
+      do k = 1, GV%ke ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+        h_L(i,j,k) = h_S(i,j,K)
+        h_R(i,j,k) = h_N(i,j,K)
+      enddo ; enddo ; enddo
+    endif
     call meridional_mass_flux(v, h, h_L, h_R, vh, dt, G, GV, US, CS, OBC, pbv%por_face_areaV, &
                               LB, vhbt, visc_rem_v, v_cor, BT_cont, dv_cor)
     call continuity_merdional_convergence(h, vh, dt, G, GV, LB, hmin=h_min)
@@ -2942,6 +2956,8 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
                  "minimum is 0.", default=.false.)
   call get_param(param_file, mdl, "CONT_USE_CLAMP", CS%use_clamp, &
                  "If true, clamp by topography.", default=.false.)
+  call get_param(param_file, mdl, "CONT_USE_SPLIT_LIMITER", CS%split_limiter, &
+                 "If true, use split limiter.", default=.false.)
   CS%diag => diag
 
   id_clock_reconstruct = cpu_clock_id('(Ocean continuity reconstruction)', grain=CLOCK_ROUTINE)
