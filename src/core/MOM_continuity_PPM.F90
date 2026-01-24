@@ -191,7 +191,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
       " one must be present in call to continuity_PPM.")
 
   ! Reconstruct topo with simple 2nd
-  LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.true.)
+  LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
   call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
                           2.0*GV%Angstrom_H, .true., .true., OBC, 0, no_limiter=.true.)
   call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
