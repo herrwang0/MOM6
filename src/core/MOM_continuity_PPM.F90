@@ -2843,6 +2843,127 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
 
 end subroutine continuity_PPM_init
 
+subroutine find_int_limit_left(a, b, c, CFL, dx)
+  real, intent(in) :: a, b, c, CFL
+  real, intent(out) :: dx
+
+  real :: disc, xp, xm, xmax, xmin
+
+  disc = b * b - 4 * a * c
+  if (a /=0 ) then
+    if (disc >= 0) then
+      xp = 0.5 * (-b + sqrt(disc)) / a
+      xm = 0.5 * (-b - sqrt(disc)) / a
+      xmax = max(xp, xm) ; xmin = min(xp, xm)
+      if (a > 0) then
+        if (xmin >= 1) then
+          dx = CFL
+        elseif (xmax <= 1) then
+          dx = min(1.0 - xmax, CFL)
+        else
+          dx = 0.0
+        endif
+      else
+        if (xmin>1 .and. xmax<1) then
+          dx = min(1.0 - xmin, CFL)
+        else
+          dx = 0.0
+        endif
+      endif
+    else
+      if (a > 0) then
+        dx = CFL
+      else
+        call MOM_error(FATAL, 'Not possible')
+      endif
+    endif
+  else
+    if (b > 0) then
+      xp = - c / b
+      if (xp < 1.0) then
+        dx = min(1.0 - xp, CFL)
+      else
+        dx = 0.0
+      endif
+    elseif (b < 0) then
+      xp = - c /b
+      if (xp > 1.0) then
+        dx = CFL
+      else
+        dx = 0.0
+      endif
+    else ! b==0
+      if (c>0) then
+        dx = CFL
+      else
+        call MOM_error(FATAL, 'Not possible')
+      endif
+    endif
+  endif
+end subroutine
+
+subroutine find_int_limit_right(a, b, c, CFL, dx)
+  real, intent(in) :: a, b, c, CFL
+  real, intent(out) :: dx
+
+  real :: disc, xp, xm, xmax, xmin
+
+  disc = b * b - 4 * a * c
+
+  if (a /=0 ) then
+    if (disc >= 0) then
+      xp = 0.5 * (-b + sqrt(disc)) / a
+      xm = 0.5 * (-b - sqrt(disc)) / a
+      xmax = max(xp, xm) ; xmin = min(xp, xm)
+      if (a > 0) then
+        if (xmax <= 0) then
+          dx = CFL
+        elseif (xmin <= 0) then
+          dx = max(xmin, CFL)
+        else
+          dx = 0.0
+        endif
+      else
+        if ( xmin<0 .and. xmax >0) then
+          dx = min(xmax, CFL)
+        else
+          dx = 0
+        endif
+      endif
+    else
+      if (a > 0) then
+        dx = CFL
+      else
+        dx = 0
+        call MOM_error(FATAL, 'Not possible')
+      endif
+    endif
+  else
+    if ( b > 0 ) then
+      xp = - c / b
+      if (xp < 0.0) then
+        dx = CFL
+      else
+        dx = 0.0
+      endif
+    elseif (b < 0) then
+      xp = - c /b
+      if (xp > 0.0) then
+        dx = min(xp, CFL)
+      else
+        dx = 0.0
+      endif
+    else ! b==0
+      if (c>0) then
+        dx = CFL
+      else
+        call MOM_error(FATAL, 'Not possible')
+      endif
+    endif
+  endif
+end subroutine
+
+
 !> continuity_PPM_stencil returns the continuity solver stencil size
 function continuity_PPM_stencil(CS) result(stencil)
   type(continuity_PPM_CS), intent(in) :: CS   !< Module's control structure.
