@@ -68,7 +68,7 @@ type, public :: continuity_PPM_CS ; private
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
   logical :: use_clamp, print_clamp
-  logical :: split_limiter
+  logical :: split_limiter,no_topo_recon_limiter
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -195,10 +195,10 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
   ! Reconstruct topo with simple 2nd
   LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
   call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, 0, no_limiter=.false.)
+                          2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, 0, no_limiter=CS%no_topo_recon_limiter)
   LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
   call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, 0, no_limiter=.false.)
+                          2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, 0, no_limiter=CS%no_topo_recon_limiter)
 
   if (x_first) then
     !  First advect zonally, with loop bounds that accomodate the subsequent meridional advection.
@@ -2987,6 +2987,8 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
                  "If true, clamp by topography.", default=.false.)
   call get_param(param_file, mdl, "CONT_USE_SPLIT_LIMITER", CS%split_limiter, &
                  "If true, use split limiter.", default=.false.)
+  call get_param(param_file, mdl, "CONT_NO_TOPO_LIMITER", CS%no_topo_recon_limiter, &
+                 "If true, use split limiter.", default=.true.)
   CS%diag => diag
 
   id_clock_reconstruct = cpu_clock_id('(Ocean continuity reconstruction)', grain=CLOCK_ROUTINE)
