@@ -1032,11 +1032,11 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       call find_int_limit_left(a, b, c, CFL, dx)
 
       if (do_print_clamp .and. (dx < CFL)) then
-        write(msg, *) 'Clamped transport (u>0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hw, he, h', h_w(i), h_e(i), h(i), 'D', G%bathyT(i,j)
+        write(msg, *) 'Clamped transport (u>0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hw, he, h', h_w(i), h_e(i), h(i), 'D', G%bathyT(i,j), 'a', a, 'b',b, 'c',c
         call MOM_error(WARNING, trim(msg), all_print=.true.)
       endif
 
-      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (dx * G%IdxT(i,j) / dt) * &
+      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (dx * G%dxT(i,j) / dt) * &
           (h_E(i) + dx * (0.5*(h_W(i) - h_E(i)) + curv_3*(dx - 1.5)))
       else
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
@@ -1055,11 +1055,11 @@ subroutine zonal_flux_layer(u, h, h_W, h_E, uh, duhdu, visc_rem, dt, G, US, j, &
       call find_int_limit_right(a, b, c, CFL, dx)
 
       if (do_print_clamp .and. (dx < CFL)) then
-        write(msg, *) 'Clamped transport (u<0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hw, he, h', h_w(i), h_e(i), h(i), 'D', G%bathyT(i,j)
+        write(msg, *) 'Clamped transport (u<0) at (', i, ',', j, '), dx', dx, 'CFL', CFL, 'hw, he, h', h_w(i), h_e(i), h(i), 'D', G%bathyT(i,j), 'a', a, 'b',b, 'c',c
         call MOM_error(WARNING, trim(msg), all_print=.true.)
       endif
 
-      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (dx * G%IdxT(i+1,j) / dt) * &
+      uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * (-dx * G%dxT(i+1,j) / dt) * &
           (h_W(i+1) + dx * (0.5*(h_E(i+1)-h_W(i+1)) + curv_3*(dx - 1.5)))
       else
       uh(I) = (G%dy_Cu(I,j) * por_face_areaU(I)) * u(I) * &
@@ -1978,7 +1978,7 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
         call MOM_error(WARNING, trim(msg), all_print=.true.)
       endif
 
-      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j) / dt)* ( h_N(i,j) + dx * &
+      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%dyT(i,j) / dt)* ( h_N(i,j) + dx * &
           (0.5*(h_S(i,j) - h_N(i,j)) + curv_3*(dx - 1.5)) )
       else
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_N(i,j) + CFL * &
@@ -2003,7 +2003,7 @@ subroutine merid_flux_layer(v, h, h_S, h_N, vh, dvhdv, visc_rem, dt, G, US, J, &
       endif
 
 
-      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (dx * G%IdyT(i,j+1) / dt) * ( h_S(i,j+1) + dx * &
+      vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * (-dx * G%dyT(i,j+1) / dt) * ( h_S(i,j+1) + dx * &
           (0.5*(h_N(i,j+1)-h_S(i,j+1)) + curv_3*(dx - 1.5)) )
       else
       vh(i) = (G%dx_Cv(i,J)*por_face_areaV(i,J)) * v(i) * ( h_S(i,j+1) + CFL * &
@@ -3036,7 +3036,7 @@ subroutine find_int_limit_left(a, b, c, CFL, dx)
           dx = 0.0
         endif
       else
-        if (xmin>1 .and. xmax<1) then
+        if (xmin<1 .and. xmax>1) then
           dx = min(1.0 - xmin, CFL)
         else
           dx = 0.0
