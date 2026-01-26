@@ -2555,11 +2555,13 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
       else
         ! This uses a simple 2nd order slope.
         slp(i,j) = 0.5 * (h_in(i+1,j) - h_in(i-1,j))
+        if (do_limiter) then
         ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
         dMx = max(h_in(i+1,j), h_in(i-1,j), h_in(i,j)) - h_in(i,j)
         dMn = h_in(i,j) - min(h_in(i+1,j), h_in(i-1,j), h_in(i,j))
         slp(i,j) = sign(1.,slp(i,j)) * min(abs(slp(i,j)), 2. * min(dMx, dMn))
                 ! * (G%mask2dT(i-1,j) * G%mask2dT(i,j) * G%mask2dT(i+1,j))
+        endif
       endif
     enddo ; enddo
 
@@ -2715,11 +2717,13 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
       else
         ! This uses a simple 2nd order slope.
         slp(i,j) = 0.5 * (h_in(i,j+1) - h_in(i,j-1))
+        if (do_limiter) then
         ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
         dMx = max(h_in(i,j+1), h_in(i,j-1), h_in(i,j)) - h_in(i,j)
         dMn = h_in(i,j) - min(h_in(i,j+1), h_in(i,j-1), h_in(i,j))
         slp(i,j) = sign(1.,slp(i,j)) * min(abs(slp(i,j)), 2. * min(dMx, dMn))
                 ! * (G%mask2dT(i,j-1) * G%mask2dT(i,j) * G%mask2dT(i,j+1))
+        endif
       endif
     enddo ; enddo
 
