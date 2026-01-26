@@ -196,10 +196,10 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
   ! Reconstruct topo with simple 2nd
   LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
   call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+                          2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0)
   LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
   call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+                          2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0)
   else
   LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
   call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
@@ -3046,10 +3046,8 @@ subroutine find_int_limit_left(a, b, c, CFL, dx)
       if (a > 0) then
         if (xmin >= 1) then
           dx = CFL
-        elseif (xmax <= 1) then
-          dx = min(1.0 - xmax, CFL)
         else
-          dx = 0.0
+          dx = max(0.0, min(1.0 - xmax, CFL))
         endif
       else
         if (xmin<1 .and. xmax>1) then
@@ -3109,10 +3107,8 @@ subroutine find_int_limit_right(a, b, c, CFL, dx)
       if (a > 0) then
         if (xmax <= 0) then
           dx = CFL
-        elseif (xmin >= 0) then
-          dx = min(xmin, CFL)
         else
-          dx = 0.0
+          dx = max(0.0, min(xmin, CFL))
         endif
       else
         if ( xmin<0 .and. xmax >0) then
