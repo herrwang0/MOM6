@@ -68,7 +68,7 @@ type, public :: continuity_PPM_CS ; private
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
   logical :: use_clamp, print_clamp
-  logical :: split_limiter,no_topo_recon_limiter, topo_simple_2nd
+  logical :: split_limiter,no_topo_recon_limiter, no_eta_recon_limiter, topo_simple_2nd
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -203,10 +203,10 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
   else
   LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
   call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+                          2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
   LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
   call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+                          2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
   endif
   if (x_first) then
     !  First advect zonally, with loop bounds that accomodate the subsequent meridional advection.
@@ -543,7 +543,7 @@ subroutine zonal_edge_thickness(h_in, h_W, h_E, G, GV, US, CS, OBC, LB_in)
     !$OMP parallel do default(shared)
     do k=1,nz
       call PPM_reconstruction_x(h_in(:,:,k), h_W(:,:,k), h_E(:,:,k), G, LB, &
-                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k)
+                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k, no_limiter=CS%no_topo_recon_limiter)
     enddo
   endif
 
@@ -590,7 +590,7 @@ subroutine meridional_edge_thickness(h_in, h_S, h_N, G, GV, US, CS, OBC, LB_in)
     !$OMP parallel do default(shared)
     do k=1,nz
       call PPM_reconstruction_y(h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), G, LB, &
-                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k)
+                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k, no_limiter=CS%no_topo_recon_limiter)
     enddo
   endif
 
@@ -3000,6 +3000,8 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
   call get_param(param_file, mdl, "CONT_USE_SPLIT_LIMITER", CS%split_limiter, &
                  "If true, use split limiter.", default=.false.)
   call get_param(param_file, mdl, "CONT_NO_TOPO_LIMITER", CS%no_topo_recon_limiter, &
+                 "If true, use split limiter.", default=.false.)
+  call get_param(param_file, mdl, "CONT_NO_ETA_LIMITER", CS%no_eta_recon_limiter, &
                  "If true, use split limiter.", default=.false.)
   call get_param(param_file, mdl, "CONT_TOPO_SIMPLE_2ND", CS%topo_simple_2nd, &
                  "If true, use split limiter.", default=.false.)
