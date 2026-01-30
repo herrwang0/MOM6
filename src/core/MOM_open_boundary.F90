@@ -4596,7 +4596,6 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
   real    :: dz(SZI_(G),SZJ_(G),SZK_(GV)) ! Distance between the interfaces around a layer [Z ~> m]
   real, dimension(:,:,:), allocatable, target :: tmp_buffer ! A buffer for input data [various units]
   real :: dz_stack(SZK_(GV)) ! Distance between the interfaces at corner points [Z ~> m]
-  integer :: is_obc2, js_obc2
   integer :: i_seg_offset, j_seg_offset, bug_offset
   real :: net_dz_src  ! Total vertical extent of the incoming flow in the source field [Z ~> m]
   real :: net_dz_int  ! Total vertical extent of the incoming flow in the model [Z ~> m]
@@ -4607,6 +4606,7 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
   logical :: flip_buffer ! If true, the input buffer needs to be transposed
   real :: tidal_amp, tidal_phase
   integer :: F_G, F_VT, F_VTAMP, F_VTPHASE
+  integer :: is_seg, ie_seg, js_seg, je_seg, i_offset_in, j_offset_in
 
   if (.not. associated(OBC)) return
 
@@ -4629,22 +4629,15 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
     i_seg_offset = G%idg_offset - segment%HI%IsgB
     j_seg_offset = G%jdg_offset - segment%HI%JsgB
 
-    ! Note: retaining [ij]s_obc2 as this is the orientation oblivious framework we should move to.
     if (segment%is_E_or_W) then
-      js_obc2 = JsdB+1
-      is_obc2 = IsdB
+      is_seg = IsdB ; ie_seg = is_seg
+      js_seg = jsd ; je_seg = jed
     else
-      js_obc2 = JsdB
-      is_obc2 = IsdB+1
+      is_seg = isd ; ie_seg = ied
+      js_seg = JsdB ; je_seg = js_seg
     endif
-    if (segment%is_N_or_S) then
-      is_obc2 = IsdB+1
-      js_obc2 = JsdB
-    else
-      is_obc2 = IsdB
-      js_obc2 = JsdB+1
-    endif
-
+    i_offset_in = ied - IedB
+    j_offset_in = jed - JedB
     ! Calculate auxiliary fields at staggered locations.
     ! Segment indices are on q points:
     !
@@ -4656,34 +4649,19 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
 
     ! Calculate auxiliary fields at staggered locations
     segment%Htot(:,:) = 0.0
-    if (segment%is_E_or_W) then
-      I = IsdB
-      do k = 1, GV%ke ; do j = jsd, jed
-        segment%h(I,j,k) = h(isd,j,k)
-        segment%Htot(I,j) = segment%Htot(I,j) + segment%h(I,j,k)
-      enddo ; enddo
-      do j = jsd, jed
-        segment%Cg(I,j) = sqrt(GV%g_prime(1) * max(0.0, segment%dZtot(I,j)))
-      enddo
-    else ! (segment%direction == OBC_DIRECTION_N .or. segment%direction == OBC_DIRECTION_S)
-      J = JsdB
-      do k = 1, GV%ke ; do i = isd, ied
-        segment%h(i,J,k) = h(i,jsd,k)
-        segment%Htot(i,J) = segment%Htot(i,J) + segment%h(i,J,k)
-      enddo ; enddo
-      do i = isd, ied
-        segment%Cg(i,J) = sqrt(GV%g_prime(1) * max(0.0, segment%dZtot(i,J)))
-      enddo
-    endif
+    do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
+      segment%h(i,j,k) = h(i+i_offset_in,j+j_offset_in,k)
+      segment%Htot(i,j) = segment%Htot(i,j) + segment%h(i,j,k)
+    enddo ; enddo ; enddo
 
     ! Set the thickness reservoir data.
     if (OBC%thickness_x_reservoirs_used .or. OBC%thickness_y_reservoirs_used) then
-      do k=1,nz ; do j=js_obc2,JedB ; do i=is_obc2,IedB
-        segment%h_Reg%h(i,j,k) = segment%h(i,j,k)
+      do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
+        segment%h_Reg%h(i,j,k) = h(i+i_offset_in,j+j_offset_in,k)
       enddo ; enddo ; enddo
       if (.not. segment%h_Reg%is_initialized) then
         ! If the thickness reservoir has not yet been initialized, then set to external value.
-        do k=1,nz ; do j=js_obc2,JedB ; do i=is_obc2,IedB
+        do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
           segment%h_Reg%h_res(i,j,k) = segment%h_Reg%h(i,j,k)
         enddo ; enddo ; enddo
         segment%h_Reg%is_initialized = .true.
@@ -4808,7 +4786,7 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
       ! Update tidal normal velocity
       if (OBC%add_tide_constituents) then
         segment%tidal_elev(:,:) = 0.0
-        do c=1,OBC%n_tide_constituents ; do j=js_obc2,JedB ; do i=is_obc2,IedB
+        do c=1,OBC%n_tide_constituents ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
           tidal_amp = OBC%tide_fn(c) * segment%field(F_ZAMP)%buffer_dst(i,j,c)
           tidal_phase = (time_delta * OBC%tide_frequencies(c) - segment%field(F_ZPHASE)%buffer_dst(i,j,c)) &
             + (OBC%tide_eq_phases(c) + OBC%tide_un(c))
@@ -4817,7 +4795,7 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
       endif
 
       ramp_value = 1.0 ; if (OBC%ramp) ramp_value = OBC%ramp_value
-      do j=js_obc2,JedB ; do i=is_obc2,IedB
+      do j=js_seg,je_seg ; do i=is_seg,ie_seg
         segment%SSH(i,j) = ramp_value * (segment%field(F_Z)%buffer_dst(i,j,1) + segment%tidal_elev(i,j))
       enddo ; enddo
     endif
@@ -4837,12 +4815,12 @@ subroutine update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
       ! In the old code segment%field(m)%buffer_dst is always allocated at this point, and therefore
       ! the "else" section is unreachable. This will be fixed when OBC_inflow_conc is reworked.
       if (allocated(segment%field(m)%buffer_dst)) then
-        do k=1,nz ; do j=js_obc2,JedB ; do i=is_obc2,IedB
+        do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
           segment%tr_Reg%Tr(nt)%t(i,j,k) = segment%field(m)%buffer_dst(i,j,k)
         enddo ; enddo ; enddo
         if (.not. segment%tr_Reg%Tr(nt)%is_initialized) then
           ! If the tracer reservoir has not yet been initialized, then set to external value.
-          do k=1,nz ; do j=js_obc2,JedB ; do i=is_obc2,IedB
+          do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
             segment%tr_Reg%Tr(nt)%tres(i,j,k) = segment%tr_Reg%Tr(nt)%t(i,j,k)
           enddo ; enddo ; enddo
           segment%tr_Reg%Tr(nt)%is_initialized = .true.
