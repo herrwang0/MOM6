@@ -4,7 +4,8 @@ module MOM_open_boundary
 ! This file is part of MOM6. See LICENSE.md for the license.
 
 use MOM_array_transform,      only : rotate_array, rotate_array_pair
-use MOM_coms,                 only : sum_across_PEs, Set_PElist, Get_PElist, PE_here, num_PEs
+use MOM_coms,                 only : sum_across_PEs, any_across_PEs
+use MOM_coms,                 only : Set_PElist, Get_PElist, PE_here, num_PEs
 use MOM_cpu_clock,            only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_ROUTINE
 use MOM_debugging,            only : hchksum, uvchksum, chksum
 use MOM_diag_mediator,        only : diag_ctrl, time_type
@@ -957,6 +958,30 @@ integer function find_phys_field_index(name)
   endif ; enddo
 end function find_phys_field_index
 
+!> Set global flag OBC%any_needs_IO_for_data.
+!! This subroutine could turn into a TBP for ocean_OBC_type.
+subroutine OBC_any_IO(OBC)
+  type(ocean_OBC_type), intent(inout) :: OBC !< Open boundary control structure
+
+  ! Local variables
+  integer :: m, n
+  logical :: use_IO
+
+  use_IO = .false.
+  do n=1,OBC%number_of_segments
+    do m=1,OBC%segment(n)%num_fields
+      if (OBC%segment(n)%field(m)%use_IO) then
+        use_IO = .true.
+        exit
+      endif
+    enddo
+    if (use_IO) exit
+  enddo
+
+  OBC%needs_IO_for_data = use_IO ! This flag is never used.
+  OBC%any_needs_IO_for_data = any_across_PEs(use_IO)
+end subroutine OBC_any_IO
+
 subroutine allocate_segment_field_data(field, OBC, segment, US, inputdir, filename, varname, &
                                        suffix, value, turns, nz)
   type(OBC_segment_data_type), &
@@ -983,6 +1008,8 @@ subroutine allocate_segment_field_data(field, OBC, segment, US, inputdir, filena
   integer :: dim ! Loop index for siz/siz_check
   integer :: nk_dst ! k-axis size of buffer_dst
 
+  if (.not. segment%on_pe) return
+
   isd = segment%HI%isd ; ied = segment%HI%ied ; IsdB = segment%HI%IsdB ; IedB = segment%HI%IedB
   jsd = segment%HI%jsd ; jed = segment%HI%jed ; JsdB = segment%HI%JsdB ; JedB = segment%HI%JedB
   nk_dst = nz
@@ -993,10 +1020,9 @@ subroutine allocate_segment_field_data(field, OBC, segment, US, inputdir, filena
   ! The scale factor for tracers may also be set in register_segment_tracer, and a constant input
   ! value is rescaled there.
   field%scale = scale_factor_from_name(field%name, US, segment%tr_Reg)
+  field%use_IO = (trim(filename) /= 'none')
 
-  if (trim(filename) /= 'none') then
-    field%use_IO = .true.
-
+  if (field%use_IO) then
     full_filename = trim(inputdir) // trim(filename)
     full_varname = trim(varname) // trim(suffix)
 
@@ -1057,8 +1083,6 @@ subroutine allocate_segment_field_data(field, OBC, segment, US, inputdir, filena
 
     init_value_dst = 0.0
   else  ! This data is not being read from a file.
-    field%use_IO = .false.
-
     field%value = field%scale * value
     ! Change the sign of the specified velocities, depending on the number of quarter turns of the grid.
     if ( ( ((field%name == 'U') .or. (field%name == 'Uamp')) .and. &
@@ -1127,6 +1151,8 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
   character(len=256) :: routine_name ! Name of this subroutine
 
   if (OBC%user_BCs_set_globally) return
+
+  OBC%update_OBC = .true. ! Data is time-dependent if not using user BC.
 
   routine_name = trim(mdl) // ', initialize_segment_data'
 
@@ -1221,10 +1247,10 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
     enddo
 
     ! Allocate BGC tracer fields
-    obgc_segments_props_list => OBC%obgc_segments_props !pointer to the head node
+    obgc_segments_props_list => OBC%obgc_segments_props ! pointer to the head node
     do m = NUM_PHYS_FIELDS+1, segment%num_fields
       segment%field(m)%bgc_tracer = .true.
-      ! Query the obgc segment properties by traversing the linkedlist
+      ! Query the obgc segment properties by traversing the linked list
       call get_obgc_segments_props(obgc_segments_props_list, bgc_input, filename, varname, &
                                    segment%field(m)%resrv_lfac_in, segment%field(m)%resrv_lfac_out)
       ! Make sure the obgc tracer is not specified in the MOM6 param file too.
@@ -1239,18 +1265,6 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
                                        inputdir, filename, varname, suffix, 0.0, turns, GV%ke)
     enddo
 
-    !!
-    ! CODE HERE FOR OTHER OPTIONS (CLAMPED, NUDGED,..)
-    !!
-    do m=1,segment%num_fields
-
-      if (trim(filename) /= 'none') then
-        OBC%update_OBC = .true. ! Data is assumed to be time-dependent if we are reading from file
-        OBC%needs_IO_for_data = .true. ! At least one segment is using I/O for OBC data
-      endif
-
-    enddo
-
     ! write(stderr, '(A)') trim(suffix)//" segment checksum"
     if (OBC%debug) call chksum_OBC_segment_data(OBC%segment(n_seg), GV, US, OBC%nk_OBC_debug, n)
 
@@ -1259,12 +1273,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns)
   call Set_PElist(saved_pelist)
 
   ! Determine global IO data requirement patterns.
-  IO_needs(1) = 0 ; if (OBC%needs_IO_for_data) IO_needs(1) = 1
-  IO_needs(2) = 0 ; if (OBC%update_OBC) IO_needs(2) = 1
-  call sum_across_PES(IO_needs, 2)
-  OBC%any_needs_IO_for_data = (IO_needs(1) > 0)
-  OBC%update_OBC = (IO_needs(2) > 0)
-
+  call OBC_any_IO(OBC)
 end subroutine initialize_segment_data
 
 !> Determine whether a particular field is descretized at the normal-velocity faces of an open
