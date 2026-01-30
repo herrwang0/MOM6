@@ -170,7 +170,7 @@ subroutine update_OBC_data(OBC, G, GV, US, tv, h, CS, Time)
       call dyed_channel_update_flow(OBC, CS%dyed_channel_OBC_CSp, G, GV, US, h, Time)
   if (OBC%any_needs_IO_for_data .or. OBC%add_tide_constituents) then
     call read_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
-    call update_OBC_segment_data(G, GV, US, OBC, tv, h, Time)
+    call update_OBC_segment_data(G, GV, US, OBC, h, Time)
   endif
   if (CS%debug_OBCs) call chksum_OBC_segments(OBC, G, GV, US, CS%nk_OBC_debug)
 

@@ -3299,7 +3299,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
 
     ! Call this during initialization to fill boundary arrays from fixed values
     call read_OBC_segment_data(G, GV, US, CS%OBC, CS%tv, CS%h, Time)
-    call update_OBC_segment_data(G, GV, US, CS%OBC, CS%tv, CS%h, Time)
+    call update_OBC_segment_data(G, GV, US, CS%OBC, CS%h, Time)
     call initialize_OBC_segment_reservoirs(GV, CS%OBC)
   endif
 
