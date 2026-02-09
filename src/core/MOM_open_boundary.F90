@@ -5962,7 +5962,7 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
   real :: fac1            ! The denominator of the expression for tracer updates [nondim]
   real :: I_scale         ! The inverse of the scaling factor for the tracers.
                           ! For salinity the units would be [ppt S-1 ~> 1]
-  integer :: i, j, k, m, n, ntr, nz, ntr_id, fd_id
+  integer :: i, j, k, m, n, nz, ntr_id, fd_id
   integer :: is, ie, js, je, ii, ji
   integer :: dir
   real :: resrv_lfac_out  ! The reservoir inverse length scale scaling factor for the outward
@@ -5982,22 +5982,21 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
   if (.not. OBC%OBC_pe) return
 
   nz = GV%ke
-  ntr = Reg%ntr
 
   do n=1,OBC%number_of_segments
     segment => OBC%segment(n)
     if (.not. associated(segment%tr_Reg)) cycle
     b_in  = 0.0 ; if (segment%Tr_InvLscale_in  == 0.0) b_in  = 1.0
     b_out = 0.0 ; if (segment%Tr_InvLscale_out == 0.0) b_out = 1.0
+    ! dir switches the sign of the flow so that positive is into the reservoir
+    if ((segment%direction == OBC_DIRECTION_W) .or. (segment%direction == OBC_DIRECTION_S)) then
+      dir = -1
+    else
+      dir = 1
+    endif
     if (segment%is_E_or_W) then
       I = segment%HI%IsdB ; ii = segment%HI%isd
       js = segment%HI%jsd ; je = segment%HI%jed
-      ! dir switches the sign of the flow so that positive is into the reservoir
-      if (segment%direction == OBC_DIRECTION_W) then
-        dir = -1
-      else
-        dir = 1
-      endif
       ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
       do m=1,segment%tr_Reg%ntseg ; if (allocated(segment%tr_Reg%Tr(m)%tres)) then
         ntr_id = segment%tr_Reg%Tr(m)%ntr_index
@@ -6025,20 +6024,16 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
           fac1 = 1.0 + (u_L_out - u_L_in)
           segment%tr_Reg%Tr(m)%tres(I,j,k) = (1.0 / fac1) * &
                             ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(I,j,k) + &
-                              ((u_L_out + a_out) * Reg%Tr(ntr_id)%t(ii,j,k) - &
+                             ((u_L_out + a_out) * Reg%Tr(ntr_id)%t(ii,j,k) - &
                               (u_L_in + a_in) * segment%tr_Reg%Tr(m)%t(I,j,k)))
-          if (allocated(OBC%tres_x)) OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
         enddo ; enddo
+        if (allocated(OBC%tres_x)) then ; do k=1,nz ; do j=js,je
+          OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
+        enddo ; enddo ; endif
       endif ; enddo
     elseif (segment%is_N_or_S) then
       J = segment%HI%JsdB ; ji = segment%HI%jsd
       is = segment%HI%isd ; ie = segment%HI%ied
-      ! dir switches the sign of the flow so that positive is into the reservoir
-      if (segment%direction == OBC_DIRECTION_S) then
-        dir = -1
-      else
-        dir = 1
-      endif
       ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
       do m=1,segment%tr_Reg%ntseg ; if (allocated(segment%tr_Reg%Tr(m)%tres)) then
         ntr_id = segment%tr_Reg%Tr(m)%ntr_index
@@ -6062,14 +6057,15 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
           fac1 = 1.0 + (v_L_out - v_L_in)
           segment%tr_Reg%Tr(m)%tres(i,J,k) = (1.0 / fac1) * &
                             ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(i,J,k) + &
-                              ((v_L_out + a_out) * Reg%Tr(ntr_id)%t(i,ji,k) - &
+                             ((v_L_out + a_out) * Reg%Tr(ntr_id)%t(i,ji,k) - &
                               (v_L_in + a_in) * segment%tr_Reg%Tr(m)%t(i,J,k)))
-          if (allocated(OBC%tres_y)) OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
         enddo ; enddo
+        if (allocated(OBC%tres_y)) then ; do k=1,nz ; do i=is,ie
+          OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
+        enddo ; enddo ; endif
       endif ; enddo
     endif
   enddo
-
 end subroutine update_segment_tracer_reservoirs
 
 !> Update the OBC thickness reservoirs after the thicknesses have been updated.
