@@ -5963,7 +5963,8 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
   real :: I_scale         ! The inverse of the scaling factor for the tracers.
                           ! For salinity the units would be [ppt S-1 ~> 1]
   integer :: i, j, k, m, n, ntr, nz, ntr_id, fd_id
-  integer :: ishift, jshift, dir
+  integer :: is, ie, js, je, ii, ji
+  integer :: dir
   real :: resrv_lfac_out  ! The reservoir inverse length scale scaling factor for the outward
                           ! direction per field [nondim]
   real :: resrv_lfac_in   ! The reservoir inverse length scale scaling factor for the inward
@@ -5989,91 +5990,83 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
     b_in  = 0.0 ; if (segment%Tr_InvLscale_in  == 0.0) b_in  = 1.0
     b_out = 0.0 ; if (segment%Tr_InvLscale_out == 0.0) b_out = 1.0
     if (segment%is_E_or_W) then
-      I = segment%HI%IsdB
-      do j=segment%HI%jsd,segment%HI%jed
-        ! ishift+I corresponds to the nearest interior tracer cell index
-        ! idir switches the sign of the flow so that positive is into the reservoir
-        if (segment%direction == OBC_DIRECTION_W) then
-          ishift = 1 ; dir = -1
+      I = segment%HI%IsdB ; ii = segment%HI%isd
+      js = segment%HI%jsd ; je = segment%HI%jed
+      ! dir switches the sign of the flow so that positive is into the reservoir
+      if (segment%direction == OBC_DIRECTION_W) then
+        dir = -1
+      else
+        dir = 1
+      endif
+      ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
+      do m=1,segment%tr_Reg%ntseg ; if (allocated(segment%tr_Reg%Tr(m)%tres)) then
+        ntr_id = segment%tr_Reg%Tr(m)%ntr_index
+        fd_id = segment%tr_Reg%Tr(m)%fd_index
+        if (fd_id == -1) then
+          resrv_lfac_out = 1.0
+          resrv_lfac_in  = 1.0
         else
-          ishift = 0 ; dir = 1
+          resrv_lfac_out = segment%field(fd_id)%resrv_lfac_out
+          resrv_lfac_in  = segment%field(fd_id)%resrv_lfac_in
         endif
-        ! Can keep this or take it out, either way
-        if (G%mask2dT(I+ishift,j) == 0.0) cycle
-        ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
-        do m=1,segment%tr_Reg%ntseg
-          ntr_id = segment%tr_Reg%Tr(m)%ntr_index
-          fd_id = segment%tr_Reg%Tr(m)%fd_index
-          if (fd_id == -1) then
-            resrv_lfac_out = 1.0
-            resrv_lfac_in  = 1.0
-          else
-            resrv_lfac_out = segment%field(fd_id)%resrv_lfac_out
-            resrv_lfac_in  = segment%field(fd_id)%resrv_lfac_in
-          endif
-          I_scale = 1.0 ; if (segment%tr_Reg%Tr(m)%scale /= 0.0) I_scale = 1.0 / segment%tr_Reg%Tr(m)%scale
-          if (allocated(segment%tr_Reg%Tr(m)%tres)) then ; do k=1,nz
-            ! Calculate weights. Both a and u_L are nondim. Adding them together has no meaning.
-            ! However, since they cannot be both non-zero, adding them works like a switch.
-            ! When InvLscale_out is 0 and outflow, only interior data is applied to reservoirs
-            ! When InvLscale_in is 0 and inflow, only nudged data is applied to reservoirs
-            flux_to_res = dir * uhr(I,j,k)
-            a_out = b_out * max(0.0, sign(1.0, flux_to_res))
-            a_in  = b_in  * min(0.0, sign(1.0, flux_to_res))
-            u_L_out = max(0.0, flux_to_res * segment%Tr_InvLscale_out * resrv_lfac_out / &
-                               ((h(i+ishift,j,k) + GV%H_subroundoff) * G%dyCu(I,j)))
-            u_L_in  = min(0.0, flux_to_res * segment%Tr_InvLscale_in * resrv_lfac_in  / &
-                               ((h(i+ishift,j,k) + GV%H_subroundoff) * G%dyCu(I,j)))
-            fac1 = 1.0 + (u_L_out - u_L_in)
-            segment%tr_Reg%Tr(m)%tres(I,j,k) = (1.0 / fac1) * &
-                              ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(I,j,k) + &
-                               ((u_L_out + a_out) * Reg%Tr(ntr_id)%t(I+ishift,j,k) - &
-                                (u_L_in + a_in) * segment%tr_Reg%Tr(m)%t(I,j,k)))
-            if (allocated(OBC%tres_x)) OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
-          enddo ; endif
-        enddo
-      enddo
+        I_scale = 1.0 ; if (segment%tr_Reg%Tr(m)%scale /= 0.0) I_scale = 1.0 / segment%tr_Reg%Tr(m)%scale
+        do k=1,nz ; do j=js,je
+          ! Calculate weights. Both a and u_L are nondim. Adding them together has no meaning.
+          ! However, since they cannot be both non-zero, adding them works like a switch.
+          ! When InvLscale_out is 0 and outflow, only interior data is applied to reservoirs
+          ! When InvLscale_in is 0 and inflow, only nudged data is applied to reservoirs
+          flux_to_res = dir * uhr(I,j,k)
+          a_out = b_out * max(0.0, sign(1.0, flux_to_res))
+          a_in  = b_in  * min(0.0, sign(1.0, flux_to_res))
+          u_L_out = max(0.0, G%mask2dT(ii,j) * flux_to_res * segment%Tr_InvLscale_out * resrv_lfac_out / &
+                              ((h(ii,j,k) + GV%H_subroundoff) * G%dyCu(I,j)))
+          u_L_in  = min(0.0, G%mask2dT(ii,j) * flux_to_res * segment%Tr_InvLscale_in * resrv_lfac_in  / &
+                              ((h(ii,j,k) + GV%H_subroundoff) * G%dyCu(I,j)))
+          fac1 = 1.0 + (u_L_out - u_L_in)
+          segment%tr_Reg%Tr(m)%tres(I,j,k) = (1.0 / fac1) * &
+                            ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(I,j,k) + &
+                              ((u_L_out + a_out) * Reg%Tr(ntr_id)%t(ii,j,k) - &
+                              (u_L_in + a_in) * segment%tr_Reg%Tr(m)%t(I,j,k)))
+          if (allocated(OBC%tres_x)) OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(I,j,k)
+        enddo ; enddo
+      endif ; enddo
     elseif (segment%is_N_or_S) then
-      J = segment%HI%JsdB
-      do i=segment%HI%isd,segment%HI%ied
-        ! jshift+J corresponds to the nearest interior tracer cell index
-        ! jdir switches the sign of the flow so that positive is into the reservoir
-        if (segment%direction == OBC_DIRECTION_S) then
-          jshift = 1 ; dir = -1
+      J = segment%HI%JsdB ; ji = segment%HI%jsd
+      is = segment%HI%isd ; ie = segment%HI%ied
+      ! dir switches the sign of the flow so that positive is into the reservoir
+      if (segment%direction == OBC_DIRECTION_S) then
+        dir = -1
+      else
+        dir = 1
+      endif
+      ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
+      do m=1,segment%tr_Reg%ntseg ; if (allocated(segment%tr_Reg%Tr(m)%tres)) then
+        ntr_id = segment%tr_Reg%Tr(m)%ntr_index
+        fd_id = segment%tr_Reg%Tr(m)%fd_index
+        if (fd_id == -1) then
+          resrv_lfac_out = 1.0
+          resrv_lfac_in  = 1.0
         else
-          jshift = 0 ; dir = 1
+          resrv_lfac_out = segment%field(fd_id)%resrv_lfac_out
+          resrv_lfac_in  = segment%field(fd_id)%resrv_lfac_in
         endif
-        ! Can keep this or take it out, either way
-        if (G%mask2dT(i,j+jshift) == 0.0) cycle
-        ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
-        do m=1,segment%tr_Reg%ntseg
-          ntr_id = segment%tr_Reg%Tr(m)%ntr_index
-          fd_id = segment%tr_Reg%Tr(m)%fd_index
-          if (fd_id == -1) then
-            resrv_lfac_out = 1.0
-            resrv_lfac_in  = 1.0
-          else
-            resrv_lfac_out = segment%field(fd_id)%resrv_lfac_out
-            resrv_lfac_in  = segment%field(fd_id)%resrv_lfac_in
-          endif
-          I_scale = 1.0 ; if (segment%tr_Reg%Tr(m)%scale /= 0.0) I_scale = 1.0 / segment%tr_Reg%Tr(m)%scale
-          if (allocated(segment%tr_Reg%Tr(m)%tres)) then ; do k=1,nz
-            flux_to_res = dir * vhr(I,j,k)
-            a_out = b_out * max(0.0, sign(1.0, flux_to_res))
-            a_in  = b_in  * min(0.0, sign(1.0, flux_to_res))
-            v_L_out = max(0.0, flux_to_res * segment%Tr_InvLscale_out * resrv_lfac_out / &
-                               ((h(i,j+jshift,k) + GV%H_subroundoff) * G%dxCv(i,J)))
-            v_L_in  = min(0.0, flux_to_res * segment%Tr_InvLscale_in * resrv_lfac_in  / &
-                               ((h(i,j+jshift,k) + GV%H_subroundoff) * G%dxCv(i,J)))
-            fac1 = 1.0 + (v_L_out - v_L_in)
-            segment%tr_Reg%Tr(m)%tres(i,J,k) = (1.0 / fac1) * &
-                              ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(i,J,k) + &
-                               ((v_L_out + a_out) * Reg%Tr(ntr_id)%t(i,J+jshift,k) - &
-                                (v_L_in + a_in) * segment%tr_Reg%Tr(m)%t(i,J,k)))
-            if (allocated(OBC%tres_y)) OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
-          enddo ; endif
-        enddo
-      enddo
+        I_scale = 1.0 ; if (segment%tr_Reg%Tr(m)%scale /= 0.0) I_scale = 1.0 / segment%tr_Reg%Tr(m)%scale
+        do k=1,nz ; do i=is,ie
+          flux_to_res = dir * vhr(I,j,k)
+          a_out = b_out * max(0.0, sign(1.0, flux_to_res))
+          a_in  = b_in  * min(0.0, sign(1.0, flux_to_res))
+          v_L_out = max(0.0, G%mask2dT(i,ji) * flux_to_res * segment%Tr_InvLscale_out * resrv_lfac_out / &
+                              ((h(i,ji,k) + GV%H_subroundoff) * G%dxCv(i,J)))
+          v_L_in  = min(0.0, G%mask2dT(i,ji) * flux_to_res * segment%Tr_InvLscale_in * resrv_lfac_in  / &
+                              ((h(i,ji,k) + GV%H_subroundoff) * G%dxCv(i,J)))
+          fac1 = 1.0 + (v_L_out - v_L_in)
+          segment%tr_Reg%Tr(m)%tres(i,J,k) = (1.0 / fac1) * &
+                            ((1.0 - a_out + a_in) * segment%tr_Reg%Tr(m)%tres(i,J,k) + &
+                              ((v_L_out + a_out) * Reg%Tr(ntr_id)%t(i,ji,k) - &
+                              (v_L_in + a_in) * segment%tr_Reg%Tr(m)%t(i,J,k)))
+          if (allocated(OBC%tres_y)) OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
+        enddo ; enddo
+      endif ; enddo
     endif
   enddo
 
