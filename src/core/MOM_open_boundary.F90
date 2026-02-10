@@ -5185,6 +5185,7 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
                   ! salinity, or other various units depending on what rescaling has occurred previously.
   integer :: ntseg, m, isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB
   character(len=256) :: mesg    ! Message for error messages.
+  real :: init_value
 
   call segment_tracer_registry_init(param_file, segment)
 
@@ -5205,8 +5206,6 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
   segment%tr_Reg%Tr(ntseg)%name = tr_ptr%name
   segment%tr_Reg%Tr(ntseg)%ntr_index = ntr_index
   if (present(fd_index)) segment%tr_Reg%Tr(ntseg)%fd_index = fd_index
-  if (present(resrv_lfac_in)) segment%tr_Reg%Tr(ntseg)%resrv_lfac_in = resrv_lfac_in
-  if (present(resrv_lfac_out)) segment%tr_Reg%Tr(ntseg)%resrv_lfac_out = resrv_lfac_out
 
   segment%tr_Reg%Tr(ntseg)%scale = 1.0
   if (present(scale)) then
@@ -5231,15 +5230,25 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
       "MOM register_segment_tracer was called for variable "//trim(segment%tr_Reg%Tr(ntseg)%name)//&
       " with a locked tracer registry.")
 
-  if (present(OBC_scalar)) segment%tr_Reg%Tr(ntseg)%OBC_inflow_conc = OBC_scalar ! initialize tracer value later
+  if (present(resrv_lfac_in)) segment%tr_Reg%Tr(ntseg)%resrv_lfac_in = resrv_lfac_in
+  if (present(resrv_lfac_out)) segment%tr_Reg%Tr(ntseg)%resrv_lfac_out = resrv_lfac_out
+
+  init_value = 0.0
+  if (present(OBC_scalar)) then
+    segment%tr_Reg%Tr(ntseg)%OBC_inflow_conc = OBC_scalar ! initialize tracer value later
+    segment%tr_Reg%Tr(ntseg)%resrv_lfac_in = 0.0
+    segment%tr_Reg%Tr(ntseg)%resrv_lfac_out = 0.0
+    init_value = OBC_scalar
+  endif
+
   if (present(OBC_array)) then
     if (segment%is_E_or_W) then
-      allocate(segment%tr_Reg%Tr(ntseg)%t(IsdB:IedB,jsd:jed,1:GV%ke), source=0.0)
-      allocate(segment%tr_Reg%Tr(ntseg)%tres(IsdB:IedB,jsd:jed,1:GV%ke), source=0.0)
+      allocate(segment%tr_Reg%Tr(ntseg)%t(IsdB:IedB,jsd:jed,1:GV%ke), source=init_value)
+      allocate(segment%tr_Reg%Tr(ntseg)%tres(IsdB:IedB,jsd:jed,1:GV%ke), source=init_value)
       segment%tr_Reg%Tr(ntseg)%is_initialized = .false.
     elseif (segment%is_N_or_S) then
-      allocate(segment%tr_Reg%Tr(ntseg)%t(isd:ied,JsdB:JedB,1:GV%ke), source=0.0)
-      allocate(segment%tr_Reg%Tr(ntseg)%tres(isd:ied,JsdB:JedB,1:GV%ke), source=0.0)
+      allocate(segment%tr_Reg%Tr(ntseg)%t(isd:ied,JsdB:JedB,1:GV%ke), source=init_value)
+      allocate(segment%tr_Reg%Tr(ntseg)%tres(isd:ied,JsdB:JedB,1:GV%ke), source=init_value)
       segment%tr_Reg%Tr(ntseg)%is_initialized = .false.
     endif
   endif
