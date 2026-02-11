@@ -2862,7 +2862,7 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
       if (segment%is_E_or_W) then
         I = segment%HI%IsdB
         do m=1,OBC%ntr
-          if (allocated(segment%tr_Reg%Tr(m)%tres)) then
+          if (allocated(segment%tr_Reg%Tr(m)%tres) .and. allocated(OBC%tres_x)) then
             do k=1,GV%ke
               do j=segment%HI%jsd,segment%HI%jed
                 segment%tr_Reg%Tr(m)%tres(I,j,k) = segment%tr_Reg%Tr(m)%scale * OBC%tres_x(I,j,k,m)
@@ -2873,7 +2873,7 @@ subroutine radiation_open_bdry_conds(OBC, u_new, u_old, v_new, v_old, G, GV, US,
       else
         J = segment%HI%JsdB
         do m=1,OBC%ntr
-          if (allocated(segment%tr_Reg%Tr(m)%tres)) then
+          if (allocated(segment%tr_Reg%Tr(m)%tres) .and. allocated(OBC%tres_y)) then
             do k=1,GV%ke
               do i=segment%HI%isd,segment%HI%ied
                 segment%tr_Reg%Tr(m)%tres(i,J,k) = segment%tr_Reg%Tr(m)%scale * OBC%tres_y(i,J,k,m)
@@ -5241,7 +5241,7 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
     init_value = OBC_scalar
   endif
 
-  if (present(OBC_array)) then
+  ! if (present(OBC_array)) then
     if (segment%is_E_or_W) then
       allocate(segment%tr_Reg%Tr(ntseg)%t(IsdB:IedB,jsd:jed,1:GV%ke), source=init_value)
       allocate(segment%tr_Reg%Tr(ntseg)%tres(IsdB:IedB,jsd:jed,1:GV%ke), source=init_value)
@@ -5251,7 +5251,7 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
       allocate(segment%tr_Reg%Tr(ntseg)%tres(isd:ied,JsdB:JedB,1:GV%ke), source=init_value)
       segment%tr_Reg%Tr(ntseg)%is_initialized = .false.
     endif
-  endif
+  ! endif
 
 end subroutine register_segment_tracer
 
