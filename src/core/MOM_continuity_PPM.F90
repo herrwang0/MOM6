@@ -202,10 +202,10 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     else
       LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
       call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
-                              2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+                              2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter, no_mono_constraint=CS%no_topo_recon_limiter)
       LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
       call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
-                              2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+                              2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter, no_mono_constraint=CS%no_topo_recon_limiter)
     endif
   endif
 
@@ -3004,7 +3004,7 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
                  "If true, split reconstruction of interfaces and topography.", default=.false.)
   call get_param(param_file, mdl, "CONT_NO_LIMITER", CS%no_limiter, &
                  "If true, do not apply limiter to all interfaces.", default=.false.)
-  call get_param(param_file, mdl, "CONT_NO_MONO_CONTRAINT", CS%no_mono_constraint, &
+  call get_param(param_file, mdl, "CONT_NO_MONO_CONSTRAINT", CS%no_mono_constraint, &
                  "If true, do not apply mono contraint to all interfaces.", default=.false.)
   call get_param(param_file, mdl, "CONT_NO_TOPO_LIMITER", CS%no_topo_recon_limiter, &
                  "If true, do not apply limiter to topograophy.", default=CS%no_limiter)
