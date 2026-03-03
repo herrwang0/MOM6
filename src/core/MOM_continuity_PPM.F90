@@ -68,7 +68,7 @@ type, public :: continuity_PPM_CS ; private
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
   logical :: use_clamp, print_clamp
-  logical :: split_recon, no_topo_recon_limiter, no_eta_recon_limiter, topo_simple_2nd
+  logical :: split_recon, no_topo_recon_limiter, no_limiter, topo_simple_2nd, no_mono_constraint
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -544,7 +544,7 @@ subroutine zonal_edge_thickness(h_in, h_W, h_E, G, GV, US, CS, OBC, LB_in)
     !$OMP parallel do default(shared)
     do k=1,nz
       call PPM_reconstruction_x(h_in(:,:,k), h_W(:,:,k), h_E(:,:,k), G, LB, &
-                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k, no_limiter=CS%no_topo_recon_limiter)
+                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k, no_limiter=CS%no_limiter, no_mono_constraint=CS%no_mono_constraint)
     enddo
   endif
 
@@ -591,7 +591,7 @@ subroutine meridional_edge_thickness(h_in, h_S, h_N, G, GV, US, CS, OBC, LB_in)
     !$OMP parallel do default(shared)
     do k=1,nz
       call PPM_reconstruction_y(h_in(:,:,k), h_S(:,:,k), h_N(:,:,k), G, LB, &
-                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k, no_limiter=CS%no_topo_recon_limiter)
+                                2.0*GV%Angstrom_H, CS%monotonic, CS%simple_2nd, OBC, k, no_limiter=CS%no_limiter, no_mono_constraint=CS%no_mono_constraint)
     enddo
   endif
 
@@ -2485,7 +2485,7 @@ subroutine set_merid_BT_cont(v, h_in, h_S, h_N, BT_cont, vh_tot_0, dvhdv_tot_0, 
 end subroutine set_merid_BT_cont
 
 !> Calculates left/right edge values for PPM reconstruction.
-subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_2nd, OBC, k, no_limiter)
+subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_2nd, OBC, k, no_limiter, no_mono_constraint)
   type(ocean_grid_type),             intent(in)  :: G    !< Ocean's grid structure.
   real, dimension(SZI_(G),SZJ_(G)),  intent(in)  :: h_in !< Layer thickness [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJ_(G)),  intent(out) :: h_W  !< West edge thickness in the reconstruction,
@@ -2503,7 +2503,7 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
                     !! for a simple 2nd order scheme.
   type(ocean_OBC_type),              pointer     :: OBC !< Open boundaries control structure.
   integer :: k      !< vertical grid index
-  logical, optional, intent(in) :: no_limiter
+  logical, optional, intent(in) :: no_limiter, no_mono_constraint
 
   ! Local variables with useful mnemonic names.
   real, dimension(SZI_(G),SZJ_(G))  :: slp ! The slopes per grid point [H ~> m or kg m-2]
@@ -2515,9 +2515,10 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
   integer :: i, j, isl, iel, jsl, jel, n, stencil
   logical :: local_open_BC
   type(OBC_segment_type), pointer :: segment => NULL()
-  logical :: do_limiter
+  logical :: do_limiter, do_mono_constraint
 
   do_limiter = .true. ; if (present(no_limiter)) do_limiter = .not. no_limiter
+  do_mono_constraint = .true. ; if (present(no_mono_constraint)) do_mono_constraint = .not. no_mono_constraint
 
   local_open_BC = .false.
   if (associated(OBC)) then
@@ -2556,7 +2557,7 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
       else
         ! This uses a simple 2nd order slope.
         slp(i,j) = 0.5 * (h_in(i+1,j) - h_in(i-1,j))
-        if (do_limiter) then
+        if (do_mono_constraint) then
           ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
           dMx = max(h_in(i+1,j), h_in(i-1,j), h_in(i,j)) - h_in(i,j)
           dMn = h_in(i,j) - min(h_in(i+1,j), h_in(i-1,j), h_in(i,j))
@@ -2647,7 +2648,7 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
 end subroutine PPM_reconstruction_x
 
 !> Calculates left/right edge values for PPM reconstruction.
-subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_2nd, OBC, k, no_limiter)
+subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_2nd, OBC, k, no_limiter, no_mono_constraint)
   type(ocean_grid_type),             intent(in)  :: G    !< Ocean's grid structure.
   real, dimension(SZI_(G),SZJ_(G)),  intent(in)  :: h_in !< Layer thickness [H ~> m or kg m-2].
   real, dimension(SZI_(G),SZJ_(G)),  intent(out) :: h_S  !< South edge thickness in the reconstruction,
@@ -2665,7 +2666,7 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
                     !! for a simple 2nd order scheme.
   type(ocean_OBC_type),              pointer     :: OBC !< Open boundaries control structure.
   integer :: k      !< vertical grid index
-  logical, optional, intent(in) :: no_limiter
+  logical, optional, intent(in) :: no_limiter, no_mono_constraint
 
   ! Local variables with useful mnemonic names.
   real, dimension(SZI_(G),SZJ_(G))  :: slp ! The slopes per grid point [H ~> m or kg m-2]
@@ -2677,9 +2678,10 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
   integer :: i, j, isl, iel, jsl, jel, n, stencil
   logical :: local_open_BC
   type(OBC_segment_type), pointer :: segment => NULL()
-  logical :: do_limiter
+  logical :: do_limiter, do_mono_constraint
 
   do_limiter = .true. ; if (present(no_limiter)) do_limiter = .not. no_limiter
+  do_mono_constraint = .true. ; if (present(no_mono_constraint)) do_mono_constraint = .not. no_mono_constraint
 
   local_open_BC = .false.
   if (associated(OBC)) then
@@ -2718,7 +2720,7 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
       else
         ! This uses a simple 2nd order slope.
         slp(i,j) = 0.5 * (h_in(i,j+1) - h_in(i,j-1))
-        if (do_limiter) then
+        if (do_mono_constraint) then
           ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
           dMx = max(h_in(i,j+1), h_in(i,j-1), h_in(i,j)) - h_in(i,j)
           dMn = h_in(i,j) - min(h_in(i,j+1), h_in(i,j-1), h_in(i,j))
@@ -3000,10 +3002,13 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
                  "If true, clamp by topography.", default=.false.)
   call get_param(param_file, mdl, "CONT_USE_SPLIT_LIMITER", CS%split_recon, &
                  "If true, split reconstruction of interfaces and topography.", default=.false.)
+  call get_param(param_file, mdl, "CONT_NO_LIMITER", CS%no_limiter, &
+                 "If true, do not apply limiter to all interfaces.", default=.false.)
+  call get_param(param_file, mdl, "CONT_NO_MONO_CONTRAINT", CS%no_mono_constraint, &
+                 "If true, do not apply mono contraint to all interfaces.", default=.false.)
   call get_param(param_file, mdl, "CONT_NO_TOPO_LIMITER", CS%no_topo_recon_limiter, &
-                 "If true, do not apply limiter to topograophy.", default=.false.)
-  call get_param(param_file, mdl, "CONT_NO_ETA_LIMITER", CS%no_eta_recon_limiter, &
-                 "If true, do not apply limiter to interfaces.", default=.false.)
+                 "If true, do not apply limiter to topograophy.", default=CS%no_limiter)
+  CS%no_topo_recon_limiter = CS%split_recon .and. CS%no_topo_recon_limiter
   call get_param(param_file, mdl, "CONT_TOPO_SIMPLE_2ND", CS%topo_simple_2nd, &
                  "If true, use a simple 2nd order to reconstruc topo.", default=.false.)
   CS%diag => diag
