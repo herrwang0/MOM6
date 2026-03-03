@@ -68,7 +68,7 @@ type, public :: continuity_PPM_CS ; private
                              !! barotropic solver.  Otherwise use the transport
                              !! averaged areas.
   logical :: use_clamp, print_clamp
-  logical :: split_limiter,no_topo_recon_limiter, no_eta_recon_limiter, topo_simple_2nd
+  logical :: split_recon, no_topo_recon_limiter, no_eta_recon_limiter, topo_simple_2nd
 end type continuity_PPM_CS
 
 !> A container for loop bounds
@@ -192,30 +192,31 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
       "MOM_continuity_PPM: Either both visc_rem_u and visc_rem_v or neither"// &
       " one must be present in call to continuity_PPM.")
 
-  if (CS%topo_simple_2nd) then
-  ! Reconstruct topo with simple 2nd
-  LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
-  call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0)
-  LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
-  call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0)
-  else
-  LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
-  call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
-  LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
-  call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
-                          2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+  if (CS%split_recon) then
+    if (CS%topo_simple_2nd) then
+      ! Reconstruct topo with simple 2nd
+      LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
+      call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, 2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0)
+      LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
+      call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, 2.0*GV%Angstrom_H, CS%monotonic, .true., OBC, 0)
+    else
+      LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
+      call PPM_reconstruction_x(G%bathyT, D_W, D_E, G, LB, &
+                              2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+      LB = set_continuity_loop_bounds(G, CS, i_stencil=.true., j_stencil=.false.)
+      call PPM_reconstruction_y(G%bathyT, D_S, D_N, G, LB, &
+                              2.0*GV%Angstrom_H, CS%monotonic, .false., OBC, 0, no_limiter=CS%no_topo_recon_limiter)
+    endif
   endif
+
   if (x_first) then
     !  First advect zonally, with loop bounds that accomodate the subsequent meridional advection.
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.true.)
 
-    if (CS%split_limiter) then
-     call find_eta(G, GV, hin, eta)
-     call zonal_edge_thickness(eta(:,:,1:GV%ke), h_W, h_E, G, GV, US, CS, OBC, LB)
-     do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+    if (CS%split_recon) then
+      call find_eta(G, GV, hin, eta)
+      call zonal_edge_thickness(eta(:,:,1:GV%ke), h_W, h_E, G, GV, US, CS, OBC, LB)
+      do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
         h_L(i,j,k) = max(h_W(i,j,K) - h_W(i,j,K+1), h_min)
         h_R(i,j,k) = max(h_E(i,j,K) - h_E(i,j,K+1), h_min)
       enddo ; enddo ; enddo
@@ -224,8 +225,8 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
         h_R(i,j,GV%ke) = h_E(i,j,GV%ke) + D_E(i,j)
       enddo ; enddo
     else
-     call zonal_edge_thickness(hin, h_W, h_E, G, GV, US, CS, OBC, LB)
-     do k = 1, GV%ke ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
+      call zonal_edge_thickness(hin, h_W, h_E, G, GV, US, CS, OBC, LB)
+      do k = 1, GV%ke ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
         h_L(i,j,k) = h_W(i,j,K)
         h_R(i,j,k) = h_E(i,j,K)
       enddo ; enddo ; enddo
@@ -237,7 +238,7 @@ subroutine continuity_PPM(u, v, hin, h, uh, vh, dt, G, GV, US, CS, OBC, pbv, uhb
     !  Now advect meridionally, using the updated thicknesses to determine the fluxes.
     LB = set_continuity_loop_bounds(G, CS, i_stencil=.false., j_stencil=.false.)
 
-    if (CS%split_limiter) then
+    if (CS%split_recon) then
       call find_eta(G, GV, h, eta)
       call meridional_edge_thickness(eta(:,:,1:GV%ke), h_S, h_N, G, GV, US, CS, OBC, LB)
       do k = 1, GV%ke-1 ; do j = G%jsd, G%jed ; do i = G%isd, G%ied
@@ -2556,11 +2557,11 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
         ! This uses a simple 2nd order slope.
         slp(i,j) = 0.5 * (h_in(i+1,j) - h_in(i-1,j))
         if (do_limiter) then
-        ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
-        dMx = max(h_in(i+1,j), h_in(i-1,j), h_in(i,j)) - h_in(i,j)
-        dMn = h_in(i,j) - min(h_in(i+1,j), h_in(i-1,j), h_in(i,j))
-        slp(i,j) = sign(1.,slp(i,j)) * min(abs(slp(i,j)), 2. * min(dMx, dMn))
-                ! * (G%mask2dT(i-1,j) * G%mask2dT(i,j) * G%mask2dT(i+1,j))
+          ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
+          dMx = max(h_in(i+1,j), h_in(i-1,j), h_in(i,j)) - h_in(i,j)
+          dMn = h_in(i,j) - min(h_in(i+1,j), h_in(i-1,j), h_in(i,j))
+          slp(i,j) = sign(1.,slp(i,j)) * min(abs(slp(i,j)), 2. * min(dMx, dMn))
+                  ! * (G%mask2dT(i-1,j) * G%mask2dT(i,j) * G%mask2dT(i+1,j))
         endif
       endif
     enddo ; enddo
@@ -2635,11 +2636,11 @@ subroutine PPM_reconstruction_x(h_in, h_W, h_E, G, LB, h_min, monotonic, simple_
   endif
 
   if (do_limiter) then
-  if (monotonic) then
-    call PPM_limit_CW84(h_in, h_W, h_E, G, isl, iel, jsl, jel)
-  else
-    call PPM_limit_pos(h_in, h_W, h_E, h_min, G, isl, iel, jsl, jel)
-  endif
+    if (monotonic) then
+      call PPM_limit_CW84(h_in, h_W, h_E, G, isl, iel, jsl, jel)
+    else
+      call PPM_limit_pos(h_in, h_W, h_E, h_min, G, isl, iel, jsl, jel)
+    endif
   endif
 
   return
@@ -2718,11 +2719,11 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
         ! This uses a simple 2nd order slope.
         slp(i,j) = 0.5 * (h_in(i,j+1) - h_in(i,j-1))
         if (do_limiter) then
-        ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
-        dMx = max(h_in(i,j+1), h_in(i,j-1), h_in(i,j)) - h_in(i,j)
-        dMn = h_in(i,j) - min(h_in(i,j+1), h_in(i,j-1), h_in(i,j))
-        slp(i,j) = sign(1.,slp(i,j)) * min(abs(slp(i,j)), 2. * min(dMx, dMn))
-                ! * (G%mask2dT(i,j-1) * G%mask2dT(i,j) * G%mask2dT(i,j+1))
+          ! Monotonic constraint, see Eq. B2 in Lin 1994, MWR (132)
+          dMx = max(h_in(i,j+1), h_in(i,j-1), h_in(i,j)) - h_in(i,j)
+          dMn = h_in(i,j) - min(h_in(i,j+1), h_in(i,j-1), h_in(i,j))
+          slp(i,j) = sign(1.,slp(i,j)) * min(abs(slp(i,j)), 2. * min(dMx, dMn))
+                  ! * (G%mask2dT(i,j-1) * G%mask2dT(i,j) * G%mask2dT(i,j+1))
         endif
       endif
     enddo ; enddo
@@ -2795,11 +2796,11 @@ subroutine PPM_reconstruction_y(h_in, h_S, h_N, G, LB, h_min, monotonic, simple_
   endif
 
   if (do_limiter) then
-  if (monotonic) then
-    call PPM_limit_CW84(h_in, h_S, h_N, G, isl, iel, jsl, jel)
-  else
-    call PPM_limit_pos(h_in, h_S, h_N, h_min, G, isl, iel, jsl, jel)
-  endif
+    if (monotonic) then
+      call PPM_limit_CW84(h_in, h_S, h_N, G, isl, iel, jsl, jel)
+    else
+      call PPM_limit_pos(h_in, h_S, h_N, h_min, G, isl, iel, jsl, jel)
+    endif
   endif
 
   return
@@ -2997,14 +2998,14 @@ subroutine continuity_PPM_init(Time, G, GV, US, param_file, diag, CS, OBC)
                  "If true, clamp by topography.", default=.false.)
   call get_param(param_file, mdl, "CONT_PRINT_CLAMP", CS%print_clamp, &
                  "If true, clamp by topography.", default=.false.)
-  call get_param(param_file, mdl, "CONT_USE_SPLIT_LIMITER", CS%split_limiter, &
-                 "If true, use split limiter.", default=.false.)
+  call get_param(param_file, mdl, "CONT_USE_SPLIT_LIMITER", CS%split_recon, &
+                 "If true, split reconstruction of interfaces and topography.", default=.false.)
   call get_param(param_file, mdl, "CONT_NO_TOPO_LIMITER", CS%no_topo_recon_limiter, &
-                 "If true, use split limiter.", default=.false.)
+                 "If true, do not apply limiter to topograophy.", default=.false.)
   call get_param(param_file, mdl, "CONT_NO_ETA_LIMITER", CS%no_eta_recon_limiter, &
-                 "If true, use split limiter.", default=.false.)
+                 "If true, do not apply limiter to interfaces.", default=.false.)
   call get_param(param_file, mdl, "CONT_TOPO_SIMPLE_2ND", CS%topo_simple_2nd, &
-                 "If true, use split limiter.", default=.false.)
+                 "If true, use a simple 2nd order to reconstruc topo.", default=.false.)
   CS%diag => diag
 
   id_clock_reconstruct = cpu_clock_id('(Ocean continuity reconstruction)', grain=CLOCK_ROUTINE)
