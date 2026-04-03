@@ -24,8 +24,7 @@ use MOM_interface_heights, only : calc_derived_thermo
 use MOM_io, only : file_exists, field_size, MOM_read_data, MOM_read_vector, slasher
 use MOM_open_boundary, only : ocean_OBC_type, open_boundary_test_extern_h
 use MOM_open_boundary, only : fill_temp_salt_segments, setup_OBC_tracer_reservoirs
-use MOM_open_boundary, only : fill_thickness_segments
-use MOM_open_boundary, only : set_initialized_OBC_tracer_reservoirs
+! use MOM_open_boundary, only : set_initialized_OBC_tracer_reservoirs
 use MOM_restart, only : restore_state, is_new_run, copy_restart_var, copy_restart_vector
 use MOM_restart, only : restart_registry_lock, MOM_restart_CS
 use MOM_sponge, only : set_up_sponge_field, set_up_sponge_ML_density
@@ -681,27 +680,22 @@ subroutine MOM_initialize_OBCs(h, tv, OBC, Time, G, GV, US, PF, restart_CS, trac
                  "If true, do additional calls resetting values to help verify the correctness "//&
                  "of the open boundary condition code.", default=.false.,  &
                  do_not_log=.true., old_name="DEBUG_OBC", debuggingParam=.true.)
-    call get_param(PF, mdl, "ENABLE_BUGS_BY_DEFAULT", enable_bugs, &
-                 default=.true., do_not_log=.true.)  ! This is logged from MOM.F90.
-    call get_param(PF, mdl, "OBC_RESERVOIR_INIT_BUG", OBC_reservoir_init_bug, &
-                 "If true, set the OBC tracer reservoirs at the startup of a new run from the "//&
-                 "interior tracer concentrations regardless of properties that may be explicitly "//&
-                 "specified for the reservoir concentrations.", default=enable_bugs)
-    if (associated(tv%T)) then
-      if (OBC_reservoir_init_bug) then
-        if (is_new_run(restart_CS)) then
-          ! Set up OBC%trex_x and OBC%tres_y as they have not been read from a restart file.
-          call setup_OBC_tracer_reservoirs(G, GV, OBC)
-          ! Ensure that the values of the tracer reservoirs that have just been set will not be revised.
-          call set_initialized_OBC_tracer_reservoirs(G, OBC, restart_CS)
-        endif
-      else
-        ! Store the updated temperatures and salinities at the open boundaries, noting that they may
-        ! still be updated by the calls in the next 50 lines, so the code setting the tracer
-        ! reservoir values will come later in the calling routine.
-        call fill_temp_salt_segments(G, GV, US, OBC, tv)
-      endif
-    endif
+    ! call get_param(PF, mdl, "ENABLE_BUGS_BY_DEFAULT", enable_bugs, &
+    !              default=.true., do_not_log=.true.)  ! This is logged from MOM.F90.
+    ! call get_param(PF, mdl, "OBC_RESERVOIR_INIT_BUG", OBC_reservoir_init_bug, &
+    !              "If true, set the OBC tracer reservoirs at the startup of a new run from the "//&
+    !              "interior tracer concentrations regardless of properties that may be explicitly "//&
+    !              "specified for the reservoir concentrations.", default=enable_bugs)
+    ! if (associated(tv%T)) then
+    !   if (OBC_reservoir_init_bug) then
+    !     if (is_new_run(restart_CS)) then
+    !       ! Set up OBC%trex_x and OBC%tres_y as they have not been read from a restart file.
+    !       call setup_OBC_tracer_reservoirs(G, GV, OBC)
+    !       ! Ensure that the values of the tracer reservoirs that have just been set will not be revised.
+    !       call set_initialized_OBC_tracer_reservoirs(G, OBC, restart_CS)
+    !     endif
+    !   endif
+    ! endif
 
     ! This controls user code for setting open boundary data
     call get_param(PF, mdl, "OBC_USER_CONFIG", config, &
@@ -743,8 +737,6 @@ subroutine MOM_initialize_OBCs(h, tv, OBC, Time, G, GV, US, PF, restart_CS, trac
     endif
     if (debug_OBC) call open_boundary_test_extern_h(G, GV, OBC, h)
 
-    if (OBC%use_h_res) &
-      call fill_thickness_segments(G, GV, US, OBC, h)
   endif
 
   call callTree_leave('MOM_initialize_OBCs()')
