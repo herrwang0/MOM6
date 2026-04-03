@@ -3320,7 +3320,11 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     ! Call this during initialization to fill boundary arrays from fixed values
     call read_OBC_segment_data(G, GV, US, CS%OBC, CS%tv, CS%h, Time)
     call update_OBC_segment_data(G, GV, US, CS%OBC, CS%h, Time)
-    call initialize_OBC_segment_reservoirs(GV, CS%OBC)
+    ! Only initialize per-segment reservoirs on new runs; on restarts they are
+    ! filled from the global restart arrays by copy_OBC_tracer_reservoirs and
+    ! copy_thickness_reservoirs in the block below.
+    if (is_new_run(restart_CSp)) &
+      call initialize_OBC_segment_reservoirs(GV, CS%OBC)
   endif
 
   if (use_ice_shelf .and. CS%debug) then
@@ -3679,14 +3683,20 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   endif
 
   if (associated(CS%OBC)) then
-    ! At this point any information related to the tracer reservoirs has either been read from
-    ! the restart file or has been specified in the segments.  Initialize the tracer reservoir
-    ! values from the segments if they have not been set via the restart file.
-    call setup_OBC_tracer_reservoirs(G, GV, CS%OBC, restart_CSp)
-    call setup_OBC_thickness_reservoirs(G, GV, CS%OBC, restart_CSp)
-    call open_boundary_halo_update(G, CS%OBC)
-    call copy_thickness_reservoirs(CS%OBC, G, GV)
-    call copy_OBC_tracer_reservoirs(GV, CS%OBC) ! Copy tracer reservoirs to segments
+    if (is_new_run(restart_CSp)) then
+      ! New run: per-segment tres/h_res were set by initialize_OBC_segment_reservoirs above.
+      ! Populate the global restart arrays from the per-segment data.
+      call setup_OBC_tracer_reservoirs(G, GV, CS%OBC)
+      call setup_OBC_thickness_reservoirs(G, GV, CS%OBC)
+      call open_boundary_halo_update(G, CS%OBC)
+      ! Per-segment tres/h_res are already correct; no copy-back is needed.
+    else
+      ! Restart: OBC%tres_x/y and OBC%h_res_x/y were read from the restart file.
+      ! Propagate them to the per-segment arrays for use during integration.
+      call open_boundary_halo_update(G, CS%OBC)
+      call copy_thickness_reservoirs(CS%OBC, G, GV)
+      call copy_OBC_tracer_reservoirs(GV, CS%OBC)
+    endif
   endif
 
   call register_obsolete_diagnostics(param_file, CS%diag)
