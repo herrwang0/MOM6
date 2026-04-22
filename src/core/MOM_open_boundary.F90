@@ -5200,8 +5200,27 @@ subroutine segment_thickness_reservoir_init(GV, US, OBC, param_file)
 
 end subroutine segment_thickness_reservoir_init
 
-!> Register a tracer array that is active on an OBC segment, potentially also specifying how the
-!! tracer inflow values are specified.
+!> Register a tracer with an OBC segment, allocating its boundary arrays and configuring
+!! its reservoir update behavior.
+!!
+!! This routine adds the tracer to the segment's tracer registry (%tr_Reg), allocates the
+!! external-value array (%t) and reservoir array (%tres), and computes the per-tracer
+!! inverse length scales (%I_Lscale_in, %I_Lscale_out) used by update_segment_tracer_reservoirs.
+!!
+!! Two mutually exclusive modes control how inflow concentrations are supplied:
+!!
+!! - **File-driven** (default, no OBC_inflow_conc): external OBC data are read from file.
+!!   The optional resrv_lfac_in and resrv_lfac_out arguments scale the segment-wide
+!!   reservoir length scales for this specific tracer, allowing per-tracer adjustment of
+!!   the relaxation rate.
+!! - **Uniform inflow** (OBC_inflow_conc present): a spatially and temporally uniform
+!!   concentration is used for all inflow. resrv_lfac_in and resrv_lfac_out must not be
+!!   passed together with OBC_inflow_conc.
+!!
+!! The optional scale argument provides the unit-conversion factor from the tracer's
+!! MKS input units to its internal units (e.g. [S ppt-1 ~> 1] for salinity). If
+!! initialize_segment_data was called before this routine, previously stored field values
+!! are rescaled to the new units.
 subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
                                    OBC_inflow_conc, scale, resrv_lfac_in, resrv_lfac_out)
   type(verticalGrid_type), intent(in)   :: GV         !< ocean vertical grid structure
@@ -6028,6 +6047,24 @@ subroutine open_boundary_register_restarts(HI, GV, US, OBC, Reg, param_file, res
 end subroutine open_boundary_register_restarts
 
 !> Update the OBC tracer reservoirs after the tracers have been updated.
+!!
+!! Each segment's tracer reservoir (%tres) is advanced by one implicit (Backward-Euler)
+!! step driven by the accumulated volume/mass flux through the boundary face. The update
+!! depends on the sign of the flow relative to the boundary:
+!!
+!! - **Outflow** (interior toward reservoir): the reservoir relaxes toward the interior
+!!   tracer concentration at a rate set by segment%Tr_InvLscale_out * resrv_lfac_out.
+!!   With a zero length scale (instant mode) the reservoir is set immediately to the
+!!   interior concentration; with a negative length scale (infinite mode) the reservoir
+!!   is not updated.
+!! - **Inflow** (reservoir toward interior): the reservoir relaxes toward the external
+!!   OBC tracer concentration at a rate set by segment%Tr_InvLscale_in * resrv_lfac_in.
+!!   With a zero length scale (instant mode) the reservoir is set immediately to the
+!!   OBC concentration; with a negative length scale (infinite mode) the reservoir is
+!!   not updated.
+!!
+!! After updating %tres, the rescaled values are also copied into OBC%tres_x / OBC%tres_y
+!! for use in restart I/O.
 subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
   type(ocean_grid_type),                      intent(in) :: G   !< The ocean's grid structure
   type(verticalGrid_type),                    intent(in) :: GV  !< Ocean vertical grid structure
@@ -6085,7 +6122,6 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
     if (segment%is_E_or_W) then
       I = segment%HI%IsdB ; ii = segment%HI%isd
       js = segment%HI%jsd ; je = segment%HI%jed
-      ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
       do m=1,segment%tr_Reg%ntseg
         ntr_id = segment%tr_Reg%Tr(m)%ntr_index
         resrv_lfac_out = segment%tr_Reg%Tr(m)%resrv_lfac_out
@@ -6122,7 +6158,6 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
     elseif (segment%is_N_or_S) then
       J = segment%HI%JsdB ; ji = segment%HI%jsd
       is = segment%HI%isd ; ie = segment%HI%ied
-      ! Update the reservoir tracer concentration implicitly using a Backward-Euler timestep
       do m=1,segment%tr_Reg%ntseg
         ntr_id = segment%tr_Reg%Tr(m)%ntr_index
         resrv_lfac_out = segment%tr_Reg%Tr(m)%resrv_lfac_out
@@ -6154,6 +6189,27 @@ subroutine update_segment_tracer_reservoirs(G, GV, uhr, vhr, h, OBC, Reg)
 end subroutine update_segment_tracer_reservoirs
 
 !> Update the OBC thickness reservoirs after the thicknesses have been updated.
+!!
+!! Each segment's layer-thickness reservoir (%h_res) is advanced by one implicit (Backward-Euler)
+!! step driven by the accumulated volume/mass flux through the boundary face. The update
+!! depends on the sign of the flow relative to the boundary:
+!!
+!! - **Outflow** (interior toward reservoir): the reservoir relaxes toward the interior
+!!   layer thickness at a rate set by segment%Th_InvLscale_out.
+!!   With a zero length scale (instant mode) the reservoir is set immediately to the
+!!   interior layer thickness; with a negative length scale (infinite mode) the reservoir
+!!   is not updated.
+!! - **Inflow** (reservoir toward interior): the reservoir relaxes toward the external
+!!   OBC layer thickness at a rate set by segment%Th_InvLscale_in.
+!!   With a zero length scale (instant mode) the reservoir is set immediately to the
+!!   OBC layer thickness; with a negative length scale (infinite mode) the reservoir is
+!!   not updated.
+!!
+!! Note: when OBC%thickness_res_update_bug is true, the instant-update mask is not applied
+!! and the length-scale relaxation is always active.
+!!
+!! After updating %h_res, the rescaled values are also copied into OBC%h_res_x / OBC%h_res_y
+!! for use in restart I/O.
 subroutine update_segment_thickness_reservoirs(G, GV, uhr, vhr, h, OBC)
   type(ocean_grid_type),                      intent(in) :: G   !< The ocean's grid structure
   type(verticalGrid_type),                    intent(in) :: GV  !< Ocean vertical grid structure
@@ -6213,7 +6269,6 @@ subroutine update_segment_thickness_reservoirs(G, GV, uhr, vhr, h, OBC)
     if (segment%is_E_or_W) then
       I = segment%HI%IsdB ; ii = segment%HI%isd
       js = segment%HI%jsd ; je = segment%HI%jed
-      ! Update the reservoir thickness concentration implicitly using a Backward-Euler timestep
       if (allocated(segment%h_Reg%h_res)) then
         do k=1,nz ; do j=js,je
           ! Calculate weights. Both a and L are nondim. Adding them together has no meaning.
@@ -6241,7 +6296,6 @@ subroutine update_segment_thickness_reservoirs(G, GV, uhr, vhr, h, OBC)
     elseif (segment%is_N_or_S) then
       J = segment%HI%JsdB ; ji = segment%HI%jsd
       is = segment%HI%isd ; ie = segment%HI%ied
-      ! Update the reservoir thickness concentration implicitly using a Backward-Euler timestep
       if (allocated(segment%h_Reg%h_res)) then
         do k=1,nz ; do i=is,ie
           flux_to_res = dir * vhr(i,J,k)
