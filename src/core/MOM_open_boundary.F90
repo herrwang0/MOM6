@@ -201,13 +201,19 @@ type, public :: OBC_segment_thickness_type
   real              :: scale                !< A scaling factor for converting the units of input
                                             !! data, [Z m-1 ~> 1].
   real              :: I_Lscale_in  = 0.0   !< Inverse length scale for flow into the reservoir
-                                            !! direction.  For Lscale >=0, I_Lscale_in = 1 / Lscale
-                                            !! [L-1 ~> m-1].  For infinite length scale,
-                                            !! I_Lscale_in = -1 [nondim].
+                                            !! direction.  Three regimes:
+                                            !! - Positive: finite length scale; I_Lscale_in =
+                                            !!   Th_InvLscale_in [L-1 ~> m-1].
+                                            !! - Zero: infinite length scale; reservoir is frozen [nondim].
+                                            !! - Negative (-1): instant-update sentinel (zero effective
+                                            !!   length scale) [nondim].
   real              :: I_Lscale_out = 0.0   !< Inverse length scale for flow out of the reservoir
-                                            !! direction.  For Lscale >=0, I_Lscale_out = 1 / Lscale
-                                            !! [L-1 ~> m-1].  For infinite length scale,
-                                            !! I_Lscale_out = -1 [nondim].
+                                            !! direction.  Three regimes:
+                                            !! - Positive: finite length scale; I_Lscale_out =
+                                            !!   Th_InvLscale_out [L-1 ~> m-1].
+                                            !! - Zero: infinite length scale; reservoir is frozen [nondim].
+                                            !! - Negative (-1): instant-update sentinel (zero effective
+                                            !!   length scale) [nondim].
 end type OBC_segment_thickness_type
 
 !> Registry type for tracers on segments
@@ -483,6 +489,8 @@ type, public :: ocean_OBC_type
                                 !! concentrations.
   logical :: ts_needed_bug      !< If true, recover a bug that temperature and salinity can be ignored
                                 !! even if they are registered tracers in the rest of the model.
+  logical :: thickness_res_update_bug !< If true, recover a bug that thickness reservoir update uses
+                                !! tracer reservoir length scales to select mode switches.
 end type ocean_OBC_type
 
 !> Control structure for open boundaries that read from files.
@@ -888,6 +896,10 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   Lscale_in = 0.
   Lscale_out = 0.
   if (open_boundary_query(OBC, apply_open_OBC=.true.)) then
+    call get_param(param_file, mdl, "OBC_THICKNESS_RESERVOIR_LENGTH_SCALE_BUG", &
+                   OBC%thickness_res_update_bug, "If true, recover a bug that thickness "//&
+                   "reservoir update uses tracer reservoir length scales to select mode "//&
+                   "switches.", default=.true.)
     call get_param(param_file, mdl, "OBC_THICKNESS_RESERVOIR_LENGTH_SCALE_OUT", Lscale_out, &
                    "An effective length scale for the thickness reservoir update when the flow "//&
                    "is exiting the domain.  If positive, the reservoir relaxes toward the "//&
@@ -5172,8 +5184,13 @@ subroutine segment_thickness_reservoir_init(GV, US, OBC, param_file)
     endif
     segment%h_Reg%is_initialized = .false.
 
-    segment%h_Reg%I_Lscale_in  = segment%Tr_InvLscale_in
-    segment%h_Reg%I_Lscale_out = segment%Tr_InvLscale_out
+    if (OBC%thickness_res_update_bug) then
+      segment%h_Reg%I_Lscale_in  = segment%Tr_InvLscale_in
+      segment%h_Reg%I_Lscale_out = segment%Tr_InvLscale_out
+    else
+      segment%h_Reg%I_Lscale_in  = segment%Th_InvLscale_in
+      segment%h_Reg%I_Lscale_out = segment%Th_InvLscale_out
+    endif
 
     init_calls = init_calls + 1
 
@@ -6185,8 +6202,13 @@ subroutine update_segment_thickness_reservoirs(G, GV, uhr, vhr, h, OBC)
     else
       dir = 1
     endif
-    mask_a_in  = max(0.0, -segment%h_Reg%I_Lscale_in)  ; mask_L_in  = 1.0
-    mask_a_out = max(0.0, -segment%h_Reg%I_Lscale_out) ; mask_L_out = 1.0
+    mask_a_in  = max(0.0, -segment%h_Reg%I_Lscale_in)
+    mask_a_out = max(0.0, -segment%h_Reg%I_Lscale_out)
+    if (OBC%thickness_res_update_bug) then
+      mask_L_in  = 1.0 ; mask_L_out = 1.0
+    else
+      mask_L_in  = 1.0 - mask_a_in ; mask_L_out = 1.0 - mask_a_out
+    endif
     I_scale = 1.0 ; if (segment%h_Reg%scale /= 0.0) I_scale = 1.0 / segment%h_Reg%scale
     if (segment%is_E_or_W) then
       I = segment%HI%IsdB ; ii = segment%HI%isd
