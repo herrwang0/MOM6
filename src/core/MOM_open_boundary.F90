@@ -155,6 +155,7 @@ end type OBC_segment_data_type
 type, public :: OBC_segment_tracer_type
   logical           :: is_initialized       !< Reservoir values have been set when True
   character(len=32) :: name                 !< Tracer name used for error messages
+  integer           :: ntr_index = -1       !< Index of segment tracer in the global tracer registry
   real, allocatable :: t(:,:,:)             !< External tracer concentration array in rescaled
                                             !! units, like [S ~> ppt] for salinity.
   real, allocatable :: tres(:,:,:)          !< Tracer reservoir array in rescaled units, like
@@ -189,9 +190,6 @@ type, public :: OBC_segment_tracer_type
                                             !!   [nondim].
                                             !! - Negative (-1): instant-update sentinel (zero
                                             !!   effective length scale) [nondim].
-  type(tracer_type), &
-            pointer :: Tr => NULL()         !< Metadata describing the tracer
-  integer           :: ntr_index = -1       !< Index of segment tracer in the global tracer registry
 end type OBC_segment_tracer_type
 
 !> Thickness on OBC segment data structure, with a reservoir
@@ -5218,7 +5216,6 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
   IsdB = segment%HI%IsdB ; IedB = segment%HI%IedB
   JsdB = segment%HI%JsdB ; JedB = segment%HI%JedB
 
-  segment%tr_Reg%Tr(ntseg)%Tr => tr_ptr
   segment%tr_Reg%Tr(ntseg)%name = tr_ptr%name
   segment%tr_Reg%Tr(ntseg)%ntr_index = ntr_index
 
