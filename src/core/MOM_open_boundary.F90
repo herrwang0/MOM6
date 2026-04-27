@@ -2618,26 +2618,19 @@ subroutine setup_OBC_tracer_reservoirs(G, GV, OBC, restart_CS)
 
         if (segment%is_E_or_W .and. set_tres_x) then
           I = segment%HI%IsdB
-          if (segment%tr_Reg%Tr(m)%is_initialized) then
-            do k=1,GV%ke ; do j=segment%HI%jsd,segment%HI%jed
-              OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,j,k)
-            enddo ; enddo
-          else
-            do k=1,GV%ke ; do j=segment%HI%jsd,segment%HI%jed
-              OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%t(i,j,k)
-            enddo ; enddo
-          endif
+          do k=1,GV%ke ; do j=segment%HI%jsd,segment%HI%jed
+            ! The only place OBC%tres_x/y = %t route was used was when OBC_RESERVOIR_INIT_BUG=True in a new run,
+            ! in which case is_initialized is not turned on in fill_temp_salt_segments, and this subroutine is
+            ! called immediately afterward. Now, as initialize_OBC_tracer_reservoirs in initialize_MOM is
+            ! not called when OBC_RESERVOIR_INIT_BUG=True, %tres is not modified and is_initialized is not set,
+            ! the call to setup_OBC_tracer_reservoirs can be safely postponed, the OBC%tres_x=%t route can be removed.
+            OBC%tres_x(I,j,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,j,k)
+          enddo ; enddo
         elseif (segment%is_N_or_S .and. set_tres_y) then
           J = segment%HI%JsdB
-          if (segment%tr_Reg%Tr(m)%is_initialized) then
-            do k=1,GV%ke ; do i=segment%HI%isd,segment%HI%ied
-              OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
-            enddo ; enddo
-          else
-            do k=1,GV%ke ; do i=segment%HI%isd,segment%HI%ied
-              OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%t(i,J,k)
-            enddo ; enddo
-          endif
+          do k=1,GV%ke ; do i=segment%HI%isd,segment%HI%ied
+            OBC%tres_y(i,J,k,m) = I_scale * segment%tr_Reg%Tr(m)%tres(i,J,k)
+          enddo ; enddo
         endif
       endif ; endif
     enddo

@@ -3337,48 +3337,36 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     endif
     if (obc_debug_test) call open_boundary_test_extern_h(G, GV, CS%OBC, CS%h)
 
-    if (CS%OBC%use_h_res) &
+    if (CS%OBC%use_h_res) then
       call fill_thickness_segments(G, GV, US, CS%OBC, CS%h)
-
-    if (use_temperature) then
-      ! The following section was originally in subroutine MOM_initialize_state.
-      !----------------------------------
-      ! if (OBC_reservoir_init_bug) then
-      !   ! These calls should be moved down to join the OBC code, but doing so changes answers because
-      !   ! the temperatures and salinities can change due to the remapping and reading from the restarts.
-      !   call pass_var(tv%T, G%Domain, complete=.false.)
-      !   call pass_var(tv%S, G%Domain, complete=.true.)
-      !   call fill_temp_salt_segments(G, GV, US, OBC_for_bug, tv)
-      ! endif
-      !----------------------------------
-      ! In this new location, call to fill_temp_salt_segments is merged with OBC_reservoir_init_bug=False,
-      ! originally from MOM_initialize_OBCs.  The halo update calls for interoir T/S is not needed as it
-      ! has been done in MOM_initialize_state.
-      ! This new location is equivalent to previous code because
-      ! 1) It is still before remapping.
-      ! 2) For new runs, restart file are irrelevant.
-      ! 3) For restart runs, segment tracer reservoirs are assigned the value from OBC%tres_x/y in a call to
-      ! copy_OBC_tracer_reservoirs below in line 3735.
-      call fill_temp_salt_segments(G, GV, US, CS%OBC, CS%tv)
-
-      if (OBC_reservoir_init_bug) then
-        if (is_new_run(restart_CSp)) then
-          ! Set up OBC%trex_x and OBC%tres_y as they have not been read from a restart file.
-          call setup_OBC_tracer_reservoirs(G, GV, CS%OBC)
-          ! Ensure that the values of the tracer reservoirs that have just been set will not be revised.
-          call set_initialized_OBC_tracer_reservoirs(G, CS%OBC, restart_CSp)
-        endif
-        ! The call to fill_temp_salt_segments when OBC_reservoir_init_bug is False is moved up in line 3362.
-      endif
+      call initialize_OBC_thickness_reservoirs(GV, CS%OBC)
     endif
 
-    call calc_derived_thermo(CS%tv, CS%h, G, GV, US)
+    if (use_temperature) then
+      call calc_derived_thermo(CS%tv, CS%h, G, GV, US)
+      ! tv%T/S -> %t and %tres
+      call fill_temp_salt_segments(G, GV, US, CS%OBC, CS%tv)
+
+      ! For the bug route, initialize_OBC_segment_reservoirs is no longer called. So segment's %tres set
+      ! by fill_temp_salt_segments is preserved for the rest of the subroutine. Therefore, we no longer
+      ! need call setup_OBC_tracer_reservoirs here to set up OBC%tres_x/y with %t at this point. And
+      ! subroutine set_initialized_OBC_tracer_reservoirs, which locks the restart fields, is also not
+      ! needed. Because we can now set OBC%tres_x/y with %tres (unchanged when setup_OBC_tracer_reservoirs
+      ! is called in ~line 3755), the OBC%tres_x/y=%t route in setup_OBC_tracer_reservoirs is now unused
+      ! and removed, as changed there by this commmit.
+    endif
 
     ! Call this during initialization to fill boundary arrays from fixed values
+    ! file -> %buffer_dst
     call read_OBC_segment_data(G, GV, US, CS%OBC, CS%tv, CS%h, Time)
+    ! %buffer_dst -> %t
     call update_OBC_segment_data(G, GV, US, CS%OBC, CS%h, Time)
-    call initialize_OBC_thickness_reservoirs(GV, CS%OBC)
-    call initialize_OBC_tracer_reservoirs(GV, CS%OBC)
+    ! Conditionally call to initialize_OBC_tracer_reservoirs so that %tres is not overwritten by %t
+    ! in the bug route. In this way, in new runs %tres -> OBC%tres_x/y (call to setup_OBC_tracer_reservoirs)
+    ! can be pushed down to the block in line 3738. Restart runs are not affected.
+    if (((.not. OBC_reservoir_init_bug) .or. CS%diabatic_first) .and. is_new_run(restart_CSp)) &
+      ! %t -> %tres and set thickness + T/S tracer reservoirs is_initialized=.True. [but not BGC]
+      call initialize_OBC_tracer_reservoirs(GV, CS%OBC)
   endif
 
   if (use_ice_shelf .and. CS%debug) then
