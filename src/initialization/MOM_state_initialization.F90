@@ -23,9 +23,6 @@ use MOM_interface_heights, only : find_eta, dz_to_thickness, dz_to_thickness_sim
 use MOM_interface_heights, only : calc_derived_thermo
 use MOM_io, only : file_exists, field_size, MOM_read_data, MOM_read_vector, slasher
 use MOM_open_boundary, only : ocean_OBC_type, open_boundary_test_extern_h
-use MOM_open_boundary, only : fill_temp_salt_segments, setup_OBC_tracer_reservoirs
-use MOM_open_boundary, only : fill_thickness_segments
-use MOM_open_boundary, only : set_initialized_OBC_tracer_reservoirs
 use MOM_restart, only : restore_state, is_new_run, copy_restart_var, copy_restart_vector
 use MOM_restart, only : restart_registry_lock, MOM_restart_CS
 use MOM_sponge, only : set_up_sponge_field, set_up_sponge_ML_density
@@ -116,7 +113,7 @@ contains
 subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
                                 restart_CS, ALE_CSp, tracer_Reg, sponge_CSp, &
                                 ALE_sponge_CSp, oda_incupd_CSp, OBC_for_remap, &
-                                Time_in, frac_shelf_h, mass_shelf, OBC_for_bug)
+                                Time_in, frac_shelf_h, mass_shelf)
   type(ocean_grid_type),      intent(inout) :: G    !< The ocean's grid structure.
   type(verticalGrid_type),    intent(in)    :: GV   !< The ocean's vertical grid structure.
   type(unit_scale_type),      intent(in)    :: US   !< A dimensional unit scaling type
@@ -152,9 +149,7 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
   real, dimension(SZI_(G),SZJ_(G)), &
                      optional, intent(in)   :: mass_shelf      !< The mass per unit area of the overlying
                                                                !! ice shelf [R Z ~> kg m-2]
-  type(ocean_OBC_type), optional, pointer   :: OBC_for_bug  !< An open boundary condition control structure
-                                                    !! that might be used to store OBC temperatures and
-                                                    !! salinities if OBC_RESERVOIR_INIT_BUG is true.
+
   ! Local variables
   real :: depth_tot(SZI_(G),SZJ_(G))   ! The nominal total depth of the ocean [Z ~> m]
   real :: dz(SZI_(G),SZJ_(G),SZK_(GV)) ! The layer thicknesses in geopotential (z) units [Z ~> m]
@@ -166,9 +161,6 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
   logical :: new_sim, rotate_index
   logical :: use_temperature, use_sponge, use_oda_incupd
   logical :: verify_restart_time
-  logical :: OBC_reservoir_init_bug  ! If true, set the OBC tracer reservoirs at the startup of a new
-                         ! run from the interior tracer concentrations regardless of properties that
-                         ! may be explicitly specified for the reservoir concentrations.
   logical :: use_EOS     ! If true, density is calculated from T & S using an equation of state.
   logical :: depress_sfc ! If true, remove the mass that would be displaced
                          ! by a large surface pressure by squeezing the column.
@@ -181,8 +173,6 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
                         ! is a run from a restart file; this option
                         ! allows the use of Fatal unused parameters.
   type(EOS_type), pointer :: eos => NULL()
-  logical :: enable_bugs  ! If true, the defaults for recently added bug-fix flags are set to
-                          ! recreate the bugs, or if false bugs are only used if actively selected.
   logical :: debug      ! If true, write debugging output.
   logical :: debug_layers = .false.
   logical :: use_ice_shelf
@@ -437,23 +427,6 @@ subroutine MOM_initialize_state(u, v, h, tv, Time, G, GV, US, PF, dirs, &
       end select
     endif
   endif  ! not from_Z_file.
-
-  if (present(OBC_for_bug)) then ; if (use_temperature .and. associated(OBC_for_bug)) then
-    call get_param(PF, mdl, "ENABLE_BUGS_BY_DEFAULT", enable_bugs, &
-                 default=.true., do_not_log=.true.)  ! This is logged from MOM.F90.
-    ! Log this parameter later with the other OBC parameters.
-    call get_param(PF, mdl, "OBC_RESERVOIR_INIT_BUG", OBC_reservoir_init_bug, &
-                 "If true, set the OBC tracer reservoirs at the startup of a new run from the "//&
-                 "interior tracer concentrations regardless of properties that may be explicitly "//&
-                 "specified for the reservoir concentrations.", default=enable_bugs, do_not_log=.true.)
-    if (OBC_reservoir_init_bug) then
-      ! These calls should be moved down to join the OBC code, but doing so changes answers because
-      ! the temperatures and salinities can change due to the remapping and reading from the restarts.
-      call pass_var(tv%T, G%Domain, complete=.false.)
-      call pass_var(tv%S, G%Domain, complete=.true.)
-      call fill_temp_salt_segments(G, GV, US, OBC_for_bug, tv)
-    endif
-  endif ; endif
 
   ! Convert thicknesses from geometric distances in depth units to thickness units or mass-per-unit-area.
   if (new_sim .and. convert) call dz_to_thickness(dz, tv, h, G, GV, US)

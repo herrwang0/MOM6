@@ -2545,12 +2545,11 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
                  "means that bugs are only used if they are actively selected, but it also "//&
                  "means that answers may change when code is updated due to newly found bugs.", &
                  default=.true.)
-  ! Log this parameter in MOM_initialize_state
   call get_param(param_file, "MOM", "OBC_RESERVOIR_INIT_BUG", OBC_reservoir_init_bug, &
                  "If true, set the OBC tracer reservoirs at the startup of a new run from the "//&
                  "interior tracer concentrations regardless of properties that may be explicitly "//&
                  "specified for the reservoir concentrations.", default=enable_bugs, &
-                 do_not_log=.true.)
+                 do_not_log=(number_of_OBC_segments<=0))
   call get_param(param_file, "MOM", "DT", CS%dt, &
                  "The (baroclinic) dynamics time step.  The time-step that "//&
                  "is actually used will be an integer fraction of the "//&
@@ -3306,11 +3305,11 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       call MOM_initialize_state(CS%u, CS%v, CS%h, CS%tv, Time, G, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
           CS%sponge_CSp, CS%ALE_sponge_CSp, CS%oda_incupd_CSp, CS%OBC, Time_in, &
-          frac_shelf_h=CS%frac_shelf_h, mass_shelf=CS%mass_shelf, OBC_for_bug=CS%OBC)
+          frac_shelf_h=CS%frac_shelf_h, mass_shelf=CS%mass_shelf)
     else
       call MOM_initialize_state(CS%u, CS%v, CS%h, CS%tv, Time, G, GV, US, &
           param_file, dirs, restart_CSp, CS%ALE_CSp, CS%tracer_Reg, &
-          CS%sponge_CSp, CS%ALE_sponge_CSp, CS%oda_incupd_CSp, CS%OBC, Time_in, OBC_for_bug=CS%OBC)
+          CS%sponge_CSp, CS%ALE_sponge_CSp, CS%oda_incupd_CSp, CS%OBC, Time_in)
     endif
 
     ! Reset the first direction if it was found in a restart file.
@@ -3327,6 +3326,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     CS%tv%valid_SpV_halo = -1  ! This array does not yet have any valid data.
   endif
 
+  ! Read/fill %t and [if new_sim] init %tres (needs to be before remap for the fill_temp_salt route)
   if (associated(CS%OBC)) then
     call initialize_user_OBCs(CS%tv, CS%OBC, G, GV, US, param_file, CS%tracer_Reg)
 
@@ -3341,6 +3341,26 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       call fill_thickness_segments(G, GV, US, CS%OBC, CS%h)
 
     if (use_temperature) then
+      ! The following section was originally in subroutine MOM_initialize_state.
+      !----------------------------------
+      ! if (OBC_reservoir_init_bug) then
+      !   ! These calls should be moved down to join the OBC code, but doing so changes answers because
+      !   ! the temperatures and salinities can change due to the remapping and reading from the restarts.
+      !   call pass_var(tv%T, G%Domain, complete=.false.)
+      !   call pass_var(tv%S, G%Domain, complete=.true.)
+      !   call fill_temp_salt_segments(G, GV, US, OBC_for_bug, tv)
+      ! endif
+      !----------------------------------
+      ! In this new location, call to fill_temp_salt_segments is merged with OBC_reservoir_init_bug=False,
+      ! originally from MOM_initialize_OBCs.  The halo update calls for interoir T/S is not needed as it
+      ! has been done in MOM_initialize_state.
+      ! This new location is equivalent to previous code because
+      ! 1) It is still before remapping.
+      ! 2) For new runs, restart file are irrelevant.
+      ! 3) For restart runs, segment tracer reservoirs are assigned the value from OBC%tres_x/y in a call to
+      ! copy_OBC_tracer_reservoirs below in line 3735.
+      call fill_temp_salt_segments(G, GV, US, CS%OBC, CS%tv)
+
       if (OBC_reservoir_init_bug) then
         if (is_new_run(restart_CSp)) then
           ! Set up OBC%trex_x and OBC%tres_y as they have not been read from a restart file.
@@ -3348,18 +3368,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
           ! Ensure that the values of the tracer reservoirs that have just been set will not be revised.
           call set_initialized_OBC_tracer_reservoirs(G, CS%OBC, restart_CSp)
         endif
-      else
-        ! Store the updated temperatures and salinities at the open boundaries, noting that they may
-        ! still be updated by the calls in the next 50 lines, so the code setting the tracer
-        ! reservoir values will come later in the calling routine.
-        call fill_temp_salt_segments(G, GV, US, CS%OBC, CS%tv)
+        ! The call to fill_temp_salt_segments when OBC_reservoir_init_bug is False is moved up in line 3362.
       endif
     endif
 
-    if (use_temperature) then
-      call pass_var(CS%tv%T, G%Domain, complete=.false.)
-      call pass_var(CS%tv%S, G%Domain, complete=.true.)
-    endif
     call calc_derived_thermo(CS%tv, CS%h, G, GV, US)
 
     ! Call this during initialization to fill boundary arrays from fixed values
