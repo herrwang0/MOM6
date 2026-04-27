@@ -5473,8 +5473,9 @@ subroutine fill_obgc_segments(G, GV, OBC, tr_ptr, tr_name)
       enddo ; enddo
     endif
 
-    if (.not.segment%tr_Reg%Tr(nt)%is_initialized) &
-      segment%tr_Reg%Tr(nt)%tres(:,:,:) = segment%tr_Reg%Tr(nt)%t(:,:,:)
+    ! The only place that sets is_initialized=.true. is in initialize_OBC_tracer_reservoirs, but
+    ! that can never happen because for BGC tracers update_OBC_seg_data=.false. during initialization.
+    segment%tr_Reg%Tr(nt)%tres(:,:,:) = segment%tr_Reg%Tr(nt)%t(:,:,:)
 
     if (OBC%reservoir_init_bug) then
       ! OBC%tres_x and OBC%tres_y should not be set here, but in a subsequent call to setup_OBC_tracer_reservoirs.
@@ -5553,10 +5554,11 @@ subroutine fill_temp_salt_segments(G, GV, US, OBC, tv)
         endif
       enddo ; enddo
     endif
-    if (.not.segment%tr_Reg%Tr(1)%is_initialized) &
-      segment%tr_Reg%Tr(1)%tres(:,:,:) = segment%tr_Reg%Tr(1)%t(:,:,:)
-    if (.not.segment%tr_Reg%Tr(2)%is_initialized) &
-      segment%tr_Reg%Tr(2)%tres(:,:,:) = segment%tr_Reg%Tr(2)%t(:,:,:)
+
+    ! fill_temp_salt_segments is only called before initialize_OBC_tracer_reservoirs, the only
+    ! place is_initialized can be set to .true. So the conditional assign is redundant.
+    segment%tr_Reg%Tr(1)%tres(:,:,:) = segment%tr_Reg%Tr(1)%t(:,:,:)
+    segment%tr_Reg%Tr(2)%tres(:,:,:) = segment%tr_Reg%Tr(2)%t(:,:,:)
   enddo
 
 end subroutine fill_temp_salt_segments
