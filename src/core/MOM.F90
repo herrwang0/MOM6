@@ -3340,6 +3340,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     endif
     if (obc_debug_test) call open_boundary_test_extern_h(G, GV, CS%OBC, CS%h)
 
+    ! h -> %h and %h_res
     if (CS%OBC%use_h_res) then
       call fill_thickness_segments(G, GV, US, CS%OBC, CS%h)
       call initialize_OBC_thickness_reservoirs(GV, CS%OBC)
@@ -3349,23 +3350,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       ! tv%T/S -> %t and %tres
       call fill_temp_salt_segments(G, GV, US, CS%OBC, CS%tv)
 
-      ! For the bug route, initialize_OBC_segment_reservoirs is no longer called. So segment's %tres set
-      ! by fill_temp_salt_segments is preserved for the rest of the subroutine. Therefore, we no longer
-      ! need call setup_OBC_tracer_reservoirs here to set up OBC%tres_x/y with %t at this point. And
-      ! subroutine set_initialized_OBC_tracer_reservoirs, which locks the restart fields, is also not
-      ! needed. Because we can now set OBC%tres_x/y with %tres (unchanged when setup_OBC_tracer_reservoirs
-      ! is called in ~line 3755), the OBC%tres_x/y=%t route in setup_OBC_tracer_reservoirs is now unused
-      ! and removed, as changed there by this commmit.
-    endif
-
-    ! Call this during initialization to fill boundary arrays from fixed values
-    ! file -> %buffer_dst
+    ! OBC file/value -> %buffer_dst
     call read_OBC_segment_data(G, GV, US, CS%OBC, CS%tv, CS%h, Time)
     ! %buffer_dst -> %t
     call update_OBC_segment_data(G, GV, US, CS%OBC, CS%h, Time)
-    ! Conditionally call to initialize_OBC_tracer_reservoirs so that %tres is not overwritten by %t
-    ! in the bug route. In this way, in new runs %tres -> OBC%tres_x/y (call to setup_OBC_tracer_reservoirs)
-    ! can be pushed down to the block in line 3738. Restart runs are not affected.
     if (((.not. OBC_reservoir_init_bug) .or. CS%diabatic_first) .and. is_new_run(restart_CSp)) &
       ! %t -> %tres and set thickness + T/S tracer reservoirs is_initialized=.True. [but not BGC]
       call initialize_OBC_tracer_reservoirs(GV, CS%OBC)
