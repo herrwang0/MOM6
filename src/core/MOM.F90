@@ -127,6 +127,8 @@ use MOM_open_boundary,         only : open_boundary_halo_update, write_OBC_info,
 use MOM_open_boundary,         only : segment_thickness_reservoir_init
 use MOM_open_boundary,         only : fill_temp_salt_segments, fill_thickness_segments
 use MOM_open_boundary,         only : setup_OBC_tracer_reservoirs
+use MOM_open_boundary,         only : init_OBC_TS_external_from_interior
+use MOM_open_boundary,         only : init_OBC_TS_reservoir_from_interior
 use MOM_open_boundary,         only : open_boundary_test_extern_h
 use MOM_open_boundary,         only : copy_OBC_radiation_coefs
 use MOM_open_boundary,         only : copy_OBC_tracer_reservoirs, copy_OBC_thickness_reservoirs
@@ -3346,9 +3348,14 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
       call initialize_OBC_thickness_reservoirs(GV, CS%OBC)
     endif
 
+    ! tv%T/S -> %t and %tres
     if (use_temperature) then
-      ! tv%T/S -> %t and %tres
-      call fill_temp_salt_segments(G, GV, US, CS%OBC, CS%tv)
+      ! call fill_temp_salt_segments(G, GV, US, CS%OBC, CS%tv)
+      ! tv%T/S -> %t
+      call init_OBC_TS_external_from_interior(CS%OBC, CS%tv)
+      ! tv%T/S -> %tres
+      call init_OBC_TS_reservoir_from_interior(CS%OBC, CS%tv)
+    endif
 
     ! OBC file/value -> %buffer_dst
     call read_OBC_segment_data(G, GV, US, CS%OBC, CS%tv, CS%h, Time)

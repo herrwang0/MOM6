@@ -68,6 +68,8 @@ public register_obgc_segments
 public fill_temp_salt_segments
 public fill_obgc_segments
 public fill_thickness_segments
+public init_OBC_TS_external_from_interior
+public init_OBC_TS_reservoir_from_interior
 public set_obgc_segments_props
 public setup_OBC_tracer_reservoirs
 public setup_OBC_thickness_reservoirs
@@ -5542,6 +5544,94 @@ subroutine fill_temp_salt_segments(G, GV, US, OBC, tv)
   enddo
 
 end subroutine fill_temp_salt_segments
+
+!> Initialize OBC segment temperature and salinity tracers' external data %t from interior model
+!! state. This is used for T/S tracers with no external data file (buggy cases) whose %t must come
+!! from interior values throughout the run.
+subroutine init_OBC_TS_external_from_interior(OBC, tv)
+  type(ocean_OBC_type),    pointer    :: OBC !< Open boundary structure
+  type(thermo_var_ptrs),   intent(in) :: tv  !< Thermodynamics structure
+
+  ! Local variables
+  integer :: n, nz, i, j, k
+  type(OBC_segment_type), pointer :: segment => NULL() !< Pointer to OBC segment
+
+  if ((.not. associated(OBC)) .or. (.not. (associated(tv%T) .and. associated(tv%S)))) return
+
+  nz = OBC%ke
+  do n=1,OBC%number_of_segments
+    segment => OBC%segment(n)
+    if (.not. segment%on_pe) cycle
+    if (segment%is_E_or_W) then
+      I = segment%HI%IsdB
+      do k=1,nz ; do j=segment%HI%jsd,segment%HI%jed
+        if (segment%direction == OBC_DIRECTION_W) then
+          segment%tr_Reg%Tr(1)%t(I,j,k) = tv%T(i+1,j,k)
+          segment%tr_Reg%Tr(2)%t(I,j,k) = tv%S(i+1,j,k)
+        else
+          segment%tr_Reg%Tr(1)%t(I,j,k) = tv%T(i,j,k)
+          segment%tr_Reg%Tr(2)%t(I,j,k) = tv%S(i,j,k)
+        endif
+      enddo ; enddo
+    else
+      J = segment%HI%JsdB
+      do k=1,nz ; do i=segment%HI%isd,segment%HI%ied
+        if (segment%direction == OBC_DIRECTION_S) then
+          segment%tr_Reg%Tr(1)%t(i,J,k) = tv%T(i,j+1,k)
+          segment%tr_Reg%Tr(2)%t(i,J,k) = tv%S(i,j+1,k)
+        else
+          segment%tr_Reg%Tr(1)%t(i,J,k) = tv%T(i,j,k)
+          segment%tr_Reg%Tr(2)%t(i,J,k) = tv%S(i,j,k)
+        endif
+      enddo ; enddo
+    endif
+  enddo
+
+end subroutine init_OBC_TS_external_from_interior
+
+!> Initialize OBC segment temperature and salinity tracers' reservoir data %tres from interior
+!! model state. Used for the OBC_reservoir_init_bug path (new runs) and as a fallback for T/S
+!! tracers with no external data file (buggy cases).
+subroutine init_OBC_TS_reservoir_from_interior(OBC, tv)
+  type(ocean_OBC_type),    pointer    :: OBC !< Open boundary structure
+  type(thermo_var_ptrs),   intent(in) :: tv  !< Thermodynamics structure
+
+  ! Local variables
+  integer :: n, nz, i, j, k
+  type(OBC_segment_type), pointer :: segment => NULL() !< Pointer to OBC segment
+
+  if ((.not. associated(OBC)) .or. (.not. (associated(tv%T) .and. associated(tv%S)))) return
+
+  nz = OBC%ke
+  do n=1,OBC%number_of_segments
+    segment => OBC%segment(n)
+    if (.not. segment%on_pe) cycle
+    if (segment%is_E_or_W) then
+      I = segment%HI%IsdB
+      do k=1,nz ; do j=segment%HI%jsd,segment%HI%jed
+        if (segment%direction == OBC_DIRECTION_W) then
+          segment%tr_Reg%Tr(1)%tres(I,j,k) = tv%T(i+1,j,k)
+          segment%tr_Reg%Tr(2)%tres(I,j,k) = tv%S(i+1,j,k)
+        else
+          segment%tr_Reg%Tr(1)%tres(I,j,k) = tv%T(i,j,k)
+          segment%tr_Reg%Tr(2)%tres(I,j,k) = tv%S(i,j,k)
+        endif
+      enddo ; enddo
+    else
+      J = segment%HI%JsdB
+      do k=1,nz ; do i=segment%HI%isd,segment%HI%ied
+        if (segment%direction == OBC_DIRECTION_S) then
+          segment%tr_Reg%Tr(1)%tres(i,J,k) = tv%T(i,j+1,k)
+          segment%tr_Reg%Tr(2)%tres(i,J,k) = tv%S(i,j+1,k)
+        else
+          segment%tr_Reg%Tr(1)%tres(i,J,k) = tv%T(i,j,k)
+          segment%tr_Reg%Tr(2)%tres(i,J,k) = tv%S(i,j,k)
+        endif
+      enddo ; enddo
+    endif
+  enddo
+
+end subroutine init_OBC_TS_reservoir_from_interior
 
 !> Set the value of temperatures and salinities on OBC segments
 subroutine fill_thickness_segments(G, GV, US, OBC, h)
