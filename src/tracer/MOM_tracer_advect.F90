@@ -46,6 +46,7 @@ end type tracer_advect_CS
 integer :: id_clock_advect
 integer :: id_clock_pass
 integer :: id_clock_sync
+integer :: id_clock_OBC      !< CPU clock for OBC-conditional work in advect_x and advect_y
 !>@}
 
 contains
@@ -470,6 +471,7 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
     enddo
     ! loop through open boundaries and recalculate flux terms
     if (associated(OBC)) then ; if (OBC%OBC_pe) then
+      call cpu_clock_begin(id_clock_OBC)
       do n=1,OBC%number_of_segments
         segment=>OBC%segment(n)
         if (.not. associated(segment%tr_Reg)) cycle
@@ -505,6 +507,7 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
           endif
         endif
       enddo
+      call cpu_clock_end(id_clock_OBC)
     endif ; endif
 
 
@@ -610,6 +613,7 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
     enddo
 
     if (associated(OBC)) then ; if (OBC%OBC_pe) then
+      call cpu_clock_begin(id_clock_OBC)
       if (OBC%specified_u_BCs_exist_globally .or. OBC%open_u_BCs_exist_globally) then
         do n=1,OBC%number_of_segments
           segment=>OBC%segment(n)
@@ -657,6 +661,7 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
           endif
         enddo
       endif
+      call cpu_clock_end(id_clock_OBC)
     endif ; endif
 
     ! Calculate new tracer concentration in each cell after accounting
@@ -682,6 +687,7 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
 
     ! Update do_i so that nothing changes outside of the OBC (problem for interior OBCs only)
     if (associated(OBC)) then
+      call cpu_clock_begin(id_clock_OBC)
       if ((.not.OBC%exterior_OBC_bug) .and. (OBC%OBC_pe) .and. &
           (OBC%specified_u_BCs_exist_globally .or. OBC%open_u_BCs_exist_globally)) then
         ! OBC_DIRECTION_E / OBC_DIRECTION_W on the west / east edge
@@ -689,6 +695,7 @@ subroutine advect_x(Tr, hprev, uhr, uh_neglect, OBC, domore_u, ntr, Idt, &
           do_i(i,j) = .false.
         enddo
       endif
+      call cpu_clock_end(id_clock_OBC)
     endif
 
     ! update tracer concentration from i-flux and save some diagnostics
@@ -871,6 +878,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
 
   ! loop through open boundaries and recalculate flux terms
   if (associated(OBC)) then ; if (OBC%OBC_pe) then
+    call cpu_clock_begin(id_clock_OBC)
     do n=1,OBC%number_of_segments
       segment=>OBC%segment(n)
       if (.not. associated(segment%tr_Reg)) cycle
@@ -907,6 +915,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
         endif ! is_N_S
       enddo ! i-loop
     enddo ! segment loop
+    call cpu_clock_end(id_clock_OBC)
   endif ; endif
 
   ! Calculate the j-direction fluxes of each tracer, using as much
@@ -1014,6 +1023,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
     enddo
 
     if (associated(OBC)) then ; if (OBC%OBC_pe) then
+      call cpu_clock_begin(id_clock_OBC)
       if (OBC%specified_v_BCs_exist_globally .or. OBC%open_v_BCs_exist_globally) then
         do n=1,OBC%number_of_segments
           segment=>OBC%segment(n)
@@ -1064,6 +1074,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
           endif
         enddo
       endif
+      call cpu_clock_end(id_clock_OBC)
     endif ; endif
 
   else ! not domore_v.
@@ -1094,6 +1105,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
 
     ! Update do_i so that nothing changes outside of the OBC (problem for interior OBCs only)
     if (associated(OBC)) then
+      call cpu_clock_begin(id_clock_OBC)
       if ((.not.OBC%exterior_OBC_bug) .and. (OBC%OBC_pe) .and. &
           (OBC%specified_v_BCs_exist_globally .or. OBC%open_v_BCs_exist_globally)) then
         ! OBC_DIRECTION_N / OBC_DIRECTION_S on the south / north edge
@@ -1101,6 +1113,7 @@ subroutine advect_y(Tr, hprev, vhr, vh_neglect, OBC, domore_v, ntr, Idt, &
           do_i(i,j) = .false.
         enddo
       endif
+      call cpu_clock_end(id_clock_OBC)
     endif
 
     ! update tracer and save some diagnostics
@@ -1198,6 +1211,7 @@ subroutine tracer_advect_init(Time, G, US, param_file, diag, CS)
   id_clock_advect = cpu_clock_id('(Ocean advect tracer)', grain=CLOCK_MODULE)
   id_clock_pass = cpu_clock_id('(Ocean tracer halo updates)', grain=CLOCK_ROUTINE)
   id_clock_sync = cpu_clock_id('(Ocean tracer global synch)', grain=CLOCK_ROUTINE)
+  id_clock_OBC = cpu_clock_id('(Ocean OBC tracer advect)', grain=CLOCK_ROUTINE)
 
 end subroutine tracer_advect_init
 
