@@ -1082,8 +1082,6 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
     call post_data(CS%id_GLwork, KE_term, CS%diag)
   endif
 
-  call vertvisc_limit_vel(u, v, h, ADp, CDp, forces, visc, dt, G, GV, US, CS)
-
   ! Here the velocities associated with open boundary conditions are applied.
   if (associated(OBC)) then
     do n=1,OBC%number_of_segments
@@ -1102,6 +1100,8 @@ subroutine vertvisc(u, v, h, forces, visc, dt, OBC, ADp, CDp, G, GV, US, CS, &
       endif
     enddo
   endif
+
+  call vertvisc_limit_vel(u, v, h, ADp, CDp, forces, visc, dt, G, GV, US, CS)
 
   ! Offer diagnostic fields for averaging.
   if (query_averaging_enabled(CS%diag)) then
