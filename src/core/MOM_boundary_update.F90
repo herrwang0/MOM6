@@ -177,15 +177,11 @@ subroutine update_OBC_data(OBC, G, GV, US, tv, h, CS, Time)
       call dyed_channel_update_flow(OBC, CS%dyed_channel_OBC_CSp, G, GV, US, h, Time)
 
   if (.not. OBC%user_BCs_set_globally) then
-    if (OBC%any_needs_IO_for_data) then
+    if (OBC%any_needs_IO_for_data) &
       call read_OBC_dynamics_data(G, GV, US, OBC, tv, h, Time)
-      call read_OBC_tracer_data(G, GV, US, OBC, Time)
-    endif
     if ((.not.CS%value_update_bug) .or. &
-        (OBC%any_needs_IO_for_data .or. OBC%add_tide_constituents)) then
+        (OBC%any_needs_IO_for_data .or. OBC%add_tide_constituents)) &
       call update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
-      call update_OBC_tracer_data(OBC)
-    endif
   endif
 
   if (CS%debug_OBCs) call chksum_OBC_segments(OBC, G, GV, US, CS%nk_OBC_debug)

@@ -1518,6 +1518,10 @@ subroutine step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
                        CS%tv, CS%t_dyn_rel_adv, CS%use_uh_particles)
   endif
 
+  if (associated(CS%OBC)) then
+    call read_OBC_tracer_data(G, GV, US, CS%OBC, Time_local)
+    call update_OBC_tracer_data(CS%OBC)
+  endif
 
   if (CS%alternate_first_direction) then
     ! This calculation of the value of G%first_direction from the start of the accumulation of
@@ -3321,6 +3325,9 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     call calc_derived_thermo(CS%tv, CS%h, G, GV, US)
 
     ! Call this during initialization to fill boundary arrays from fixed values
+    ! The dynamics subroutines are called to 1) calculate segment%dz for tracer remapping
+    ! 2) For new runs, some subroutines (horizontal_viscosity, continuity and CorAdCalc)
+    ! are called during init which need dynamics terms.
     call read_OBC_dynamics_data(G, GV, US, CS%OBC, CS%tv, CS%h, Time)
     call update_OBC_dynamics_data(G, GV, US, CS%OBC, CS%h, Time)
     call read_OBC_tracer_data(G, GV, US, CS%OBC, Time)
