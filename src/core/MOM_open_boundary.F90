@@ -116,42 +116,47 @@ character(len=8), parameter :: PHYS_FIELD_NAMES(NUM_PHYS_FIELDS) = &
      'Uphase', 'Vamp', 'Vphase', 'SSHamp', 'SSHphase', 'TEMP', 'SALT']  !< Physical field name
                                                             !! strings used by input parameter
 
-!> Open boundary segment data from files (mostly).
-type, public :: OBC_segment_data_type
-  type(external_field) :: handle            !< handle from FMS associated with segment data on disk
-  type(external_field) :: dz_handle         !< handle from FMS associated with segment thicknesses on disk
-  logical           :: required = .false.   !< True if this field is required
-  logical           :: use_IO = .false.     !< True if segment data is based on file input
-  character(len=32) :: name                 !< A name identifier for the segment data.  When there is grid
-                                            !! rotation, this is the name on the rotated internal grid.
-  integer           :: tr_index = -1        !< If this field is a tracer, its index in registry is stored here.
-  logical           :: bgc_tracer           !< True if this field is a BGC tracer
-  logical           :: on_face              !< If true, this field is discretized on the OBC segment
-                                            !! (velocity-point) faces, or if false it as the vorticiy points
-  real              :: scale                !< A scaling factor for converting input data to
-                                            !! the internal units of this field.  For salinity this would
-                                            !! be in units of [S ppt-1 ~> 1]
-  real, allocatable :: buffer_src(:,:,:)    !< buffer for segment data located at cell faces and on
-                                            !! the original vertical grid in the internally scaled
-                                            !! units for the field in question, such as [L T-1 ~> m s-1]
-                                            !! for a velocity or [S ~> ppt] for salinity.
-  integer           :: nk_src               !< Number of vertical levels in the source data
-  real, allocatable :: dz_src(:,:,:)        !< vertical grid cell spacing of the incoming segment
-                                            !! data in [Z ~> m].
-  real, allocatable :: buffer_dst(:,:,:)    !< buffer src data remapped to the target vertical grid
-                                            !! in the internally scaled units for the field in
-                                            !! question, such as [L T-1 ~> m s-1] for a velocity or
-                                            !! [S ~> ppt] for salinity.
-  real              :: value                !< A constant value for the inflow concentration if not read
-                                            !! from file, in the internal units of a field, such as [S ~> ppt]
-                                            !! for salinity.
-  real              :: resrv_lfac_in = 1.   !< The reservoir inverse length scale factor for the inward
-                                            !! direction per field [nondim].  The general 1/Lscale_in is
-                                            !! multiplied by this factor for a specific tracer or thickness.
-  real              :: resrv_lfac_out= 1.   !< The reservoir inverse length scale factor for the outward
-                                            !! direction per field [nondim].  The general 1/Lscale_out is
-                                            !! multiplied by this factor for a specific tracer or thickness.
-end type OBC_segment_data_type
+!> Staged input (metadata + read/remap buffers) for one external field at an OBC segment.
+!! Data is subsequently transferred into segment%normal_vel, segment%SSH, segment%tr_Reg, etc.
+type, private :: segment_input_type
+  ! Variables shared by dynamics and tracers
+  character(len=32)    :: name               !< A name identifier for the segment data.  When there
+                                             !! is grid rotation, this is the name on the rotated
+                                             !! internal grid.
+  logical              :: required = .false. !< True if this field is required.
+  logical              :: use_IO = .false.   !< True if segment data is based on file input.
+  real                 :: scale              !< A scaling factor for converting input data to the
+                                             !! internal units of this field.  For salinity this
+                                             !! would be in units of [S ppt-1 ~> 1].
+  real                 :: value              !< A constant value for the input data if not read
+                                             !! from file, in the internal units of a field, such
+                                             !! as [S ~> ppt] for salinity.
+  type(external_field) :: handle             !< Handle from FMS associated with segment data on disk
+  type(external_field) :: dz_handle          !< Handle from FMS associated with segment thicknesses on disk
+  integer              :: nk_src             !< Number of vertical levels in the source data
+  real, allocatable    :: buffer_src(:,:,:)  !< Buffer for segment data located at cell faces and
+                                             !! on the original vertical grid in the internally
+                                             !! scaled units for the field in question, such as [L T-1 ~> m s-1]
+                                             !! for a velocity or [S ~> ppt] for salinity.
+  real, allocatable    :: dz_src(:,:,:)      !< Vertical grid cell spacing of the incoming segment
+                                             !! data in [Z ~> m].
+  real, allocatable    :: buffer_dst(:,:,:)  !< Buffer src data remapped to the target vertical grid
+                                             !! in the internally scaled units for the field in
+                                             !! question, such as [L T-1 ~> m s-1] for a velocity or
+                                             !! [S ~> ppt] for salinity.
+  ! Variables used by dynamics (segment%dyn_input)
+  logical :: on_face = .true.     !< If true, this field is discretized on the OBC segment
+                                  !! (velocity-point) faces, or if false it is at the vorticity points.
+  ! Variables used by tracers (segment%tr_input)
+  integer :: tr_index = -1        !< Index of this tracer in the segment tracer registry.
+  logical :: bgc_tracer = .false. !< True if this field is a BGC tracer.
+  real    :: resrv_lfac_in  = 1.0 !< The reservoir inverse length scale factor for the inward
+                                  !! direction per field [nondim].  The general 1/Lscale_in is
+                                  !! multiplied by this factor for a specific tracer or thickness.
+  real    :: resrv_lfac_out = 1.0 !< The reservoir inverse length scale factor for the outward
+                                  !! direction per field [nondim].  The general 1/Lscale_out is
+                                  !! multiplied by this factor for a specific tracer or thickness.
+end type segment_input_type
 
 !> Tracer on OBC segment data structure, for putting into a segment tracer registry.
 type, public :: OBC_segment_tracer_type
@@ -243,7 +248,7 @@ type, public :: OBC_segment_type
   logical :: is_N_or_S      !< True if the OB is facing North or South and exists on this PE.
   logical :: is_E_or_W      !< True if the OB is facing East or West and exists on this PE.
   logical :: is_E_or_W_2    !< True if the OB is facing East or West anywhere.
-  type(OBC_segment_data_type), pointer :: field(:) => NULL()  !< OBC data
+  type(segment_input_type), pointer :: field(:) => NULL()  !< OBC data
   integer :: num_fields     !< number of OBC data fields (e.g. u_normal,u_parallel and eta for Flather)
   integer :: Is_obc         !< Starting local i-index of boundary segment, this may be outside of the local PE.
   integer :: Ie_obc         !< Ending local i-index of boundary segment, this may be outside of the local PE.
@@ -1112,7 +1117,7 @@ end subroutine OBC_any_IO
 !> Allocate data (buffer_src, buffer_dst and dz_src) for a field at an OBC segment.
 subroutine allocate_segment_field_data(field, OBC, segment, US, inputdir, filename, varname, &
                                        suffix, value, turns, nz)
-  type(OBC_segment_data_type), &
+  type(segment_input_type), &
                           intent(inout) :: field    !< A field of the segment
   type(ocean_OBC_type),   intent(in)    :: OBC      !< Open boundary control structure
   type(OBC_segment_type), intent(inout) :: segment  !< Segment to work on
