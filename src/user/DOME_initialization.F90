@@ -349,7 +349,7 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                             ! but this could be 1000 [m km-1]
   character(len=32)  :: name ! The name of a tracer field.
   character(len=40)  :: mdl = "DOME_set_OBC_data" ! This subroutine's name.
-  integer :: i, j, k, itt, is, ie, js, je, isd, ied, jsd, jed, m, nz, ntherm, ntr_id
+  integer :: i, j, k, itt, is, ie, js, je, isd, ied, jsd, jed, m, nz, ntr_id
   integer :: IsdB, IedB, JsdB, JedB
   type(OBC_segment_type), pointer :: segment => NULL()
   type(tracer_type), pointer      :: tr_ptr => NULL()
@@ -421,12 +421,6 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   segment => OBC%segment(1)
   if (.not. segment%on_pe) return
 
-  ! Set up space for the OBCs to use for all the tracers.
-  ntherm = 0
-  if (associated(tv%S)) ntherm = ntherm + 1
-  if (associated(tv%T)) ntherm = ntherm + 1
-  allocate(segment%field(ntherm+tr_Reg%ntr))
-
   do k=1,nz
     rst = -1.0
     if (k>1) rst = -1.0 + (real(k-1)-0.5)/real(nz-1)
@@ -480,28 +474,29 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
       do k=1,nz ; T0(k) = T0(k) + (GV%Rlay(k)-rho_guess(k)) / drho_dT(k) ; enddo
     enddo
 
-    ! Temperature is tracer 1 for the OBCs.
-    allocate(segment%field(1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
-    do k=1,nz ; do J=JsdB,JedB ; do i=isd,ied
-      ! With the revised OBC code, buffer_src uses the same rescaled units as for tracers.
-      segment%field(1)%buffer_src(i,j,k) = T0(k)
-    enddo ; enddo ; enddo
+    ! T0 is computed analytically, so the file-IO buffer pathway (buffer_src) cannot
+    ! be used; register with OBC_array=.true. and fill %t directly.
     name = 'temp'
     call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
     call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, OBC_array=.true., scale=US%degC_to_C)
+    do k=1,nz ; do J=JsdB,JedB ; do i=isd,ied
+      segment%tr_Reg%Tr(segment%tr_Reg%ntseg)%tres(i,J,k) = T0(k) * US%degC_to_C
+    enddo ; enddo ; enddo
   endif
 
-  ! Set up dye tracers
-  ! First dye - only one with OBC values
-  ! This field(ntherm+1) requires tr_D1 to be the first tracer after temperature and salinity.
-  allocate(segment%field(ntherm+1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
-  do k=1,nz ; do j=segment%HI%jsd,segment%HI%jed ; do i=segment%HI%isd,segment%HI%ied
-    if (k < nz/2) then ; segment%field(ntherm+1)%buffer_src(i,j,k) = 0.0
-    else ; segment%field(ntherm+1)%buffer_src(i,j,k) = 1.0 ; endif
-  enddo ; enddo ; enddo
+  ! Dye tr_D1 has an analytical step-profile inflow; register with OBC_array=.true.
+  ! and fill %t directly (same reason as temperature: no file-IO buffer pathway).
   name = 'tr_D1'
   call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
   call register_segment_tracer(tr_ptr, ntr_id, PF, GV, OBC%segment(1), OBC_array=.true.)
+  do k=1,nz ; if (k < nz/2) then ; do J=JsdB,JedB ; do i=isd,ied
+    segment%tr_Reg%Tr(segment%tr_Reg%ntseg)%t(i,J,k) = 0.0
+    segment%tr_Reg%Tr(segment%tr_Reg%ntseg)%tres(i,J,k) = 0.0
+  enddo ; enddo ; else ; do J=JsdB,JedB ; do i=isd,ied
+    segment%tr_Reg%Tr(segment%tr_Reg%ntseg)%t(i,J,k) = 1.0
+    segment%tr_Reg%Tr(segment%tr_Reg%ntseg)%tres(i,J,k) = 1.0
+  enddo ; enddo ; endif ; enddo
+  segment%tr_Reg%Tr(segment%tr_Reg%ntseg)%is_initialized = .true.
 
   ! All tracers but the first have 0 concentration in their inflows. As 0 is the
   ! default value for the inflow concentrations, the following calls are unnecessary.
@@ -509,6 +504,7 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
     write(name,'("tr_D",I0)') m
     call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
     call register_segment_tracer(tr_ptr, ntr_id, PF, GV, OBC%segment(1), OBC_scalar=0.0)
+    segment%tr_Reg%Tr(segment%tr_Reg%ntseg)%is_initialized = .true.
   enddo
 
 end subroutine DOME_set_OBC_data
