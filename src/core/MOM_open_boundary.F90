@@ -105,8 +105,9 @@ integer, parameter, public :: OBC_STRAIN_FREESLIP = 2
 integer, parameter, public :: OBC_STRAIN_COMPUTED = 3
 integer, parameter, public :: OBC_STRAIN_SPECIFIED = 4
 !>@}
-integer, parameter :: NUM_PHYS_FIELDS = 13  !< Number of physical fields
-!>@{ Indices of physical field positions in segment%field array
+integer, parameter :: NUM_PHYS_FIELDS = 13  !< Number of physical fields (dynamics + T + S)
+integer, parameter :: NUM_DYN_FIELDS = 11   !< Number of dynamics input fields (velocity, SSH, tides)
+!>@{ Indices of dynamics field positions in segment%dyn_input array
 integer, parameter :: &
     F_U = 1, F_V = 2, F_VX = 3, F_UY = 4, F_Z = 5, F_UAMP = 6, F_UPHASE = 7, &
     F_VAMP = 8, F_VPHASE = 9, F_ZAMP = 10, F_ZPHASE = 11, F_T = 12, F_S = 13
@@ -248,8 +249,13 @@ type, public :: OBC_segment_type
   logical :: is_N_or_S      !< True if the OB is facing North or South and exists on this PE.
   logical :: is_E_or_W      !< True if the OB is facing East or West and exists on this PE.
   logical :: is_E_or_W_2    !< True if the OB is facing East or West anywhere.
-  type(segment_input_type), pointer :: field(:) => NULL()  !< OBC data
-  integer :: num_fields     !< number of OBC data fields (e.g. u_normal,u_parallel and eta for Flather)
+  type(segment_input_type), pointer :: field(:) => NULL()  !< OBC data (all fields in a flat array)
+  integer :: num_fields     !< number of OBC data fields (dynamics + T/S + BGC)
+  type(segment_input_type), pointer :: dyn_input(:) => NULL() !< Staged input data for dynamics fields
+                                          !! (velocity, SSH, tides); slice of field(1:NUM_DYN_FIELDS)
+  type(segment_input_type), pointer :: tr_input(:)  => NULL() !< Staged input data for tracer fields
+                                          !! (T, S, BGC); slice of field(NUM_DYN_FIELDS+1:num_fields)
+  integer :: n_tr_inputs = 0  !< number of tracer input fields (T + S + BGC)
   integer :: Is_obc         !< Starting local i-index of boundary segment, this may be outside of the local PE.
   integer :: Ie_obc         !< Ending local i-index of boundary segment, this may be outside of the local PE.
   integer :: Js_obc         !< Starting local j-index of boundary segment, this may be outside of the local PE.
@@ -1027,10 +1033,10 @@ subroutine open_boundary_setup_vert(GV, US, OBC)
 
 end subroutine open_boundary_setup_vert
 
-!> Determine which physical fields are required for this segment based on boundary-condition type
+!> Determine which physical inputs are required for this segment based on boundary-condition type
 !! and segment orientation. Also enable groups of physical fields required by tides or thermodynamics.
 !! Note the tidal group could be further narrowed based on modes.
-subroutine segment_determine_required_fields(segment, tides, temp_salt)
+subroutine segment_determine_required_inputs(segment, tides, temp_salt)
   type(OBC_segment_type), intent(inout) :: segment !< OBC segment
   logical, optional, intent(in) :: tides         !< Switch for tidal variables
   logical, optional, intent(in) :: temp_salt     !< Switch for thermodynamic variables
@@ -1041,11 +1047,10 @@ subroutine segment_determine_required_fields(segment, tides, temp_salt)
   integer :: m
   integer :: F_Vn, F_Vt, F_G
   integer, parameter :: &
-    tide_idx(6) = (/ F_UAMP, F_UPHASE, F_VAMP, F_VPHASE, F_ZAMP, F_ZPHASE /), & ! Indices for tides
-    temp_idx(2) = (/ F_T, F_S /) ! Indices for thermodynamics
+    tide_idx(6) = (/ F_UAMP, F_UPHASE, F_VAMP, F_VPHASE, F_ZAMP, F_ZPHASE /) ! Indices for tides
 
-  if (.not. associated(segment%field)) &
-    call MOM_error(FATAL, 'segment_determine_required_fields: segment%field is not allocated.')
+  if (.not. associated(segment%dyn_input)) &
+    call MOM_error(FATAL, 'segment_determine_required_inputs: segment%dyn_input is not allocated.')
 
   use_tide = .false. ; if (present(tides)) use_tide = tides
   use_temp = .false. ; if (present(temp_salt)) use_temp = temp_salt
@@ -1057,26 +1062,27 @@ subroutine segment_determine_required_fields(segment, tides, temp_salt)
     F_Vn = F_V ; F_Vt = F_U ; F_G = F_UY
   endif
   if (segment%Flather) &
-    segment%field(F_Z)%required = .true.
+    segment%dyn_input(F_Z)%required = .true.
 
   if (segment%Flather .or. segment%nudged .or. segment%specified) &
-    segment%field(F_Vn)%required = .true.
+    segment%dyn_input(F_Vn)%required = .true.
 
   if (segment%nudged_tan .or. segment%specified_tan) &
-    segment%field(F_Vt)%required = .true.
+    segment%dyn_input(F_Vt)%required = .true.
 
   if (segment%nudged_grad .or. segment%specified_grad) &
-    segment%field(F_G)%required = .true.
+    segment%dyn_input(F_G)%required = .true.
 
   if (use_tide) then ; do m = 1, size(tide_idx)
-    segment%field(tide_idx(m))%required = .true.
+    segment%dyn_input(tide_idx(m))%required = .true.
   enddo ; endif
 
-  if (use_temp) then ; do m = 1, size(temp_idx)
-    segment%field(temp_idx(m))%required = .true.
-  enddo ; endif
+  if (use_temp .and. associated(segment%tr_input)) then
+    segment%tr_input(1)%required = .true.
+    segment%tr_input(2)%required = .true.
+  endif
 
-end subroutine segment_determine_required_fields
+end subroutine segment_determine_required_inputs
 
 !> Find physical field index from name
 integer function find_phys_field_index(name)
@@ -1102,12 +1108,15 @@ subroutine OBC_any_IO(OBC)
 
   use_IO = .false.
   do n=1,OBC%number_of_segments
-    do m=1,OBC%segment(n)%num_fields
-      if (OBC%segment(n)%field(m)%use_IO) then
-        use_IO = .true.
-        exit
-      endif
-    enddo
+    if (.not. associated(OBC%segment(n)%dyn_input)) cycle
+    do m=1,NUM_DYN_FIELDS ; if (OBC%segment(n)%dyn_input(m)%use_IO) then
+      use_IO = .true. ; exit
+    endif ; enddo
+    if (use_IO) exit
+    if (.not. associated(OBC%segment(n)%tr_input)) cycle
+    do m=1,OBC%segment(n)%n_tr_inputs ; if (OBC%segment(n)%tr_input(m)%use_IO) then
+      use_IO = .true. ; exit
+    endif ; enddo
     if (use_IO) exit
   enddo
 
@@ -1324,6 +1333,9 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
 
     segment%num_fields = NUM_PHYS_FIELDS + OBC%num_obgc_tracers
     allocate(segment%field(segment%num_fields))
+    segment%dyn_input => segment%field(1:NUM_DYN_FIELDS)
+    segment%n_tr_inputs = segment%num_fields - NUM_DYN_FIELDS
+    segment%tr_input => segment%field(NUM_DYN_FIELDS+1:segment%num_fields)
 
     ! Initialize physical fields
     do m = 1, NUM_PHYS_FIELDS
@@ -1336,7 +1348,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
     segment%field(F_T)%tr_index = 1 ! Temperature tracer index is hard-coded.
     segment%field(F_S)%tr_index = 2 ! Salinity tracer index is hard-coded.
 
-    call segment_determine_required_fields(segment, tides=OBC%add_tide_constituents, &
+    call segment_determine_required_inputs(segment, tides=OBC%add_tide_constituents, &
                                            temp_salt=check_ts_needed)
 
     ! Parse and find available physical fields
@@ -4140,25 +4152,6 @@ subroutine gradient_at_q_points(G, GV, segment, uvel, vvel)
 
 end subroutine gradient_at_q_points
 
-
-!> Return the field number on the segment for the named field, or -1 if there is no field with that name.
-function lookup_seg_field(OBC_seg, field)
-  type(OBC_segment_type), intent(in) :: OBC_seg !< OBC segment
-  character(len=32), intent(in) :: field !< The field name
-  integer :: lookup_seg_field
-  ! Local variables
-  integer :: n
-
-  lookup_seg_field = -1
-  do n=1,OBC_seg%num_fields
-    if (trim(field) == OBC_seg%field(n)%name) then
-      lookup_seg_field = n
-      return
-    endif
-  enddo
-
-end function lookup_seg_field
-
 !> Return the tracer index from its name
 function get_tracer_index(OBC_seg,tr_name)
   type(OBC_segment_type), pointer :: OBC_seg !< OBC segment
@@ -4411,16 +4404,17 @@ subroutine open_boundary_test_extern_h(G, GV, OBC, h)
 
 end subroutine open_boundary_test_extern_h
 
-!> Read and remap segment data for a single field index m.  This is the shared per-field worker
-!! used by read_OBC_dynamics_data and read_OBC_tracer_data.
+!> Read and remap segment data for a single OBC input field.  This is the
+!! shared per-field worker used by read_OBC_dynamics_data and
+!! read_OBC_tracer_data.
 subroutine read_OBC_field_data(G, GV, US, OBC, segment, field, Time)
-  type(ocean_grid_type),       intent(in)    :: G    !< Ocean grid structure
-  type(verticalGrid_type),     intent(in)    :: GV   !< Ocean vertical grid structure
-  type(unit_scale_type),       intent(in)    :: US   !< A dimensional unit scaling type
-  type(ocean_OBC_type),        pointer       :: OBC  !< Open boundary structure
-  type(OBC_segment_type),      pointer       :: segment !< Segment whose field is being read
-  type(OBC_segment_data_type), intent(inout) :: field   !< OBC segment field to read
-  type(time_type),             intent(in)    :: Time !< Model time
+  type(ocean_grid_type),    intent(in)    :: G    !< Ocean grid structure
+  type(verticalGrid_type),  intent(in)    :: GV   !< Ocean vertical grid structure
+  type(unit_scale_type),    intent(in)    :: US   !< A dimensional unit scaling type
+  type(ocean_OBC_type),     pointer       :: OBC  !< Open boundary structure
+  type(OBC_segment_type),   pointer       :: segment !< Segment whose field is being read
+  type(segment_input_type), intent(inout) :: field   !< OBC input field to read
+  type(time_type),          intent(in)    :: Time !< Model time
 
   ! Local variables
   integer :: i, j
@@ -4723,8 +4717,8 @@ subroutine read_OBC_dynamics_data(G, GV, US, OBC, tv, h, Time)
 
     if (.not. segment%on_pe) cycle ! continue to next segment if not in data domain
 
-    do m=1, NUM_PHYS_FIELDS-2
-      call read_OBC_field_data(G, GV, US, OBC, segment, segment%field(m), Time)
+    do m=1, NUM_DYN_FIELDS
+      call read_OBC_field_data(G, GV, US, OBC, segment, segment%dyn_input(m), Time)
     enddo ! end dynamical field loop
   enddo ! end segment loop
 end subroutine read_OBC_dynamics_data
@@ -4761,10 +4755,9 @@ subroutine read_OBC_tracer_data(G, GV, US, OBC, Time, h, tv, include_bgc)
     segment => OBC%segment(n)
     if (.not. segment%on_pe) cycle ! continue to next segment if not in data domain
 
-    do m=NUM_PHYS_FIELDS-1, segment%num_fields
-      if (.not. allocated(segment%field(m)%buffer_dst)) cycle
-      if (segment%field(m)%bgc_tracer .and. (.not. do_bgc)) cycle
-      call read_OBC_field_data(G, GV, US, OBC, segment, segment%field(m), Time)
+    do m=1, segment%n_tr_inputs
+      if (segment%tr_input(m)%bgc_tracer .and. (.not. do_bgc)) cycle
+      call read_OBC_field_data(G, GV, US, OBC, segment, segment%tr_input(m), Time)
     enddo ! end tracer field loop
   enddo ! end segment loop
 end subroutine read_OBC_tracer_data
@@ -4869,13 +4862,13 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
     endif
 
     ! Update normal velocity, transport. Split by orientation for now because of G%dyCu and G%dxCv.
-    if (allocated(segment%field(F_VN)%buffer_dst)) then
+    if (allocated(segment%dyn_input(F_VN)%buffer_dst)) then
       ! Update tidal normal velocity
       segment%tidal_vn(:,:) = 0.0
       if (OBC%add_tide_constituents) then
         do c=1,OBC%n_tide_constituents ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
-          tidal_amp = OBC%tide_fn(c) * segment%field(F_VNAMP)%buffer_dst(i,j,c)
-          tidal_phase = (time_delta * OBC%tide_frequencies(c) - segment%field(F_VNPHASE)%buffer_dst(i,j,c)) &
+          tidal_amp = OBC%tide_fn(c) * segment%dyn_input(F_VNAMP)%buffer_dst(i,j,c)
+          tidal_phase = (time_delta * OBC%tide_frequencies(c) - segment%dyn_input(F_VNPHASE)%buffer_dst(i,j,c)) &
             + (OBC%tide_eq_phases(c) + OBC%tide_un(c))
           segment%tidal_vn(i,j) = segment%tidal_vn(i,j) + tidal_amp * cos(tidal_phase)
         enddo ; enddo ; enddo
@@ -4886,7 +4879,7 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
       if (segment%is_E_or_W) then
         do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
           segment%Htot(i,j) = segment%Htot(i,j) + h(i+i_offset_in,j+j_offset_in,k)
-          segment%normal_vel(i,j,k) = segment%field(F_VN)%buffer_dst(i,j,k) + segment%tidal_vn(i,j)
+          segment%normal_vel(i,j,k) = segment%dyn_input(F_VN)%buffer_dst(i,j,k) + segment%tidal_vn(i,j)
           segment%normal_trans(i,j,k) = &
               segment%normal_vel(i,j,k) * h(i+i_offset_in,j+j_offset_in,k) * G%dyCu(i,j)
           segment%normal_trans_bt(i,j) = segment%normal_trans_bt(i,j) + segment%normal_trans(i,j,k)
@@ -4898,7 +4891,7 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
       else
         do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
           segment%Htot(i,j) = segment%Htot(i,j) + h(i+i_offset_in,j+j_offset_in,k)
-          segment%normal_vel(i,j,k) = segment%field(F_VN)%buffer_dst(i,j,k) + segment%tidal_vn(i,j)
+          segment%normal_vel(i,j,k) = segment%dyn_input(F_VN)%buffer_dst(i,j,k) + segment%tidal_vn(i,j)
           segment%normal_trans(i,j,k) = &
               segment%normal_vel(i,j,k) * h(i+i_offset_in,j+j_offset_in,k) * G%dxCv(i,j)
           segment%normal_trans_bt(i,j) = segment%normal_trans_bt(i,j) + segment%normal_trans(i,j,k)
@@ -4917,20 +4910,20 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
     endif
 
     ! Update tangential velocity
-    if (allocated(segment%tangential_vel) .and. allocated(segment%field(F_VT)%buffer_dst)) then
+    if (allocated(segment%tangential_vel) .and. allocated(segment%dyn_input(F_VT)%buffer_dst)) then
       ! Update tidal tangential velocity
       segment%tidal_vt(:,:) = 0.0
       if (OBC%add_tide_constituents) then
         do c=1,OBC%n_tide_constituents ; do J=JsdB,JedB ; do I=IsdB,IedB
-          tidal_amp = OBC%tide_fn(c) * segment%field(F_VTAMP)%buffer_dst(I,J,c)
-          tidal_phase = (time_delta * OBC%tide_frequencies(c) - segment%field(F_VTPHASE)%buffer_dst(I,J,c)) &
+          tidal_amp = OBC%tide_fn(c) * segment%dyn_input(F_VTAMP)%buffer_dst(I,J,c)
+          tidal_phase = (time_delta * OBC%tide_frequencies(c) - segment%dyn_input(F_VTPHASE)%buffer_dst(I,J,c)) &
             + (OBC%tide_eq_phases(c) + OBC%tide_un(c))
           segment%tidal_vt(I,J) = segment%tidal_vt(I,J) + tidal_amp * cos(tidal_phase)
         enddo ; enddo ; enddo
       endif
 
       do k=1,nz ; do J=JsdB,JedB ; do I=IsdB,IedB
-        segment%tangential_vel(I,J,k) = segment%field(F_VT)%buffer_dst(I,J,k) + segment%tidal_vt(I,J)
+        segment%tangential_vel(I,J,k) = segment%dyn_input(F_VT)%buffer_dst(I,J,k) + segment%tidal_vt(I,J)
       enddo ; enddo ; enddo
 
       if (allocated(segment%nudged_tangential_vel)) then
@@ -4941,9 +4934,9 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
     endif
 
     ! Update tangential gradient dvdx and dudy
-    if (allocated(segment%tangential_grad) .and. allocated(segment%field(F_G)%buffer_dst)) then
+    if (allocated(segment%tangential_grad) .and. allocated(segment%dyn_input(F_G)%buffer_dst)) then
       do k=1,nz ; do J=JsdB,JedB ; do I=IsdB,IedB
-        segment%tangential_grad(I,J,k) = segment%field(F_G)%buffer_dst(I,J,k)
+        segment%tangential_grad(I,J,k) = segment%dyn_input(F_G)%buffer_dst(I,J,k)
       enddo ; enddo ; enddo
 
       if (allocated(segment%nudged_tangential_grad)) then
@@ -4954,13 +4947,13 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
     endif
 
     ! Update SSH
-    if (allocated(segment%field(F_Z)%buffer_dst)) then
+    if (allocated(segment%dyn_input(F_Z)%buffer_dst)) then
       ! Update tidal SSH
       segment%tidal_elev(:,:) = 0.0
       if (OBC%add_tide_constituents) then
         do c=1,OBC%n_tide_constituents ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
-          tidal_amp = OBC%tide_fn(c) * segment%field(F_ZAMP)%buffer_dst(i,j,c)
-          tidal_phase = (time_delta * OBC%tide_frequencies(c) - segment%field(F_ZPHASE)%buffer_dst(i,j,c)) &
+          tidal_amp = OBC%tide_fn(c) * segment%dyn_input(F_ZAMP)%buffer_dst(i,j,c)
+          tidal_phase = (time_delta * OBC%tide_frequencies(c) - segment%dyn_input(F_ZPHASE)%buffer_dst(i,j,c)) &
             + (OBC%tide_eq_phases(c) + OBC%tide_un(c))
           segment%tidal_elev(i,j) = segment%tidal_elev(i,j) + tidal_amp * cos(tidal_phase)
         enddo ; enddo ; enddo
@@ -4968,7 +4961,7 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
 
       ramp_value = 1.0 ; if (OBC%ramp) ramp_value = OBC%ramp_value
       do j=js_seg,je_seg ; do i=is_seg,ie_seg
-        segment%SSH(i,j) = ramp_value * (segment%field(F_Z)%buffer_dst(i,j,1) + segment%tidal_elev(i,j))
+        segment%SSH(i,j) = ramp_value * (segment%dyn_input(F_Z)%buffer_dst(i,j,1) + segment%tidal_elev(i,j))
       enddo ; enddo
     endif
 
@@ -5013,12 +5006,12 @@ subroutine update_OBC_tracer_data(OBC, include_bgc)
       js_seg = segment%HI%JsdB ; je_seg = js_seg
     endif
 
-    do m=NUM_PHYS_FIELDS-1, segment%num_fields ! F_T = NUM_PHYS_FIELDS-1 and F_S = NUM_PHYS_FIELDS
-      if (.not. allocated(segment%field(m)%buffer_dst)) cycle
-      if (segment%field(m)%bgc_tracer .and. (.not. do_bgc)) cycle
-      nt = segment%field(m)%tr_index
+    do m=1, segment%n_tr_inputs
+      if (.not. allocated(segment%tr_input(m)%buffer_dst)) cycle
+      if (segment%tr_input(m)%bgc_tracer .and. (.not. do_bgc)) cycle
+      nt = segment%tr_input(m)%tr_index
       do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
-        segment%tr_Reg%Tr(nt)%t(i,j,k) = segment%field(m)%buffer_dst(i,j,k)
+        segment%tr_Reg%Tr(nt)%t(i,j,k) = segment%tr_input(m)%buffer_dst(i,j,k)
       enddo ; enddo ; enddo
     enddo ! end tracer loop
   enddo ! end segment loop
@@ -5069,10 +5062,10 @@ subroutine initialize_OBC_segment_reservoirs(GV, OBC)
 
     ! Tracers
     ! If the tracer reservoir has not yet been initialized, then set to external value.
-    do m=NUM_PHYS_FIELDS-1, segment%num_fields ! F_T = NUM_PHYS_FIELDS-1 and F_S = NUM_PHYS_FIELDS
-      if ((.not. allocated(segment%field(m)%buffer_dst)) .or. &
-          (segment%field(m)%bgc_tracer .and. (.not. OBC%update_OBC_seg_data))) cycle
-      nt = segment%field(m)%tr_index
+    do m=1, segment%n_tr_inputs
+      if ((.not. allocated(segment%tr_input(m)%buffer_dst)) .or. &
+          (segment%tr_input(m)%bgc_tracer .and. (.not. OBC%update_OBC_seg_data))) cycle
+      nt = segment%tr_input(m)%tr_index
       if (.not. segment%tr_Reg%Tr(nt)%is_initialized) then ! T/S may be initialized by fill_temp_salt_segments
         do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
           segment%tr_Reg%Tr(nt)%tres(i,j,k) = segment%tr_Reg%Tr(nt)%t(i,j,k)
@@ -5271,13 +5264,13 @@ subroutine segment_thickness_reservoir_init(GV, US, OBC, param_file)
     JsdB = segment%HI%JsdB ; JedB = segment%HI%JedB
 
     segment%h_Reg%scale = US%Z_to_m
-    do m=1,segment%num_fields
-      if (uppercase(segment%field(m)%name) == uppercase(segment%h_Reg%name)) then
-        if (.not. segment%field(m)%use_IO) then
+    do m=1,NUM_DYN_FIELDS
+      if (uppercase(segment%dyn_input(m)%name) == uppercase(segment%h_Reg%name)) then
+        if (.not. segment%dyn_input(m)%use_IO) then
           rescale = 1.0
-          if ((segment%field(m)%scale /= 0.0) .and. (segment%field(m)%scale /= 1.0)) &
-            rescale = 1.0 / segment%field(m)%scale
-          segment%field(m)%value = rescale * segment%field(m)%value
+          if ((segment%dyn_input(m)%scale /= 0.0) .and. (segment%dyn_input(m)%scale /= 1.0)) &
+            rescale = 1.0 / segment%dyn_input(m)%scale
+          segment%dyn_input(m)%value = rescale * segment%dyn_input(m)%value
         endif
       endif
     enddo
@@ -5354,20 +5347,22 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
   segment%tr_Reg%Tr(ntseg)%scale = 1.0
   if (present(scale)) then
     segment%tr_Reg%Tr(ntseg)%scale = scale
-    do m=1,segment%num_fields
-      ! Store the scaling factor for fields with exactly matching names, and possibly
-      ! rescale the previously stored input values.  Note that calls to register_segment_tracer
-      ! can come before or after calls to initialize_segment_data.
-      if (uppercase(segment%field(m)%name) == uppercase(segment%tr_Reg%Tr(ntseg)%name)) then
-        if (.not. segment%field(m)%use_IO) then
-          rescale = scale
-          if ((segment%field(m)%scale /= 0.0) .and. (segment%field(m)%scale /= 1.0)) &
-            rescale = scale / segment%field(m)%scale
-          segment%field(m)%value = rescale * segment%field(m)%value
+    if (associated(segment%tr_input)) then
+      do m=1,segment%n_tr_inputs
+        ! Store the scaling factor for fields with exactly matching names, and possibly
+        ! rescale the previously stored input values.  Note that calls to register_segment_tracer
+        ! can come before or after calls to initialize_segment_data.
+        if (uppercase(segment%tr_input(m)%name) == uppercase(segment%tr_Reg%Tr(ntseg)%name)) then
+          if (.not. segment%tr_input(m)%use_IO) then
+            rescale = scale
+            if ((segment%tr_input(m)%scale /= 0.0) .and. (segment%tr_input(m)%scale /= 1.0)) &
+              rescale = scale / segment%tr_input(m)%scale
+            segment%tr_input(m)%value = rescale * segment%tr_input(m)%value
+          endif
+          segment%tr_input(m)%scale = scale
         endif
-        segment%field(m)%scale = scale
-      endif
-    enddo
+      enddo
+    endif
   endif
 
   if (segment%tr_Reg%locked) call MOM_error(FATAL, &
@@ -5542,10 +5537,11 @@ subroutine register_obgc_segments(GV, OBC, tr_Reg, param_file, tr_name)
     call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, tr_name)
     resrv_lfac_in  = 1.0
     resrv_lfac_out = 1.0
-    do m=1,segment%num_fields
-      if (lowercase(segment%field(m)%name) == lowercase(tr_name)) then
-        resrv_lfac_in  = segment%field(m)%resrv_lfac_in
-        resrv_lfac_out = segment%field(m)%resrv_lfac_out
+    if (.not. associated(segment%tr_input)) cycle
+    do m=1,segment%n_tr_inputs
+      if (lowercase(segment%tr_input(m)%name) == lowercase(tr_name)) then
+        resrv_lfac_in  = segment%tr_input(m)%resrv_lfac_in
+        resrv_lfac_out = segment%tr_input(m)%resrv_lfac_out
       endif
     enddo
     call register_segment_tracer(tr_ptr, ntr_id, param_file, GV, segment, &
@@ -6317,8 +6313,8 @@ subroutine update_segment_thickness_reservoirs(G, GV, uhr, vhr, h, OBC)
           resrv_lfac_out = 1.0
           resrv_lfac_in  = 1.0
         else
-          resrv_lfac_out = segment%field(fd_id)%resrv_lfac_out
-          resrv_lfac_in  = segment%field(fd_id)%resrv_lfac_in
+          resrv_lfac_out = segment%dyn_input(fd_id)%resrv_lfac_out
+          resrv_lfac_in  = segment%dyn_input(fd_id)%resrv_lfac_in
         endif
         I_scale = 1.0 ; if (segment%h_Reg%scale /= 0.0) I_scale = 1.0 / segment%h_Reg%scale
         if (allocated(segment%h_Reg%h_res)) then ; do k=1,nz
@@ -6358,8 +6354,8 @@ subroutine update_segment_thickness_reservoirs(G, GV, uhr, vhr, h, OBC)
           resrv_lfac_out = 1.0
           resrv_lfac_in  = 1.0
         else
-          resrv_lfac_out = segment%field(fd_id)%resrv_lfac_out
-          resrv_lfac_in  = segment%field(fd_id)%resrv_lfac_in
+          resrv_lfac_out = segment%dyn_input(fd_id)%resrv_lfac_out
+          resrv_lfac_in  = segment%dyn_input(fd_id)%resrv_lfac_in
         endif
         I_scale = 1.0 ; if (segment%h_Reg%scale /= 0.0) I_scale = 1.0 / segment%h_Reg%scale
         if (allocated(segment%h_Reg%h_res)) then ; do k=1,nz
@@ -6615,12 +6611,12 @@ end subroutine remap_OBC_fields
 !!   @remark{There is a (hard-wired) "tolerance" parameter such that the
 !! criteria for adjustment must equal or exceed 10cm.}
 subroutine adjustSegmentEtaToFitBathymetry(G, GV, US, segment, field, at_node)
-  type(ocean_grid_type),        intent(in)    :: G   !< The ocean's grid structure
-  type(verticalGrid_type),      intent(in)    :: GV  !< The ocean's vertical grid structure
-  type(unit_scale_type),        intent(in)    :: US  !< A dimensional unit scaling type
-  type(OBC_segment_type),       intent(in)    :: segment !< OBC segment
-  type(OBC_segment_data_type),  intent(inout) :: field   !< OBC segment field to adjust thickness
-  logical,                      intent(in)    :: at_node !< True this point is at the OBC nodes rather than the faces
+  type(ocean_grid_type),    intent(in)    :: G   !< The ocean's grid structure
+  type(verticalGrid_type),  intent(in)    :: GV  !< The ocean's vertical grid structure
+  type(unit_scale_type),    intent(in)    :: US  !< A dimensional unit scaling type
+  type(OBC_segment_type),   intent(in)    :: segment !< OBC segment
+  type(segment_input_type), intent(inout) :: field   !< OBC segment field to adjust thickness
+  logical,                  intent(in)    :: at_node !< True this point is at the OBC nodes rather than the faces
 
   integer :: i, j, k, is, ie, js, je, nz, contractions, dilations
   real, allocatable, dimension(:,:,:) :: eta ! Segment source data interface heights [Z ~> m]
@@ -6999,6 +6995,7 @@ subroutine rotate_OBC_segment_config(segment_in, G_in, segment, G, turns)
 
   ! This needs to be set
   segment%num_fields = segment_in%num_fields
+  segment%n_tr_inputs = segment_in%n_tr_inputs
 end subroutine rotate_OBC_segment_config
 
 
