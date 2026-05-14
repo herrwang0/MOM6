@@ -425,7 +425,7 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   ntherm = 0
   if (associated(tv%S)) ntherm = ntherm + 1
   if (associated(tv%T)) ntherm = ntherm + 1
-  allocate(segment%field(ntherm+tr_Reg%ntr))
+  allocate(segment%tr_input(ntherm+tr_Reg%ntr))
 
   do k=1,nz
     rst = -1.0
@@ -481,10 +481,10 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
     enddo
 
     ! Temperature is tracer 1 for the OBCs.
-    allocate(segment%field(1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
+    allocate(segment%tr_input(1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
     do k=1,nz ; do J=JsdB,JedB ; do i=isd,ied
       ! With the revised OBC code, buffer_src uses the same rescaled units as for tracers.
-      segment%field(1)%buffer_src(i,j,k) = T0(k)
+      segment%tr_input(1)%buffer_src(i,j,k) = T0(k)
     enddo ; enddo ; enddo
     name = 'temp'
     call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
@@ -494,10 +494,10 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   ! Set up dye tracers
   ! First dye - only one with OBC values
   ! This field(ntherm+1) requires tr_D1 to be the first tracer after temperature and salinity.
-  allocate(segment%field(ntherm+1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
+  allocate(segment%tr_input(ntherm+1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
   do k=1,nz ; do j=segment%HI%jsd,segment%HI%jed ; do i=segment%HI%isd,segment%HI%ied
-    if (k < nz/2) then ; segment%field(ntherm+1)%buffer_src(i,j,k) = 0.0
-    else ; segment%field(ntherm+1)%buffer_src(i,j,k) = 1.0 ; endif
+    if (k < nz/2) then ; segment%tr_input(ntherm+1)%buffer_src(i,j,k) = 0.0
+    else ; segment%tr_input(ntherm+1)%buffer_src(i,j,k) = 1.0 ; endif
   enddo ; enddo ; enddo
   name = 'tr_D1'
   call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)

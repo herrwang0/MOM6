@@ -105,17 +105,18 @@ integer, parameter, public :: OBC_STRAIN_FREESLIP = 2
 integer, parameter, public :: OBC_STRAIN_COMPUTED = 3
 integer, parameter, public :: OBC_STRAIN_SPECIFIED = 4
 !>@}
-integer, parameter :: NUM_PHYS_FIELDS = 13  !< Number of physical fields (dynamics + T + S)
-integer, parameter :: NUM_DYN_FIELDS = 11   !< Number of dynamics input fields (velocity, SSH, tides)
+integer, parameter :: NUM_DYN_FIELDS = 11 !< Number of dynamics input fields (velocity, SSH, tides)
+!< Maximum number of fields in an OBC segment manifest string (NUM_DYN_FIELDS + TEMP + SALT)
+integer, parameter :: MAX_MANIFEST_FIELDS = NUM_DYN_FIELDS + 2
 !>@{ Indices of dynamics field positions in segment%dyn_input array
 integer, parameter :: &
     F_U = 1, F_V = 2, F_VX = 3, F_UY = 4, F_Z = 5, F_UAMP = 6, F_UPHASE = 7, &
-    F_VAMP = 8, F_VPHASE = 9, F_ZAMP = 10, F_ZPHASE = 11, F_T = 12, F_S = 13
+    F_VAMP = 8, F_VPHASE = 9, F_ZAMP = 10, F_ZPHASE = 11
 !>@}
-character(len=8), parameter :: PHYS_FIELD_NAMES(NUM_PHYS_FIELDS) = &
+character(len=8), parameter :: DYN_FIELD_NAMES(NUM_DYN_FIELDS) = &
     [character(len=8) :: 'U', 'V', 'DVDX', 'DUDY', 'SSH', 'Uamp', &
-     'Uphase', 'Vamp', 'Vphase', 'SSHamp', 'SSHphase', 'TEMP', 'SALT']  !< Physical field name
-                                                            !! strings used by input parameter
+     'Uphase', 'Vamp', 'Vphase', 'SSHamp', 'SSHphase']  !< Dynamics field name strings used by
+                                                        !! input parameter
 
 !> Staged input (metadata + read/remap buffers) for one external field at an OBC segment.
 !! Data is subsequently transferred into segment%normal_vel, segment%SSH, segment%tr_Reg, etc.
@@ -249,12 +250,10 @@ type, public :: OBC_segment_type
   logical :: is_N_or_S      !< True if the OB is facing North or South and exists on this PE.
   logical :: is_E_or_W      !< True if the OB is facing East or West and exists on this PE.
   logical :: is_E_or_W_2    !< True if the OB is facing East or West anywhere.
-  type(segment_input_type), pointer :: field(:) => NULL()  !< OBC data (all fields in a flat array)
-  integer :: num_fields     !< number of OBC data fields (dynamics + T/S + BGC)
-  type(segment_input_type), pointer :: dyn_input(:) => NULL() !< Staged input data for dynamics fields
-                                          !! (velocity, SSH, tides); slice of field(1:NUM_DYN_FIELDS)
-  type(segment_input_type), pointer :: tr_input(:)  => NULL() !< Staged input data for tracer fields
-                                          !! (T, S, BGC); slice of field(NUM_DYN_FIELDS+1:num_fields)
+  type(segment_input_type), allocatable :: dyn_input(:) !< Staged input data for dynamics fields
+                                          !! (velocity, SSH, tides); size NUM_DYN_FIELDS
+  type(segment_input_type), allocatable :: tr_input(:)  !< Staged input data for tracer fields
+                                          !! (T, S, BGC); size n_tr_inputs
   integer :: n_tr_inputs = 0  !< number of tracer input fields (T + S + BGC)
   integer :: Is_obc         !< Starting local i-index of boundary segment, this may be outside of the local PE.
   integer :: Ie_obc         !< Ending local i-index of boundary segment, this may be outside of the local PE.
@@ -809,7 +808,7 @@ subroutine open_boundary_config(G, US, param_file, OBC)
     OBC%segment(n)%is_E_or_W_2 = .false.
     OBC%segment(n)%Velocity_nudging_timescale_in = 0.0
     OBC%segment(n)%Velocity_nudging_timescale_out = 0.0
-    OBC%segment(n)%num_fields = 0
+    OBC%segment(n)%n_tr_inputs = 0
   enddo
   allocate(OBC%segnum_u(G%IsdB:G%IedB,G%jsd:G%jed), source=0)
   allocate(OBC%segnum_v(G%isd:G%ied,G%JsdB:G%JedB), source=0)
@@ -1049,7 +1048,7 @@ subroutine segment_determine_required_inputs(segment, tides, temp_salt)
   integer, parameter :: &
     tide_idx(6) = (/ F_UAMP, F_UPHASE, F_VAMP, F_VPHASE, F_ZAMP, F_ZPHASE /) ! Indices for tides
 
-  if (.not. associated(segment%dyn_input)) &
+  if (.not. allocated(segment%dyn_input)) &
     call MOM_error(FATAL, 'segment_determine_required_inputs: segment%dyn_input is not allocated.')
 
   use_tide = .false. ; if (present(tides)) use_tide = tides
@@ -1077,26 +1076,26 @@ subroutine segment_determine_required_inputs(segment, tides, temp_salt)
     segment%dyn_input(tide_idx(m))%required = .true.
   enddo ; endif
 
-  if (use_temp .and. associated(segment%tr_input)) then
+  if (use_temp .and. allocated(segment%tr_input)) then
     segment%tr_input(1)%required = .true.
     segment%tr_input(2)%required = .true.
   endif
 
 end subroutine segment_determine_required_inputs
 
-!> Find physical field index from name
-integer function find_phys_field_index(name)
+!> Find dynamics field index from name, or return 0 if not a dynamics field.
+integer function find_dyn_field_index(name)
   character(len=*), intent(in) :: name !< Field name
 
   ! Local variables
   integer :: i
 
-  find_phys_field_index = 0
-  do i = 1, NUM_PHYS_FIELDS ; if (trim(name) == PHYS_FIELD_NAMES(i)) then
-    find_phys_field_index = i
+  find_dyn_field_index = 0
+  do i = 1, NUM_DYN_FIELDS ; if (trim(name) == DYN_FIELD_NAMES(i)) then
+    find_dyn_field_index = i
     return
   endif ; enddo
-end function find_phys_field_index
+end function find_dyn_field_index
 
 !> Set global flag OBC%any_needs_IO_for_data.
 subroutine OBC_any_IO(OBC)
@@ -1108,12 +1107,11 @@ subroutine OBC_any_IO(OBC)
 
   use_IO = .false.
   do n=1,OBC%number_of_segments
-    if (.not. associated(OBC%segment(n)%dyn_input)) cycle
+    if (.not. OBC%segment(n)%on_pe) cycle
     do m=1,NUM_DYN_FIELDS ; if (OBC%segment(n)%dyn_input(m)%use_IO) then
       use_IO = .true. ; exit
     endif ; enddo
     if (use_IO) exit
-    if (.not. associated(OBC%segment(n)%tr_input)) cycle
     do m=1,OBC%segment(n)%n_tr_inputs ; if (OBC%segment(n)%tr_input(m)%use_IO) then
       use_IO = .true. ; exit
     endif ; enddo
@@ -1273,8 +1271,10 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
   character(len=20)  :: segname, suffix
   character(len=32)  :: varname
   real               :: value  ! A value that is parsed from the segment data string [various units]
-  character(len=32), dimension(NUM_PHYS_FIELDS) :: phys_inputs  ! input physical field names
-  integer, dimension(NUM_PHYS_FIELDS) :: phys_idx ! input physical field indices to PHYS_FIELD_NAMES
+  character(len=32), dimension(MAX_MANIFEST_FIELDS) :: phys_inputs  ! input field names from manifest
+  character(len=32) :: rotated_name  ! Manifest field name after grid-rotation mapping
+  integer, dimension(NUM_DYN_FIELDS) :: dyn_manifest_idx ! Manifest index for each dynamics slot, or <0
+  integer, dimension(2) :: ts_manifest_idx ! Manifest index for T (1) and S (2), or <0
   character(len=32) :: bgc_input  ! segment field names
   character(len=128) :: inputdir
   type(OBC_segment_type), pointer :: segment => NULL() ! pointer to segment type list
@@ -1284,7 +1284,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
   integer, dimension(1) :: single_pelist
   type(external_tracers_segments_props), pointer :: obgc_segments_props_list =>NULL()
   logical :: check_ts_needed ! Check if temperature and salinity are explicitly specified.
-  integer :: idx
+  integer :: idx, tr_offset
   character(len=256) :: routine_name ! Name of this subroutine
 
   if (OBC%user_BCs_set_globally) return
@@ -1331,80 +1331,123 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
       call MOM_error(FATAL, mesg)
     endif
 
-    segment%num_fields = NUM_PHYS_FIELDS + OBC%num_obgc_tracers
-    allocate(segment%field(segment%num_fields))
-    segment%dyn_input => segment%field(1:NUM_DYN_FIELDS)
-    segment%n_tr_inputs = segment%num_fields - NUM_DYN_FIELDS
-    segment%tr_input => segment%field(NUM_DYN_FIELDS+1:segment%num_fields)
-
-    ! Initialize physical fields
-    do m = 1, NUM_PHYS_FIELDS
-      segment%field(m)%name = PHYS_FIELD_NAMES(m) ! The order of physical fields is fixed.
-      segment%field(m)%bgc_tracer = .false.
-      segment%field(m)%required = .false.
-      segment%field(m)%use_IO = .false.
-      segment%field(m)%tr_index = -1
+    ! Initialize dynamics fields (velocity, SSH, tides).
+    allocate(segment%dyn_input(NUM_DYN_FIELDS))
+    do m = 1, NUM_DYN_FIELDS
+      segment%dyn_input(m)%name = DYN_FIELD_NAMES(m) ! The order of dynamics fields is fixed.
+      segment%dyn_input(m)%bgc_tracer = .false.
+      segment%dyn_input(m)%required = .false.
+      segment%dyn_input(m)%use_IO = .false.
+      segment%dyn_input(m)%tr_index = -1
     enddo
-    segment%field(F_T)%tr_index = 1 ! Temperature tracer index is hard-coded.
-    segment%field(F_S)%tr_index = 2 ! Salinity tracer index is hard-coded.
+
+    ! Tracer-field array layout: slots 1-2 hold TEMP and SALT when use_temperature is true;
+    ! subsequent slots hold the BGC tracers.
+    tr_offset = 0 ; if (use_temperature) tr_offset = 2
+    segment%n_tr_inputs = tr_offset + OBC%num_obgc_tracers
+    allocate(segment%tr_input(segment%n_tr_inputs))
+
+    ! Initialize temperature and salinity entries in the tracer-field array.
+    if (use_temperature) then
+      segment%tr_input(1)%name = 'TEMP'
+      segment%tr_input(1)%bgc_tracer = .false.
+      segment%tr_input(1)%required = .false.
+      segment%tr_input(1)%use_IO = .false.
+      segment%tr_input(1)%tr_index = get_tracer_index(segment, 'TEMP')
+      segment%tr_input(2)%name = 'SALT'
+      segment%tr_input(2)%bgc_tracer = .false.
+      segment%tr_input(2)%required = .false.
+      segment%tr_input(2)%use_IO = .false.
+      segment%tr_input(2)%tr_index = get_tracer_index(segment, 'SALT')
+    endif
 
     call segment_determine_required_inputs(segment, tides=OBC%add_tide_constituents, &
                                            temp_salt=check_ts_needed)
 
-    ! Parse and find available physical fields
+    ! Map each manifest entry to a dynamics slot or T/S slot.
     call parse_segment_manifest_str(trim(segstr), num_manifest_fields, phys_inputs)
 
-    phys_idx(:) = -1
-    do m = 1, num_manifest_fields
-      idx = find_phys_field_index(rotated_field_name(trim(phys_inputs(m)), turns))
-      if (idx == 0) then
+    dyn_manifest_idx(:) = -1 ; ts_manifest_idx(:) = -1
+    do m=1, num_manifest_fields
+      rotated_name = rotated_field_name(trim(phys_inputs(m)), turns)
+      idx = find_dyn_field_index(rotated_name)
+      if (idx > 0) then
+        if (.not. segment%dyn_input(idx)%required) then
+          write(mesg,'("OBC segment ",I0," has an unnecessary dynamics field: ",a)') &
+                n, trim(phys_inputs(m))
+          call MOM_error(WARNING, trim(mesg))
+        endif
+        dyn_manifest_idx(idx) = m
+      elseif (uppercase(rotated_name) == 'TEMP') then
+        if (check_ts_needed .and. (.not. segment%tr_input(1)%required)) then
+          write(mesg,'("OBC segment ",I0," has an unnecessary field: TEMP")') n
+          call MOM_error(WARNING, trim(mesg))
+        endif
+        ts_manifest_idx(1) = m
+      elseif (uppercase(rotated_name) == 'SALT') then
+        if (check_ts_needed .and. (.not. segment%tr_input(2)%required)) then
+          write(mesg,'("OBC segment ",I0," has an unnecessary field: SALT")') n
+          call MOM_error(WARNING, trim(mesg))
+        endif
+        ts_manifest_idx(2) = m
+      else
         write(mesg,'("OBC segment ",I0," has an unknown input field: ",a)') n, trim(phys_inputs(m))
         call MOM_error(FATAL, trim(routine_name) // ", " // trim(mesg))
       endif
-      if ((.not. segment%field(idx)%required) .and. &
-          ((.not. (idx == F_T .or. idx == F_S)) .or. check_ts_needed)) then
-        write(mesg,'("OBC segment ",I0," has an unnecessary field: ",a)') &
-              n, trim(phys_inputs(m))
-        call MOM_error(WARNING, trim(mesg))
-        ! Unnecessary field is allowed and allocated for now.
-        ! Otherwise, the next line can be uncommented.
-        ! cycle
-      endif
-      phys_idx(idx) = m
     enddo
 
-    ! Allocate physical fields
-    do m = 1, NUM_PHYS_FIELDS
-      if (segment%field(m)%required .and. (phys_idx(m) < 0)) then
-        write(mesg,'("OBC segment ",I0," requires field: ",a)') n, trim(segment%field(m)%name)
+    ! Allocate dynamics fields
+    do m=1, NUM_DYN_FIELDS
+      if (segment%dyn_input(m)%required .and. (dyn_manifest_idx(m) < 0)) then
+        write(mesg,'("OBC segment ",I0," requires field: ",a)') n, trim(segment%dyn_input(m)%name)
         call MOM_error(FATAL, trim(routine_name) // ", " // trim(mesg))
       endif
-      if ((phys_idx(m) > 0)) then ! Field is found in input, even if not required
-        call parse_segment_data_str(trim(segstr), phys_idx(m), trim(phys_inputs(phys_idx(m))), &
+      if (dyn_manifest_idx(m) > 0) then ! Currently allocating unnecessary field
+        call parse_segment_data_str(trim(segstr), dyn_manifest_idx(m), &
+                                    trim(phys_inputs(dyn_manifest_idx(m))), &
                                     value, filename, varname)
-        call allocate_segment_field_data(segment%field(m), OBC, segment, US, &
+        call allocate_segment_field_data(segment%dyn_input(m), OBC, segment, US, &
                                          inputdir, filename, varname, suffix, value, turns, GV%ke)
       endif
     enddo
 
-    ! Allocate BGC tracer fields
-    obgc_segments_props_list => OBC%obgc_segments_props ! pointer to the head node
-    do m = NUM_PHYS_FIELDS+1, segment%num_fields
-      segment%field(m)%bgc_tracer = .true.
-      ! Query the obgc segment properties by traversing the linked list
-      call get_obgc_segments_props(obgc_segments_props_list, bgc_input, filename, varname, &
-                                   segment%field(m)%resrv_lfac_in, segment%field(m)%resrv_lfac_out)
-      ! Make sure the obgc tracer is not specified in the MOM6 param file too.
-      do mm=1,num_manifest_fields ; if (trim(bgc_input) == trim(phys_inputs(mm))) then
-        write(mesg,'("Input parameter for OBC segment ",I0," contains a BGC tracer: ", A)') &
-              n, trim(bgc_input)
-        call MOM_error(FATAL, trim(routine_name) // ", " // trim(mesg))
-      endif ; enddo
-      segment%field(m)%name = rotated_field_name(bgc_input, turns)
-      segment%field(m)%tr_index = get_tracer_index(segment, trim(segment%field(m)%name))
-      call allocate_segment_field_data(segment%field(m), OBC, segment, US, &
-                                       inputdir, filename, varname, suffix, 0.0, turns, GV%ke)
-    enddo
+    ! Allocate T/S tracer fields
+    if (use_temperature) then
+      do m=1, 2
+        if (segment%tr_input(m)%required .and. check_ts_needed .and. (ts_manifest_idx(m) < 0)) then
+          write(mesg,'("OBC segment ",I0," requires field: ",a)') n, trim(segment%tr_input(m)%name)
+          call MOM_error(FATAL, trim(routine_name) // ", " // trim(mesg))
+        endif
+        if (ts_manifest_idx(m) > 0) then
+          call parse_segment_data_str(trim(segstr), ts_manifest_idx(m), &
+                                      trim(phys_inputs(ts_manifest_idx(m))), &
+                                      value, filename, varname)
+          call allocate_segment_field_data(segment%tr_input(m), OBC, segment, US, &
+                                           inputdir, filename, varname, suffix, value, turns, GV%ke)
+        endif
+      enddo
+    endif
+
+    ! Allocate BGC tracer input fields
+    if (OBC%num_obgc_tracers > 0) then
+      obgc_segments_props_list => OBC%obgc_segments_props ! pointer to the head node
+      do m=tr_offset + 1, segment%n_tr_inputs
+        segment%tr_input(m)%bgc_tracer = .true.
+        ! Query the obgc segment properties by traversing the linked list
+        call get_obgc_segments_props(obgc_segments_props_list, bgc_input, filename, varname, &
+                                     segment%tr_input(m)%resrv_lfac_in, segment%tr_input(m)%resrv_lfac_out)
+        ! Make sure the obgc tracer is not also specified in the MOM6 param file.
+        do mm=1,num_manifest_fields ; if (trim(bgc_input) == trim(phys_inputs(mm))) then
+          write(mesg,'("Input parameter for OBC segment ",I0," contains a BGC tracer: ", A)') &
+                n, trim(bgc_input)
+          call MOM_error(FATAL, trim(routine_name) // ", " // trim(mesg))
+        endif ; enddo
+        segment%tr_input(m)%name = rotated_field_name(bgc_input, turns)
+        segment%tr_input(m)%tr_index = get_tracer_index(segment, trim(segment%tr_input(m)%name))
+        call allocate_segment_field_data(segment%tr_input(m), OBC, segment, US, &
+                                         inputdir, filename, varname, suffix, 0.0, turns, GV%ke)
+      enddo ! end BGC tracer field loop
+    endif
 
     ! write(stderr, '(A)') trim(suffix)//" segment checksum"
     if (OBC%debug) call chksum_OBC_segment_data(OBC%segment(n_seg), GV, US, OBC%nk_OBC_debug, n)
@@ -2164,7 +2207,7 @@ subroutine parse_segment_manifest_str(segment_str, num_fields, fields)
   character(len=*), intent(in) :: segment_str   !< A string in form of
                                         !< "VAR1=file:foo1.nc(varnam1),VAR2=file:foo2.nc(varnam2),..."
   integer, intent(out) :: num_fields    !< The number of fields in the segment data
-  character(len=*), dimension(NUM_PHYS_FIELDS), intent(out) :: fields
+  character(len=*), dimension(MAX_MANIFEST_FIELDS), intent(out) :: fields
                                         !< List of fieldnames for each segment
 
   ! Local variables
@@ -2178,7 +2221,7 @@ subroutine parse_segment_manifest_str(segment_str, num_fields, fields)
     field_spec = extract_word(segment_str, ',', num_fields + 1)
     if (trim(field_spec) == '') exit
 
-    if (num_fields >= NUM_PHYS_FIELDS) &
+    if (num_fields >= MAX_MANIFEST_FIELDS) &
       call MOM_error(FATAL, "MOM_open_boundary.F90, parse_segment_manifest_str: " // &
                      "too many fields in OBC segment manifest '" //trim(segment_str) // "'.")
 
@@ -2260,7 +2303,7 @@ subroutine parse_for_tracer_reservoirs(OBC, PF, use_temperature)
   character(len=20)  :: segname, suffix
   character(len=32)  :: fieldname
   real               :: value  ! A value that is parsed from the segment data string [various units]
-  character(len=32), dimension(NUM_PHYS_FIELDS) :: fields  ! segment field names
+  character(len=32), dimension(MAX_MANIFEST_FIELDS) :: fields  ! segment field names
   type(OBC_segment_type), pointer :: segment => NULL() ! pointer to segment type list
 
   do n=1,OBC%number_of_segments
@@ -4309,6 +4352,9 @@ subroutine deallocate_OBC_segment_data(segment)
   if (allocated(segment%nudged_tangential_grad)) deallocate(segment%nudged_tangential_grad)
   if (allocated(segment%tangential_grad)) deallocate(segment%tangential_grad)
 
+  if (allocated(segment%dyn_input)) deallocate(segment%dyn_input)
+  if (allocated(segment%tr_input)) deallocate(segment%tr_input)
+
   if (associated(segment%tr_Reg)) call segment_tracer_registry_end(segment%tr_Reg)
   if (associated(segment%h_Reg)) call segment_thickness_registry_end(segment%h_Reg)
 
@@ -4691,8 +4737,8 @@ subroutine read_OBC_field_data(G, GV, US, OBC, segment, field, Time)
   if (turns /= 0) deallocate(tmp_buffer_in)
 end subroutine read_OBC_field_data
 
-!> Read OBC segment data for the dynamical fields, with field indices
-!! m=1..NUM_PHYS_FIELDS-2 (U, V, gradients, SSH, and tidal constituents).
+!> Read OBC segment data for the dynamical fields from segment%dyn_input
+!! (U, V, gradients, SSH, and tidal constituents).
 subroutine read_OBC_dynamics_data(G, GV, US, OBC, tv, h, Time)
   type(ocean_grid_type),   intent(in) :: G    !< Ocean grid structure
   type(verticalGrid_type), intent(in) :: GV   !< Ocean vertical grid structure
@@ -4723,8 +4769,7 @@ subroutine read_OBC_dynamics_data(G, GV, US, OBC, tv, h, Time)
   enddo ! end segment loop
 end subroutine read_OBC_dynamics_data
 
-!> Read OBC segment data for tracer fields, with field indices
-!! m=NUM_PHYS_FIELDS-1..segment%num_fields (T, S, and BGC tracers).
+!> Read OBC segment data for tracer fields (T, S, and BGC tracers) from segment%tr_input.
 !! Assumes segment%dz has been populated by a prior call to read_OBC_dynamics_data at the current
 !! time step. The optional argument include_bgc (default .true.) allows BGC fields to be read
 !! independently.
@@ -4974,9 +5019,8 @@ subroutine update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
   enddo ! end segment loop
 end subroutine update_OBC_dynamics_data
 
-!> Update the OBC segment tracer reservoir from segment%field(m)%buffer_dst for tracer field
-!! indices m=NUM_PHYS_FIELDS-1..segment%num_fields. The optional argument include_bgc (default
-!! true) allows BGC fields to be updated independently.
+!> Update the OBC segment tracer reservoir from segment%tr_input(m)%buffer_dst.
+!! The optional argument include_bgc (default true) allows BGC fields to be updated independently.
 subroutine update_OBC_tracer_data(OBC, include_bgc)
   type(ocean_OBC_type), pointer    :: OBC         !< Open boundary structure
   logical, optional,    intent(in) :: include_bgc !< Update BGC tracers
@@ -5347,22 +5391,20 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, &
   segment%tr_Reg%Tr(ntseg)%scale = 1.0
   if (present(scale)) then
     segment%tr_Reg%Tr(ntseg)%scale = scale
-    if (associated(segment%tr_input)) then
-      do m=1,segment%n_tr_inputs
-        ! Store the scaling factor for fields with exactly matching names, and possibly
-        ! rescale the previously stored input values.  Note that calls to register_segment_tracer
-        ! can come before or after calls to initialize_segment_data.
-        if (uppercase(segment%tr_input(m)%name) == uppercase(segment%tr_Reg%Tr(ntseg)%name)) then
-          if (.not. segment%tr_input(m)%use_IO) then
-            rescale = scale
-            if ((segment%tr_input(m)%scale /= 0.0) .and. (segment%tr_input(m)%scale /= 1.0)) &
-              rescale = scale / segment%tr_input(m)%scale
-            segment%tr_input(m)%value = rescale * segment%tr_input(m)%value
-          endif
-          segment%tr_input(m)%scale = scale
+    do m=1,segment%n_tr_inputs
+      ! Store the scaling factor for fields with exactly matching names, and possibly
+      ! rescale the previously stored input values.  Note that calls to register_segment_tracer
+      ! can come before or after calls to initialize_segment_data.
+      if (uppercase(segment%tr_input(m)%name) == uppercase(segment%tr_Reg%Tr(ntseg)%name)) then
+        if (.not. segment%tr_input(m)%use_IO) then
+          rescale = scale
+          if ((segment%tr_input(m)%scale /= 0.0) .and. (segment%tr_input(m)%scale /= 1.0)) &
+            rescale = scale / segment%tr_input(m)%scale
+          segment%tr_input(m)%value = rescale * segment%tr_input(m)%value
         endif
-      enddo
-    endif
+        segment%tr_input(m)%scale = scale
+      endif
+    enddo
   endif
 
   if (segment%tr_Reg%locked) call MOM_error(FATAL, &
@@ -5537,7 +5579,6 @@ subroutine register_obgc_segments(GV, OBC, tr_Reg, param_file, tr_name)
     call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, tr_name)
     resrv_lfac_in  = 1.0
     resrv_lfac_out = 1.0
-    if (.not. associated(segment%tr_input)) cycle
     do m=1,segment%n_tr_inputs
       if (lowercase(segment%tr_input(m)%name) == lowercase(tr_name)) then
         resrv_lfac_in  = segment%tr_input(m)%resrv_lfac_in
@@ -6993,8 +7034,6 @@ subroutine rotate_OBC_segment_config(segment_in, G_in, segment, G, turns)
   segment%Th_InvLscale_in = segment_in%Th_InvLscale_in
   segment%Th_InvLscale_out = segment_in%Th_InvLscale_out
 
-  ! This needs to be set
-  segment%num_fields = segment_in%num_fields
   segment%n_tr_inputs = segment_in%n_tr_inputs
 end subroutine rotate_OBC_segment_config
 
