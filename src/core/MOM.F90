@@ -3137,8 +3137,7 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
 
     ! This needs the number of tracers and to have called any code that sets whether
     ! reservoirs are used.
-    call open_boundary_register_restarts(HI, GV, US, CS%OBC, CS%tracer_Reg, &
-                          param_file, restart_CSp, use_temperature)
+    call open_boundary_register_restarts(HI, GV, US, CS%OBC, CS%tracer_Reg, restart_CSp)
 
     ! This call allocates the arrays on the segments for open boundary data, but it must occur
     ! after any calls to call_tracer_register_obc_segments.

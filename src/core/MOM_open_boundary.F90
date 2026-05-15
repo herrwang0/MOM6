@@ -2286,91 +2286,6 @@ subroutine parse_segment_data_str(segment_str, idx, var, value, filename, fieldn
 987 call MOM_error(FATAL,'Error while parsing segment data specification! '//trim(segment_str))
 end subroutine parse_segment_data_str
 
-!> Parse all the OBC_SEGMENT_%%%_DATA strings again
-!! to see which need tracer reservoirs (all pes need to know).
-subroutine parse_for_tracer_reservoirs(OBC, PF, use_temperature)
-  type(ocean_OBC_type), target, intent(inout) :: OBC !< Open boundary control structure
-  type(param_file_type),  intent(in) :: PF  !< Parameter file handle
-  logical,                intent(in) :: use_temperature !< If true, T and S are used
-
-  ! Local variables
-  integer :: n      ! The segment number used to read in input data
-  integer :: n_seg  ! The internal segment number
-  integer :: m, num_fields  ! Used to loop over the fields on a segment
-  integer :: na
-  character(len=1024) :: segstr
-  character(len=256) :: filename
-  character(len=20)  :: segname, suffix
-  character(len=32)  :: fieldname
-  real               :: value  ! A value that is parsed from the segment data string [various units]
-  character(len=32), dimension(MAX_MANIFEST_FIELDS) :: fields  ! segment field names
-  type(OBC_segment_type), pointer :: segment => NULL() ! pointer to segment type list
-
-  do n=1,OBC%number_of_segments
-    n_seg = n ; if (OBC%reverse_segment_order) n_seg = OBC%number_of_segments + 1 - n
-    segment => OBC%segment(n_seg)
-    write(segname, "('OBC_SEGMENT_',i3.3,'_DATA')") n
-    write(suffix, "('_segment_',i3.3)") n
-    ! Clear out any old values
-    segstr = ''
-    call get_param(PF, mdl, segname, segstr)
-    if (segstr == '') cycle
-
-    call parse_segment_manifest_str(trim(segstr), num_fields, fields)
-    if (num_fields == 0) cycle
-
-    ! At this point, just search for TEMP and SALT as tracers 1 and 2.
-    do m=1,num_fields
-      call parse_segment_data_str(trim(segstr), m, trim(fields(m)), value, filename, fieldname)
-      if (trim(filename) /= 'none') then
-        if (fields(m) == 'TEMP') then
-          if (segment%is_E_or_W_2) then
-            OBC%tracer_x_reservoirs_used(1) = .true.
-          else
-            OBC%tracer_y_reservoirs_used(1) = .true.
-          endif
-        endif
-        if (fields(m) == 'SALT') then
-          if (segment%is_E_or_W_2) then
-            OBC%tracer_x_reservoirs_used(2) = .true.
-          else
-            OBC%tracer_y_reservoirs_used(2) = .true.
-          endif
-        endif
-      endif
-    enddo
-    ! Alternately, set first two to true if use_temperature is true
-    if (use_temperature) then
-      if (segment%is_E_or_W_2) then
-        OBC%tracer_x_reservoirs_used(1) = .true.
-        OBC%tracer_x_reservoirs_used(2) = .true.
-      else
-        OBC%tracer_y_reservoirs_used(1) = .true.
-        OBC%tracer_y_reservoirs_used(2) = .true.
-      endif
-    endif
-    !Add reservoirs for external/obgc tracers
-    !There is a diconnect in the above logic between tracer index and reservoir index.
-    !It arbitarily assigns reservoir indexes 1&2 to tracers T&S,
-    !So we need to start from reservoir index for non-native tracers from 3, hence na=2 below.
-    !num_fields is the number of vars in segstr (6 of them now,   U,V,SSH,TEMP,SALT,dye)
-    !but OBC%tracer_x_reservoirs_used is allocated to size Reg%ntr, which is the total number of tracers
-    na = 2 ! Number of native MOM6 tracers (T&S) with reservoirs
-    do m=1,OBC%num_obgc_tracers
-       !This logic assumes all external tarcers need a reservoir
-       !The segments for tracers are not initialized yet (that happens later in initialize_segment_data())
-       !so we cannot query to determine if this tracer needs a reservoir.
-      if (segment%is_E_or_W_2) then
-        OBC%tracer_x_reservoirs_used(m+na) = .true.
-      else
-        OBC%tracer_y_reservoirs_used(m+na) = .true.
-      endif
-    enddo
-  enddo
-
-  return
-
-end subroutine parse_for_tracer_reservoirs
 
 !> Do any necessary halo updates on OBC-related fields.
 subroutine open_boundary_halo_update(G, OBC)
@@ -6022,19 +5937,18 @@ subroutine flood_fill2(G, color, cin, cout, cland)
 end subroutine flood_fill2
 
 !> Register OBC segment data for restarts
-subroutine open_boundary_register_restarts(HI, GV, US, OBC, Reg, param_file, restart_CS, &
-                                           use_temperature)
+subroutine open_boundary_register_restarts(HI, GV, US, OBC, Reg, restart_CS)
   type(hor_index_type),    intent(in) :: HI !< Horizontal indices
   type(verticalGrid_type), pointer    :: GV !< Container for vertical grid information
   type(unit_scale_type),   intent(in) :: US  !< A dimensional unit scaling type
   type(ocean_OBC_type),    pointer    :: OBC !< OBC data structure, data intent(inout)
   type(tracer_registry_type), pointer :: Reg !< pointer to tracer registry
-  type(param_file_type),   intent(in) :: param_file !< Parameter file handle
   type(MOM_restart_CS),    intent(inout) :: restart_CS !< MOM restart control structure
-  logical,                 intent(in) :: use_temperature !< If true, T and S are used
+
   ! Local variables
+  type(OBC_segment_type), pointer :: segment => NULL() !< Pointer to an OBC segment
   type(vardesc) :: vd(2)
-  integer       :: m
+  integer       :: m, n
   character(len=100) :: mesg, var_name
 
   if (.not. associated(OBC)) &
@@ -6116,7 +6030,24 @@ subroutine open_boundary_register_restarts(HI, GV, US, OBC, Reg, param_file, res
     OBC%ntr = Reg%ntr
     allocate(OBC%tracer_x_reservoirs_used(Reg%ntr), source=.false.)
     allocate(OBC%tracer_y_reservoirs_used(Reg%ntr), source=.false.)
-    call parse_for_tracer_reservoirs(OBC, param_file, use_temperature)
+    ! Determine which tracer reservoir arrays are needed using the already-initialized
+    ! per-segment tracer registries, which are populated before this routine is called.
+    do n=1, OBC%number_of_segments
+      segment => OBC%segment(n)
+      if (.not. (segment%on_pe .and. associated(segment%tr_Reg))) cycle
+      do m=1, segment%tr_Reg%ntseg
+        if (segment%is_E_or_W) then
+          OBC%tracer_x_reservoirs_used(m) = .true.
+        else
+          OBC%tracer_y_reservoirs_used(m) = .true.
+        endif
+      enddo
+    enddo
+    ! Communicate across PEs so all PEs agree on allocation (segments exist only on some PEs).
+    do m=1, OBC%ntr
+      OBC%tracer_x_reservoirs_used(m) = any_across_PEs(OBC%tracer_x_reservoirs_used(m))
+      OBC%tracer_y_reservoirs_used(m) = any_across_PEs(OBC%tracer_y_reservoirs_used(m))
+    enddo
   else
     ! This would be coming from user code such as DOME.
     if (OBC%ntr /= Reg%ntr) then
