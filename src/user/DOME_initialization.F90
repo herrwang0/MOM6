@@ -20,6 +20,7 @@ use MOM_unit_scaling, only : unit_scale_type
 use MOM_variables, only : thermo_var_ptrs
 use MOM_verticalGrid, only : verticalGrid_type
 use MOM_EOS, only : calculate_density, calculate_density_derivs
+use DOME_tracer, only : NTR_DOME => ntr
 
 implicit none ; private
 
@@ -349,14 +350,12 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                             ! but this could be 1000 [m km-1]
   character(len=32)  :: name ! The name of a tracer field.
   character(len=40)  :: mdl = "DOME_set_OBC_data" ! This subroutine's name.
-  integer :: i, j, k, itt, is, ie, js, je, isd, ied, jsd, jed, m, nz, ntherm, ntr_id
-  integer :: IsdB, IedB, JsdB, JedB
+  integer :: i, j, k, itt, isd, ied, m, nz, ntr_id, nt
+  integer :: JsdB, JedB
   type(OBC_segment_type), pointer :: segment => NULL()
-  type(tracer_type), pointer      :: tr_ptr => NULL()
+  type(tracer_type),      pointer :: tr_ptr => NULL()
 
-  is = G%isc ; ie = G%iec ; js = G%jsc ; je = G%jec ; nz = GV%ke
-  isd = G%isd ; ied = G%ied ; jsd = G%jsd ; jed = G%jed
-  IsdB = G%IsdB ; IedB = G%IedB ; JsdB = G%JsdB ; JedB = G%JedB
+  nz = GV%ke
 
   if (G%grid_unit_to_L <= 0.) call MOM_error(FATAL, "DOME_initialization: "//&
           "DOME_initialize_topography is only set to work with Cartesian axis units.")
@@ -397,7 +396,7 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                  units="degC", default=25.0, scale=US%degC_to_C)
   endif
 
-  if (.not.associated(OBC)) return
+  if (.not. associated(OBC)) return
 
   if (GV%Boussinesq) then
     g_prime_tot = (GV%g_Earth / GV%Rho0) * Rlay_range
@@ -414,19 +413,18 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   ! I_Def_Rad = G%grid_unit_to_L / Def_Rad
 
   if (OBC%number_of_segments /= 1) then
-    call MOM_error(WARNING, 'Error in DOME OBC segment setup', .true.)
-    return   !!! Need a better error message here
+    write(name, '(i0)') OBC%number_of_segments
+    call MOM_error(FATAL, "DOME_set_OBC_data: DOME requires exactly 1 OBC segment, but "// &
+        "OBC%number_of_segments = "//trim(name)//". Check OBC_NUMBER_OF_SEGMENTS.")
   endif
 
   segment => OBC%segment(1)
   if (.not. segment%on_pe) return
+  isd = segment%HI%isd ; ied = segment%HI%ied
+  JsdB = segment%HI%JsdB ; JedB = segment%HI%JedB
 
-  ! Set up space for the OBCs to use for all the tracers.
-  ntherm = 0
-  if (associated(tv%S)) ntherm = ntherm + 1
-  if (associated(tv%T)) ntherm = ntherm + 1
-  allocate(segment%field(ntherm+tr_Reg%ntr))
 
+  ! Set dynamics data
   do k=1,nz
     rst = -1.0
     if (k>1) rst = -1.0 + (real(k-1)-0.5)/real(nz-1)
@@ -444,9 +442,6 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                                         (2.0 - Ri_trans))
     if (k == nz)  tr_k = tr_k + tr_0 * (2.0/(Ri_trans*(2.0+Ri_trans))) * &
                                        log((2.0+Ri_trans)/(2.0-Ri_trans))
-    ! New way
-    isd = segment%HI%isd ; ied = segment%HI%ied
-    JsdB = segment%HI%JsdB ; JedB = segment%HI%JedB
     do J=JsdB,JedB ; do i=isd,ied
       ! Here lon_im1 estimates G%geoLonBu(I-1,J), which may not have been set if
       ! the symmetric memory mode is not being used.
@@ -457,6 +452,10 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
     enddo ; enddo
   enddo
 
+  ! Set tracer reservoir data
+  !   The inflows use only the tracer concentrations that are set below, because DOME defaults
+  ! OBC_TRACER_RESERVOIR_LENGTH_SCALE_IN and _OUT to a negative (infinite) length scale, for
+  ! which the reservoirs are never updated.
   !   The inflow values of temperature and salinity also need to be set here if
   ! these variables are used.  The following code is just a naive example.
   if (associated(tv%S)) then
@@ -480,35 +479,44 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
       do k=1,nz ; T0(k) = T0(k) + (GV%Rlay(k)-rho_guess(k)) / drho_dT(k) ; enddo
     enddo
 
-    ! Temperature is tracer 1 for the OBCs.
-    allocate(segment%field(1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
-    do k=1,nz ; do J=JsdB,JedB ; do i=isd,ied
-      ! With the revised OBC code, buffer_src uses the same rescaled units as for tracers.
-      segment%field(1)%buffer_src(i,j,k) = T0(k)
-    enddo ; enddo ; enddo
+    ! T0 is computed analytically; register and fill %t/%tres directly.
     name = 'temp'
     call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
     call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, scale=US%degC_to_C)
+    nt = segment%tr_Reg%ntseg
+    do k=1,nz ; do J=JsdB,JedB ; do i=isd,ied
+      segment%tr_Reg%Tr(nt)%t(i,J,k) = T0(k)
+      segment%tr_Reg%Tr(nt)%tres(i,J,k) = T0(k)
+    enddo ; enddo ; enddo
+    segment%tr_Reg%Tr(nt)%is_initialized = .true.
   endif
 
-  ! Set up dye tracers
-  ! First dye - only one with OBC values
-  ! This field(ntherm+1) requires tr_D1 to be the first tracer after temperature and salinity.
-  allocate(segment%field(ntherm+1)%buffer_src(segment%HI%isd:segment%HI%ied,segment%HI%JsdB:segment%HI%JedB,nz))
-  do k=1,nz ; do j=segment%HI%jsd,segment%HI%jed ; do i=segment%HI%isd,segment%HI%ied
-    if (k < nz/2) then ; segment%field(ntherm+1)%buffer_src(i,j,k) = 0.0
-    else ; segment%field(ntherm+1)%buffer_src(i,j,k) = 1.0 ; endif
-  enddo ; enddo ; enddo
+  ! Dye tr_D1 has an analytical step-profile inflow; register and fill %t/%tres directly.
   name = 'tr_D1'
   call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
-  call register_segment_tracer(tr_ptr, ntr_id, PF, GV, OBC%segment(1))
+  call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment)
+  nt = segment%tr_Reg%ntseg
+  do k=1,nz
+    if (k < nz/2) then
+      do J=JsdB,JedB ; do i=isd,ied
+        segment%tr_Reg%Tr(nt)%t(i,J,k) = 0.0
+        segment%tr_Reg%Tr(nt)%tres(i,J,k) = 0.0
+      enddo ; enddo
+    else
+      do J=JsdB,JedB ; do i=isd,ied
+        segment%tr_Reg%Tr(nt)%t(i,J,k) = 1.0
+        segment%tr_Reg%Tr(nt)%tres(i,J,k) = 1.0
+      enddo ; enddo
+    endif
+  enddo
+  segment%tr_Reg%Tr(nt)%is_initialized = .true.
 
   ! All tracers but the first have 0 concentration in their inflows. As 0 is the
   ! default value for the inflow concentrations, the following calls are unnecessary.
-  do m=2,tr_Reg%ntr
+  do m=2,NTR_DOME
     write(name,'("tr_D",I0)') m
     call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
-    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, OBC%segment(1), OBC_scalar=0.0)
+    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, OBC_scalar=0.0)
   enddo
 
 end subroutine DOME_set_OBC_data
