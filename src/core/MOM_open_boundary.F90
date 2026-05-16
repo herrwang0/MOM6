@@ -479,6 +479,10 @@ type, public :: ocean_OBC_type
                                 !! run from the interior tracer concentrations regardless of
                                 !! properties that may be explicitly specified for the reservoir
                                 !! concentrations.
+  logical :: bgc_reservoir_init_bug !< If true, set the OBC BGC tracer reservoirs at the startup of
+                                !! a new run from the interior tracer concentrations regardless of
+                                !! properties that may be explicitly specified for the reservoir
+                                !! concentrations.
   logical :: ts_needed_bug      !< If true, recover a bug that temperature and salinity can be ignored
                                 !! even if they are registered tracers in the rest of the model.
 end type ocean_OBC_type
@@ -755,6 +759,13 @@ subroutine open_boundary_config(G, US, param_file, OBC)
                  "If true, set the OBC tracer reservoirs at the startup of a new run from the "//&
                  "interior tracer concentrations regardless of properties that may be explicitly "//&
                  "specified for the reservoir concentrations.", default=enable_bugs, do_not_log=.true.)
+  OBC%bgc_reservoir_init_bug = .true. ! Needs to be True to recover OBC_RESERVOIR_INIT_BUG answer
+  if (.not. OBC%reservoir_init_bug) &
+    call get_param(param_file, mdl, "OBC_BGC_RESERVOIR_INIT_BUG", OBC%bgc_reservoir_init_bug, &
+                   "If true, set the OBC BGCtracer reservoirs at the startup of a new run from "//&
+                   "interior tracer concentrations regardless of properties that may be explicitly "//&
+                   "specified for the reservoir concentrations.  This flag has the same effect of "//&
+                   "OBC_RESERVOIR_INIT_BUG but for BGC tracers.", default=.true.)
   call get_param(param_file, mdl, "OBC_TEMP_SALT_NEEDED_BUG", OBC%ts_needed_bug, &
                  "If true, recover a bug that OBC temperature and salinity can be ignored "//&
                  "even if they are registered tracers in the rest of the model.", default=.true.)
@@ -4941,7 +4952,7 @@ subroutine initialize_OBC_tracer_reservoirs(GV, OBC)
     ! If the tracer reservoir has not yet been initialized, then set to external value.
     do m=NUM_PHYS_FIELDS-1, segment%num_fields ! F_T = NUM_PHYS_FIELDS-1 and F_S = NUM_PHYS_FIELDS
       if ((.not. allocated(segment%field(m)%buffer_dst)) .or. &
-          (segment%field(m)%bgc_tracer .and. (.not. OBC%update_OBC_seg_data))) cycle
+          (segment%field(m)%bgc_tracer .and. OBC%bgc_reservoir_init_bug)) cycle
       nt = segment%field(m)%tr_index
       if (.not. segment%tr_Reg%Tr(nt)%is_initialized) then ! T/S may be initialized by fill_temp_salt_segments
         do k=1,nz ; do j=js_seg,je_seg ; do i=is_seg,ie_seg
@@ -5438,6 +5449,8 @@ subroutine fill_obgc_segments(G, GV, OBC, tr_ptr, tr_name)
   real :: I_scale  ! A factor that unscales the internal units of a tracer, like [ppt S-1 ~> 1] for salinity
 
   if (.not. associated(OBC)) return
+  if (.not. OBC%bgc_reservoir_init_bug) return
+
   call pass_var(tr_ptr, G%Domain)
   nz = G%ke
   do n=1,OBC%number_of_segments
