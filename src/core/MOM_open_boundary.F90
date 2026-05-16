@@ -7052,12 +7052,15 @@ subroutine write_OBC_info(OBC, G, GV, US)
 end subroutine write_OBC_info
 
 !> Write checksums and perhaps some or all of the values of all the allocated arrays on the OBC segments.
-subroutine chksum_OBC_segments(OBC, G, GV, US, nk)
-  type(ocean_OBC_type),    intent(in) :: OBC   !< An open boundary condition control structure
-  type(ocean_grid_type),   intent(in) :: G     !< Rotated grid metric
-  type(verticalGrid_type), intent(in) :: GV    !< Vertical grid
-  type(unit_scale_type),   intent(in) :: US    !< Unit scaling
-  integer,                 intent(in) :: nk    !< The number of layers to print
+subroutine chksum_OBC_segments(OBC, G, GV, US, nk, mesg, do_dynamics, do_tracers)
+  type(ocean_OBC_type),    intent(in) :: OBC          !< An open boundary condition control structure
+  type(ocean_grid_type),   intent(in) :: G            !< Rotated grid metric
+  type(verticalGrid_type), intent(in) :: GV           !< Vertical grid
+  type(unit_scale_type),   intent(in) :: US           !< Unit scaling
+  integer,                 intent(in) :: nk           !< The number of layers to print
+  character(len=*), optional, intent(in) :: mesg      !< A label prefix for all output lines
+  logical,          optional, intent(in) :: do_dynamics !< If true, checksum dynamics arrays (default .true.)
+  logical,          optional, intent(in) :: do_tracers  !< If true, checksum tracer %t and %tres (default .false.)
 
   ! Local variables
   integer :: n          ! The segment number reported in output
@@ -7066,25 +7069,38 @@ subroutine chksum_OBC_segments(OBC, G, GV, US, nk)
   do n=1,OBC%number_of_segments
     n_seg = n ; if (OBC%reverse_segment_order) n_seg = OBC%number_of_segments + 1 - n
 
-    call chksum_OBC_segment_data(OBC%segment(n_seg), GV, US, nk, n)
+    call chksum_OBC_segment_data(OBC%segment(n_seg), GV, US, nk, n, mesg=mesg, &
+                                 do_dynamics=do_dynamics, do_tracers=do_tracers)
   enddo
 
 end subroutine chksum_OBC_segments
 
 
 !> Write checksums and perhaps some or all of the values of all the allocated arrays on a single OBC segment.
-subroutine chksum_OBC_segment_data(segment, GV, US, nk, nseg_out)
-  type(OBC_segment_type),  intent(in) :: segment !< Segment type to checksum
-  type(verticalGrid_type), intent(in) :: GV    !< Vertical grid
-  type(unit_scale_type),   intent(in) :: US    !< Unit scaling
-  integer,                 intent(in) :: nk    !< The number of layers to print
-  integer,                 intent(in) :: nseg_out !< The segment number reported in output
+subroutine chksum_OBC_segment_data(segment, GV, US, nk, nseg_out, mesg, do_dynamics, do_tracers)
+  type(OBC_segment_type),  intent(in) :: segment      !< Segment type to checksum
+  type(verticalGrid_type), intent(in) :: GV           !< Vertical grid
+  type(unit_scale_type),   intent(in) :: US           !< Unit scaling
+  integer,                 intent(in) :: nk           !< The number of layers to print
+  integer,                 intent(in) :: nseg_out     !< The segment number reported in output
+  character(len=*), optional, intent(in) :: mesg      !< A label prefix for all output lines
+  logical,          optional, intent(in) :: do_dynamics !< If true, checksum dynamics arrays (default .true.)
+  logical,          optional, intent(in) :: do_tracers  !< If true, checksum tracer %t and %tres (default .false.)
 
   ! Local variables
-  real :: norm ! A sign change used when rotating a normal component [nondim]
-  real :: tang ! A sign change used when rotating a tangential component [nondim]
+  real :: norm     ! A sign change used when rotating a normal component [nondim]
+  real :: tang     ! A sign change used when rotating a tangential component [nondim]
+  real :: I_scale  ! Inverse tracer scale factor [tr_units conc-1 ~> 1]
   character(len=8) :: sn, segno
-  integer :: dir        ! This indicates the internal logical orientation of a segment
+  character(len=72) :: pfx  ! Label prefix for output lines
+  logical :: do_dyn  ! Local copy of do_dynamics
+  logical :: do_tr   ! Local copy of do_tracers
+  integer :: dir     ! This indicates the internal logical orientation of a segment
+  integer :: m       ! Tracer index
+
+    do_dyn = .true.  ; if (present(do_dynamics)) do_dyn = do_dynamics
+    do_tr  = .false. ; if (present(do_tracers))  do_tr  = do_tracers
+    pfx = '' ; if (present(mesg)) pfx = trim(mesg)//' '
 
     dir = segment%direction
 
@@ -7103,55 +7119,84 @@ subroutine chksum_OBC_segment_data(segment, GV, US, nk, nseg_out)
       norm = -1.0 ; tang = 1.0
     endif
 
-    if (allocated(segment%Htot)) call write_2d_array_vals("Htot"//trim(sn), segment%Htot, dir, nk, unscale=GV%H_to_mks)
-    if (allocated(segment%dZtot)) call write_2d_array_vals("dZtot"//trim(sn), segment%dZtot, dir, nk, unscale=US%Z_to_m)
-    if (allocated(segment%SSH)) call write_2d_array_vals("SSH"//trim(sn), segment%SSH, dir, nk, unscale=US%Z_to_m)
-    if (allocated(segment%normal_vel)) &
-      call write_3d_array_vals("normal_vel"//trim(sn), segment%normal_vel, dir, nk, unscale=norm*US%L_T_to_m_s)
-    if (allocated(segment%normal_vel_bt)) &
-      call write_2d_array_vals("normal_vel_bt"//trim(sn), segment%normal_vel_bt, dir, nk, unscale=norm*US%L_T_to_m_s)
-    if (allocated(segment%tangential_vel)) &
-      call write_3d_array_vals("tangential_vel"//trim(sn), segment%tangential_vel, dir, nk, unscale=tang*US%L_T_to_m_s)
-    if (allocated(segment%tangential_grad)) &
-      call write_3d_array_vals("tangential_grad"//trim(sn), segment%tangential_grad, dir, nk, &
-                    unscale=tang*norm*US%s_to_T)
-    if (allocated(segment%normal_trans)) &
-      call write_3d_array_vals("normal_trans"//trim(sn), segment%normal_trans, dir, nk, &
-                    unscale=norm*GV%H_to_mks*US%L_T_to_m_s*US%L_to_m)
-    if (allocated(segment%grad_normal)) &
-      call write_3d_array_vals("grad_normal"//trim(sn), segment%grad_normal, dir, nk, unscale=norm*tang*US%L_T_to_m_s)
-    if (allocated(segment%grad_tan)) &
-      call write_3d_array_vals("grad_tan"//trim(sn), segment%grad_tan, dir, nk, unscale=1.0*US%L_T_to_m_s)
-    if (allocated(segment%grad_gradient)) &
-      call write_3d_array_vals("grad_gradient"//trim(sn), segment%grad_gradient, dir, nk, unscale=norm*US%s_to_T)
+    if (do_dyn) then
+      if (allocated(segment%Htot)) &
+        call write_2d_array_vals(trim(pfx)//"Htot"//trim(sn), segment%Htot, dir, nk, unscale=GV%H_to_mks)
+      if (allocated(segment%dZtot)) &
+        call write_2d_array_vals(trim(pfx)//"dZtot"//trim(sn), segment%dZtot, dir, nk, unscale=US%Z_to_m)
+      if (allocated(segment%SSH)) &
+        call write_2d_array_vals(trim(pfx)//"SSH"//trim(sn), segment%SSH, dir, nk, unscale=US%Z_to_m)
+      if (allocated(segment%normal_vel)) &
+        call write_3d_array_vals(trim(pfx)//"normal_vel"//trim(sn), segment%normal_vel, dir, nk, &
+                      unscale=norm*US%L_T_to_m_s)
+      if (allocated(segment%normal_vel_bt)) &
+        call write_2d_array_vals(trim(pfx)//"normal_vel_bt"//trim(sn), segment%normal_vel_bt, dir, nk, &
+                      unscale=norm*US%L_T_to_m_s)
+      if (allocated(segment%tangential_vel)) &
+        call write_3d_array_vals(trim(pfx)//"tangential_vel"//trim(sn), segment%tangential_vel, dir, nk, &
+                      unscale=tang*US%L_T_to_m_s)
+      if (allocated(segment%tangential_grad)) &
+        call write_3d_array_vals(trim(pfx)//"tangential_grad"//trim(sn), segment%tangential_grad, dir, nk, &
+                      unscale=tang*norm*US%s_to_T)
+      if (allocated(segment%normal_trans)) &
+        call write_3d_array_vals(trim(pfx)//"normal_trans"//trim(sn), segment%normal_trans, dir, nk, &
+                      unscale=norm*GV%H_to_mks*US%L_T_to_m_s*US%L_to_m)
+      if (allocated(segment%grad_normal)) &
+        call write_3d_array_vals(trim(pfx)//"grad_normal"//trim(sn), segment%grad_normal, dir, nk, &
+                      unscale=norm*tang*US%L_T_to_m_s)
+      if (allocated(segment%grad_tan)) &
+        call write_3d_array_vals(trim(pfx)//"grad_tan"//trim(sn), segment%grad_tan, dir, nk, &
+                      unscale=1.0*US%L_T_to_m_s)
+      if (allocated(segment%grad_gradient)) &
+        call write_3d_array_vals(trim(pfx)//"grad_gradient"//trim(sn), segment%grad_gradient, dir, nk, &
+                      unscale=norm*US%s_to_T)
 
-    if (allocated(segment%rx_norm_rad)) &
-      call write_3d_array_vals("rxy_norm_rad"//trim(sn), segment%rx_norm_rad, dir, nk, unscale=1.0)
-    if (allocated(segment%ry_norm_rad)) &
-      call write_3d_array_vals("rxy_norm_rad"//trim(sn), segment%ry_norm_rad, dir, nk, unscale=1.0)
-    if (segment%is_E_or_W) then
-      if (allocated(segment%rx_norm_obl)) &
-        call write_3d_array_vals("rx_norm_obl"//trim(sn), segment%rx_norm_obl, dir, nk, unscale=US%L_T_to_m_s**2)
-      if (allocated(segment%ry_norm_obl)) &
-        call write_3d_array_vals("ry_norm_obl"//trim(sn), segment%ry_norm_obl, dir, nk, unscale=US%L_T_to_m_s**2)
-    else ! The x- and y- directions are swapped.
-      if (allocated(segment%ry_norm_obl)) &
-        call write_3d_array_vals("rx_norm_obl"//trim(sn), segment%ry_norm_obl, dir, nk, unscale=US%L_T_to_m_s**2)
-      if (allocated(segment%rx_norm_obl)) &
-        call write_3d_array_vals("ry_norm_obl"//trim(sn), segment%rx_norm_obl, dir, nk, unscale=US%L_T_to_m_s**2)
-    endif
+      if (allocated(segment%rx_norm_rad)) &
+        call write_3d_array_vals(trim(pfx)//"rxy_norm_rad"//trim(sn), segment%rx_norm_rad, dir, nk, unscale=1.0)
+      if (allocated(segment%ry_norm_rad)) &
+        call write_3d_array_vals(trim(pfx)//"rxy_norm_rad"//trim(sn), segment%ry_norm_rad, dir, nk, unscale=1.0)
+      if (segment%is_E_or_W) then
+        if (allocated(segment%rx_norm_obl)) &
+          call write_3d_array_vals(trim(pfx)//"rx_norm_obl"//trim(sn), segment%rx_norm_obl, dir, nk, &
+                        unscale=US%L_T_to_m_s**2)
+        if (allocated(segment%ry_norm_obl)) &
+          call write_3d_array_vals(trim(pfx)//"ry_norm_obl"//trim(sn), segment%ry_norm_obl, dir, nk, &
+                        unscale=US%L_T_to_m_s**2)
+      else ! The x- and y- directions are swapped.
+        if (allocated(segment%ry_norm_obl)) &
+          call write_3d_array_vals(trim(pfx)//"rx_norm_obl"//trim(sn), segment%ry_norm_obl, dir, nk, &
+                        unscale=US%L_T_to_m_s**2)
+        if (allocated(segment%rx_norm_obl)) &
+          call write_3d_array_vals(trim(pfx)//"ry_norm_obl"//trim(sn), segment%rx_norm_obl, dir, nk, &
+                        unscale=US%L_T_to_m_s**2)
+      endif
 
-    if (allocated(segment%cff_normal)) &
-      call write_3d_array_vals("cff_normal"//trim(sn), segment%cff_normal, dir, nk, unscale=US%L_T_to_m_s**2)
-    if (allocated(segment%nudged_normal_vel)) &
-      call write_3d_array_vals("nudged_normal_vel"//trim(sn), segment%nudged_normal_vel, dir, nk, &
-                    unscale=norm*US%L_T_to_m_s)
-    if (allocated(segment%nudged_tangential_vel)) &
-      call write_3d_array_vals("nudged_tangential_vel"//trim(sn), segment%nudged_tangential_vel, dir, nk, &
-                    unscale=tang*US%L_T_to_m_s)
-    if (allocated(segment%nudged_tangential_grad)) &
-      call write_3d_array_vals("nudged_tangential_grad"//trim(sn), segment%nudged_tangential_grad, dir, nk, &
-                    unscale=tang*norm*US%s_to_T)
+      if (allocated(segment%cff_normal)) &
+        call write_3d_array_vals(trim(pfx)//"cff_normal"//trim(sn), segment%cff_normal, dir, nk, &
+                      unscale=US%L_T_to_m_s**2)
+      if (allocated(segment%nudged_normal_vel)) &
+        call write_3d_array_vals(trim(pfx)//"nudged_normal_vel"//trim(sn), segment%nudged_normal_vel, dir, nk, &
+                      unscale=norm*US%L_T_to_m_s)
+      if (allocated(segment%nudged_tangential_vel)) &
+        call write_3d_array_vals(trim(pfx)//"nudged_tangential_vel"//trim(sn), segment%nudged_tangential_vel, &
+                      dir, nk, unscale=tang*US%L_T_to_m_s)
+      if (allocated(segment%nudged_tangential_grad)) &
+        call write_3d_array_vals(trim(pfx)//"nudged_tangential_grad"//trim(sn), segment%nudged_tangential_grad, &
+                      dir, nk, unscale=tang*norm*US%s_to_T)
+    endif ! do_dyn
+
+    if (do_tr .and. associated(segment%tr_Reg)) then
+      do m = 1, segment%tr_Reg%ntseg
+        I_scale = 1.0
+        if (segment%tr_Reg%Tr(m)%scale /= 0.0) I_scale = 1.0 / segment%tr_Reg%Tr(m)%scale
+        if (allocated(segment%tr_Reg%Tr(m)%t)) &
+          call write_3d_array_vals(trim(pfx)//trim(segment%tr_Reg%Tr(m)%name)//"_t"//trim(sn), &
+                        segment%tr_Reg%Tr(m)%t, dir, nk, unscale=I_scale)
+        if (allocated(segment%tr_Reg%Tr(m)%tres)) &
+          call write_3d_array_vals(trim(pfx)//trim(segment%tr_Reg%Tr(m)%name)//"_tres"//trim(sn), &
+                        segment%tr_Reg%Tr(m)%tres, dir, nk, unscale=I_scale)
+      enddo
+    endif ! do_tr
 
   contains
 
