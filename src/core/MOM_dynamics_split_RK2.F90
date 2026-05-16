@@ -806,9 +806,9 @@ subroutine step_MOM_dyn_split_RK2(u_inst, v_inst, h, tv, visc, Time_local, dt, f
     if (CS%debug) &
       call uvchksum("Pre OBC avg [uv]", u_av, v_av, G%HI, haloshift=1, symmetric=sym, unscale=US%L_T_to_m_s)
 
-    call chksum_OBC_segments(CS%OBC, G, GV, US, nk=3, mesg='Pre-rad', do_dynamics=.false., do_tracer=.true.)
+    call chksum_OBC_segments(CS%OBC, G, GV, US, nk=3, mesg='Pre-rad', do_dynamics=.false., do_tracers=.true.)
     call radiation_open_bdry_conds(CS%OBC, u_av, u_old_rad_OBC, v_av, v_old_rad_OBC, G, GV, US, dt_pred)
-    call chksum_OBC_segments(CS%OBC, G, GV, US, nk=3, mesg='Post-rad', do_dynamics=.false., do_tracer=.true.)
+    call chksum_OBC_segments(CS%OBC, G, GV, US, nk=3, mesg='Post-rad', do_dynamics=.false., do_tracers=.true.)
 
     if (CS%debug) &
       call uvchksum("Post OBC avg [uv]", u_av, v_av, G%HI, haloshift=1, symmetric=sym, unscale=US%L_T_to_m_s)
