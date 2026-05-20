@@ -1279,14 +1279,17 @@ subroutine step_MOM_dynamics(forces, p_surf_begin, p_surf_end, dt, dt_tr_adv, &
     call disable_averaging(CS%diag)
   endif
 
-  !OBC segment data update for some fields can be less frequent than others
+  ! For the buggy route, OBC BGC data update is orchestrated in dynamics steps. See
+  ! step_MOM_tracer_dyn for the correct path.
   if (associated(CS%OBC)) then
-    CS%OBC%update_OBC_seg_data = .false.
-    if (CS%dt_obc_seg_period == 0.0) CS%OBC%update_OBC_seg_data = .true.
-    if (CS%dt_obc_seg_period > 0.0) then
-      if (Time_local >= CS%dt_obc_seg_time) then
-        CS%OBC%update_OBC_seg_data = .true.
-        CS%dt_obc_seg_time = CS%dt_obc_seg_time + CS%dt_obc_seg_interval
+    if (CS%OBC%bgc_dyn_step_bug) then
+      CS%OBC%update_OBC_seg_data = .false.
+      if (CS%dt_obc_seg_period == 0.0) CS%OBC%update_OBC_seg_data = .true.
+      if (CS%dt_obc_seg_period > 0.0) then
+        if (Time_local >= CS%dt_obc_seg_time) then
+          CS%OBC%update_OBC_seg_data = .true.
+          CS%dt_obc_seg_time = CS%dt_obc_seg_time + CS%dt_obc_seg_interval
+        endif
       endif
     endif
   endif
@@ -1488,10 +1491,14 @@ subroutine step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
                             intent(in)    :: h      !< layer thicknesses after the transports [H ~> m or kg m-2]
   type(time_type),          intent(in)    :: Time_local !< The model time at the end
                                                     !! of the time step.
+
+  ! Local variables
   type(group_pass_type) :: pass_T_S
   integer :: halo_sz ! The size of a halo where data must be valid.
   logical :: x_first ! If true, advect tracers first in the x-direction, then y.
   logical :: showCallTree
+  logical :: update_OBC_BGC
+
   showCallTree = callTree_showQuery()
 
   if (CS%debug) then
@@ -1519,8 +1526,26 @@ subroutine step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
   endif
 
   if (associated(CS%OBC)) then
-    call read_OBC_tracer_data(G, GV, US, CS%OBC, Time_local)
-    call update_OBC_tracer_data(CS%OBC)
+    if (.not. CS%OBC%bgc_dyn_step_bug) then
+      CS%OBC%update_OBC_seg_data = .false.
+      if (CS%dt_obc_seg_period == 0.0) then
+        CS%OBC%update_OBC_seg_data = .true.
+      elseif (Time_local >= CS%dt_obc_seg_time) then
+        CS%OBC%update_OBC_seg_data = .true.
+        CS%dt_obc_seg_time = CS%dt_obc_seg_time + CS%dt_obc_seg_interval
+      endif
+    endif
+    update_OBC_BGC = (.not. CS%OBC%bgc_dyn_step_bug) .and. CS%OBC%update_OBC_seg_data
+    if (CS%OBC%bgc_dyn_step_bug) then
+      ! Only update temperature/salinity for the buggy route
+      call read_OBC_tracer_data(G, GV, US, CS%OBC, Time_local, include_bgc=.false.)
+      call update_OBC_tracer_data(CS%OBC, include_bgc=.false.)
+    else
+      ! All tracers are updated (if they are due). Remapping is done with the updated h.
+      call read_OBC_tracer_data(G, GV, US, CS%OBC, Time_local, h=h, tv=CS%tv, &
+                                include_bgc=update_OBC_BGC)
+      call update_OBC_tracer_data(CS%OBC, include_bgc=update_OBC_BGC)
+    endif
   endif
 
   if (CS%alternate_first_direction) then
@@ -2882,9 +2907,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   call MOM_initialize_fixed(dG_in, US, OBC_in, param_file)
 
   call get_param(param_file, "MOM", "DT_OBC_SEG_UPDATE_OBGC", CS%dt_obc_seg_period, &
-                 "The time between OBC segment data updates for OBGC tracers.  This must be an "//&
-                 "integer multiple of DT and DT_THERM.  The default is set to DT.", units="s", &
-                 default=US%T_to_s*CS%dt, scale=US%s_to_T, do_not_log=.not.associated(OBC_in))
+                 "The time between OBC segment data updates for OBGC tracers. When "//&
+                 "OBC_BGC_DYN_STEP_BUG=False, the time interval value smaller than "//&
+                 "DT_TRACER_ADVECT is treated as DT_TRACER_ADVECT.  The default is set to DT.", &
+                 units="s", default=US%T_to_s*CS%dt, scale=US%s_to_T, do_not_log=.not.associated(OBC_in))
 
   ! Copy the grid metrics and bathymetry to the ocean_grid_type
   call copy_dyngrid_to_MOM_grid(dG_in, G_in, US)
@@ -3585,7 +3611,15 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   !Set OBC segment data update period
   if (associated(CS%OBC) .and. CS%dt_obc_seg_period > 0.0) then
     CS%dt_obc_seg_interval = real_to_time(CS%dt_obc_seg_period, unscale=US%T_to_s)
-    CS%dt_obc_seg_time = Time + CS%dt_obc_seg_interval
+    if (CS%OBC%bgc_dyn_step_bug) then
+      CS%dt_obc_seg_time = Time + CS%dt_obc_seg_interval
+    elseif (CS%dt_obc_seg_period < CS%dt_tr_adv) then
+      ! Period shorter than one tracer step; normalize to update-every-tracer-step.
+      CS%dt_obc_seg_period = 0.0
+    else
+      CS%dt_obc_seg_time = Time_init + CS%dt_obc_seg_interval * &
+                           ((Time - Time_init) / CS%dt_obc_seg_interval + 1)
+    endif
   endif
 
   call callTree_waypoint("dynamics initialized (initialize_MOM)")

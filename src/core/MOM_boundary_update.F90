@@ -179,9 +179,17 @@ subroutine update_OBC_data(OBC, G, GV, US, tv, h, CS, Time)
   if (.not. OBC%user_BCs_set_globally) then
     if (OBC%any_needs_IO_for_data) &
       call read_OBC_dynamics_data(G, GV, US, OBC, tv, h, Time)
-    if ((.not.CS%value_update_bug) .or. &
+    if ((.not. CS%value_update_bug) .or. &
         (OBC%any_needs_IO_for_data .or. OBC%add_tide_constituents)) &
       call update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
+    ! This is the bug path for BGC tracers read/updated. For the correct path, see step_MOM_tracer_dyn
+    if (OBC%bgc_dyn_step_bug) then
+      if (OBC%any_needs_IO_for_data) &
+        call read_OBC_tracer_data(G, GV, US, OBC, Time, &
+                                  include_temp_salt=.false., include_bgc=OBC%update_OBC_seg_data)
+      call update_OBC_tracer_data(OBC, &
+                                  include_temp_salt=.false., include_bgc=OBC%update_OBC_seg_data)
+    endif
   endif
 
   if (CS%debug_OBCs) call chksum_OBC_segments(OBC, G, GV, US, CS%nk_OBC_debug)
