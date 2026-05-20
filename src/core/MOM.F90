@@ -125,7 +125,7 @@ use MOM_open_boundary,         only : open_boundary_setup_vert, initialize_segme
 use MOM_open_boundary,         only : update_OBC_dynamics_data, update_OBC_tracer_data
 use MOM_open_boundary,         only : rotate_OBC_config
 use MOM_open_boundary,         only : open_boundary_halo_update, write_OBC_info, chksum_OBC_segments
-use MOM_open_boundary,         only : segment_thickness_reservoir_init
+use MOM_open_boundary,         only : segment_thickness_reservoir_init, chksum_OBC_segments
 use MOM_porous_barriers,       only : porous_widths_layer, porous_widths_interface, porous_barriers_init
 use MOM_porous_barriers,       only : porous_barrier_CS
 use MOM_set_visc,              only : set_viscous_BBL, set_viscous_ML, set_visc_CS
@@ -977,6 +977,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       endif
 
       if (do_advection) then ! Do advective transport and lateral tracer mixing.
+        call chksum_OBC_segments(CS%OBC, G, GV, US, nk=3, mesg='Pre-tracer_dyn', do_dynamics=.false., do_tracers=.true.)
         call step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
         if (CS%diabatic_first .and. abs(CS%t_dyn_rel_thermo) > 1e-6*dt) call MOM_error(FATAL, &
                 "step_MOM: Mismatch between the dynamics and diabatic times "//&
