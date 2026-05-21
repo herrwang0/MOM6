@@ -977,7 +977,7 @@ subroutine step_MOM(forces_in, fluxes_in, sfc_state, Time_start, time_int_in, CS
       endif
 
       if (do_advection) then ! Do advective transport and lateral tracer mixing.
-        call chksum_OBC_segments(CS%OBC, G, GV, US, nk=3, mesg='Pre-tracer_dyn', do_dynamics=.false., do_tracers=.true.)
+        !call chksum_OBC_segments(CS%OBC, G, GV, US, nk=0, mesg='Pre-tracer_dyn', do_dynamics=.false., do_tracers=.true.)
         call step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
         if (CS%diabatic_first .and. abs(CS%t_dyn_rel_thermo) > 1e-6*dt) call MOM_error(FATAL, &
                 "step_MOM: Mismatch between the dynamics and diabatic times "//&
@@ -3336,7 +3336,14 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     endif
   endif
 
-  ! Allocate any derived densities or other equation of state derived fields.
+ !  do i = 1,CS%OBC%ntr
+ !     write(geom_file, *) "tr", i
+ !     call uvchksum('Post state_init'//trim(geom_file), CS%OBC%tres_x(:,:,:,i), CS%OBC%tres_y(:,:,:,i), HI)
+ !   enddo
+
+  !   call chksum_OBC_segments(CS%OBC, G, GV, US, nk=1, mesg='Post-state_in', do_dynamics=.false., do_tracers=.true.)
+
+    ! Allocate any derived densities or other equation of state derived fields.
   if (.not.(GV%Boussinesq .or. GV%semi_Boussinesq)) then
     allocate(CS%tv%SpV_avg(isd:ied,jsd:jed,nz), source=0.0)
     CS%tv%valid_SpV_halo = -1  ! This array does not yet have any valid data.
@@ -3344,6 +3351,13 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
 
   if (associated(CS%OBC)) then
     call MOM_initialize_OBCs(CS%h, CS%tv, CS%OBC, Time, G, GV, US, param_file, restart_CSp, CS%tracer_Reg)
+
+       do i = 1,CS%OBC%ntr
+      write(geom_file, *) "tr", i
+      call uvchksum('Post state_init'//trim(geom_file), CS%OBC%tres_x(:,:,:,i), CS%OBC%tres_y(:,:,:,i), HI)
+    enddo
+
+     call chksum_OBC_segments(CS%OBC, G, GV, US, nk=0, mesg='Post-state_in', do_dynamics=.false., do_tracers=.true.)
 
     if (use_temperature) then
       call pass_var(CS%tv%T, G%Domain, complete=.false.)
@@ -3733,7 +3747,10 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     call setup_OBC_thickness_reservoirs(G, GV, CS%OBC, restart_CSp)
     call open_boundary_halo_update(G, CS%OBC)
   endif
-
+    do i = 1,CS%OBC%ntr
+      write(geom_file, *) "tr", i
+      call uvchksum('Post setup_OBC'//trim(geom_file), CS%OBC%tres_x(:,:,:,i), CS%OBC%tres_y(:,:,:,i), HI)
+    enddo    
   call register_obsolete_diagnostics(param_file, CS%diag)
 
   if (use_frazil) then
