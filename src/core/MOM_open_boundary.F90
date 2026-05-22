@@ -480,6 +480,9 @@ type, public :: ocean_OBC_type
                                 !! concentrations.
   logical :: ts_needed_bug      !< If true, recover a bug that temperature and salinity can be ignored
                                 !! even if they are registered tracers in the rest of the model.
+  logical :: lock_bgc_obc_period !< If true, BGC OBC segment data is updated every tracer advection
+                                 !! step, ignoring DT_OBC_SEG_UPDATE_OBGC. A preview of a future
+                                 !! state in which DT_OBC_SEG_UPDATE_OBGC is deprecated.
 end type ocean_OBC_type
 
 !> Control structure for open boundaries that read from files.
@@ -757,6 +760,10 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   call get_param(param_file, mdl, "OBC_TEMP_SALT_NEEDED_BUG", OBC%ts_needed_bug, &
                  "If true, recover a bug that OBC temperature and salinity can be ignored "//&
                  "even if they are registered tracers in the rest of the model.", default=.true.)
+  call get_param(param_file, mdl, "LOCK_BGC_OBC_TO_DT_TRACER", OBC%lock_bgc_obc_period, &
+                 "If true, BGC OBC segment data is updated every tracer advection step, "//&
+                 "ignoring DT_OBC_SEG_UPDATE_OBGC. This is a preview of a future state in "//&
+                 "which DT_OBC_SEG_UPDATE_OBGC is deprecated.", default=.false.)
   call get_param(param_file, mdl, "REENTRANT_X", reentrant_x, default=.true.)
   call get_param(param_file, mdl, "REENTRANT_Y", reentrant_y, default=.false.)
 
@@ -6802,6 +6809,7 @@ subroutine rotate_OBC_config(OBC_in, G_in, OBC, G, turns)
   OBC%remappingScheme = OBC_in%remappingScheme
   OBC%exterior_OBC_bug = OBC_in%exterior_OBC_bug
   OBC%hor_index_bug = OBC_in%hor_index_bug
+  OBC%lock_bgc_obc_period = OBC_in%lock_bgc_obc_period
   OBC%n_tide_constituents = OBC_in%n_tide_constituents
   OBC%add_tide_constituents = OBC_in%add_tide_constituents
 

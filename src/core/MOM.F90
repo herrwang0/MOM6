@@ -1518,6 +1518,16 @@ subroutine step_MOM_tracer_dyn(CS, G, GV, US, h, Time_local)
                        CS%tv, CS%t_dyn_rel_adv, CS%use_uh_particles)
   endif
 
+  if (associated(CS%OBC)) then
+    if (CS%OBC%lock_bgc_obc_period) then
+      ! If DT_OBC_SEG_UPDATE_OBGC is disabled by the lock, all tracers are read and updated at the
+      ! beginning of every tracer step.  Note that the thickness used here to remap source data is
+      ! not recalculated, therefore not updated by the last dynamic step, to be consistent with
+      ! old answer.
+      call read_OBC_tracer_data(G, GV, US, CS%OBC, Time_local)
+      call update_OBC_tracer_data(CS%OBC)
+    endif
+  endif
 
   if (CS%alternate_first_direction) then
     ! This calculation of the value of G%first_direction from the start of the accumulation of
@@ -3585,6 +3595,11 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
             CS%ntrunc, cont_stencil=CS%cont_stencil, dyn_h_stencil=CS%dyn_h_stencil)
   endif
   CS%dyn_h_stencil = max(2, CS%dyn_h_stencil)
+
+  ! When LOCK_BGC_OBC_TO_DT_TRACER is true, BGC OBC updates happen every tracer advection step.
+  if (associated(CS%OBC)) then
+    if(CS%OBC%lock_bgc_obc_period) CS%dt_obc_seg_period = 0.0
+  endif
 
   ! Set the next time to update OBC segment BGC tracer data
   if (associated(CS%OBC) .and. (CS%dt_obc_seg_period > 0.0)) then
