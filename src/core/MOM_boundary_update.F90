@@ -184,9 +184,7 @@ subroutine update_OBC_data(OBC, G, GV, US, tv, h, CS, Time)
         (OBC%any_needs_IO_for_data .or. OBC%add_tide_constituents)) &
       call update_OBC_dynamics_data(G, GV, US, OBC, h, Time)
     ! Update tracers: this is the old incorrect path. See step_MOM_tracer_dyn for the locked path.
-    if (.not. OBC%lock_bgc_obc_period) then
-      ! If DT_OBC_SEG_UPDATE_OBGC is used (not recommended), BGC has its own update schedule, which
-      ! may happen in between tracer steps.
+    if ((.not. OBC%lock_bgc_obc_period) .and. OBC%tracer_dz_bug) then
       if (OBC%any_needs_IO_for_data) &
         call read_OBC_tracer_data(G, GV, US, OBC, Time, include_bgc=OBC%update_OBC_seg_data)
       call update_OBC_tracer_data(OBC, include_bgc=OBC%update_OBC_seg_data)
