@@ -4613,9 +4613,9 @@ subroutine read_OBC_field_data(G, GV, US, OBC, segment, m, Time)
 
     if ((.not.segment%field(m)%on_face) .and. (.not.OBC%hor_index_bug)) then
       ! This point is at the OBC vorticity point nodes, rather than the OBC velocity point faces.
-      call adjustSegmentEtaToFitBathymetry(G, GV, US, segment, m, at_node=.true.)
+      call adjustSegmentEtaToFitBathymetry(G, GV, US, segment, segment%field(m), at_node=.true.)
     else
-      call adjustSegmentEtaToFitBathymetry(G, GV, US, segment, m, at_node=.false.)
+      call adjustSegmentEtaToFitBathymetry(G, GV, US, segment, segment%field(m), at_node=.false.)
     endif
 
     if (segment%is_E_or_W) then
@@ -6609,13 +6609,13 @@ end subroutine remap_OBC_fields
 !! is dilated (expanded) to fill the void.
 !!   @remark{There is a (hard-wired) "tolerance" parameter such that the
 !! criteria for adjustment must equal or exceed 10cm.}
-subroutine adjustSegmentEtaToFitBathymetry(G, GV, US, segment, fld, at_node)
-  type(ocean_grid_type),   intent(in)    :: G   !< The ocean's grid structure
-  type(verticalGrid_type), intent(in)    :: GV  !< The ocean's vertical grid structure
-  type(unit_scale_type),   intent(in)    :: US  !< A dimensional unit scaling type
-  type(OBC_segment_type),  intent(inout) :: segment !< OBC segment
-  integer,                 intent(in)    :: fld  !< field index to adjust thickness
-  logical,                 intent(in)    :: at_node !< True this point is at the OBC nodes rather than the faces
+subroutine adjustSegmentEtaToFitBathymetry(G, GV, US, segment, field, at_node)
+  type(ocean_grid_type),        intent(in)    :: G   !< The ocean's grid structure
+  type(verticalGrid_type),      intent(in)    :: GV  !< The ocean's vertical grid structure
+  type(unit_scale_type),        intent(in)    :: US  !< A dimensional unit scaling type
+  type(OBC_segment_type),       intent(in)    :: segment !< OBC segment
+  type(OBC_segment_data_type),  intent(inout) :: field   !< OBC segment field to adjust thickness
+  logical,                      intent(in)    :: at_node !< True this point is at the OBC nodes rather than the faces
 
   integer :: i, j, k, is, ie, js, je, nz, contractions, dilations
   real, allocatable, dimension(:,:,:) :: eta ! Segment source data interface heights [Z ~> m]
@@ -6626,7 +6626,7 @@ subroutine adjustSegmentEtaToFitBathymetry(G, GV, US, segment, fld, at_node)
 
   hTolerance = 0.1*US%m_to_Z
 
-  nz = size(segment%field(fld)%dz_src,3)
+  nz = size(field%dz_src,3)
 
   if (segment%is_E_or_W) then
     is = segment%HI%IsdB ; ie = segment%HI%IedB
@@ -6682,7 +6682,7 @@ subroutine adjustSegmentEtaToFitBathymetry(G, GV, US, segment, fld, at_node)
     ! an issue to be addressed, for instance if we are placing open boundaries
     ! under ice shelf cavities.
     do k=2,nz+1
-      eta(i,j,k) = eta(i,j,k-1) - segment%field(fld)%dz_src(i,j,k-1)
+      eta(i,j,k) = eta(i,j,k-1) - field%dz_src(i,j,k-1)
     enddo
     ! The normal slope at the boundary is zero by a
     ! previous call to open_boundary_impose_normal_slope
@@ -6698,9 +6698,9 @@ subroutine adjustSegmentEtaToFitBathymetry(G, GV, US, segment, fld, at_node)
       ! the thinnest possible (or negative).
       if (eta(i,j,K) < (eta(i,j,K+1) + GV%Angstrom_Z)) then
         eta(i,j,K) = eta(i,j,K+1) + GV%Angstrom_Z
-        segment%field(fld)%dz_src(i,j,k) = GV%Angstrom_Z
+        field%dz_src(i,j,k) = GV%Angstrom_Z
       else
-        segment%field(fld)%dz_src(i,j,k) = (eta(i,j,K) - eta(i,j,K+1))
+        field%dz_src(i,j,k) = (eta(i,j,K) - eta(i,j,K+1))
       endif
     enddo
 
@@ -6710,14 +6710,14 @@ subroutine adjustSegmentEtaToFitBathymetry(G, GV, US, segment, fld, at_node)
       dilations = dilations + 1
       ! expand bottom-most cell only
       eta(i,j,nz+1) = -dz_tot(i,j)
-      segment%field(fld)%dz_src(i,j,nz) = eta(i,j,nz) - eta(i,j,nz+1)
+      field%dz_src(i,j,nz) = eta(i,j,nz) - eta(i,j,nz+1)
       ! if (eta(i,j,1) <= eta(i,j,nz+1)) then
-      !   do k=1,nz ; segment%field(fld)%dz_src(i,j,k) = (eta(i,j,1) + G%bathyT(i,j)) / real(nz) ; enddo
+      !   do k=1,nz ; field%dz_src(i,j,k) = (eta(i,j,1) + G%bathyT(i,j)) / real(nz) ; enddo
       ! else
       !   dilate = (eta(i,j,1) + G%bathyT(i,j)) / (eta(i,j,1) - eta(i,j,nz+1))
-      !   do k=1,nz ; segment%field(fld)%dz_src(i,j,k) = segment%field(fld)%dz_src(i,j,k) * dilate ; enddo
+      !   do k=1,nz ; field%dz_src(i,j,k) = field%dz_src(i,j,k) * dilate ; enddo
       ! endif
-      !do k=nz,2,-1 ; eta(i,j,K) = eta(i,j,K+1) + segment%field(fld)%dz_src(i,j,k) ; enddo
+      !do k=nz,2,-1 ; eta(i,j,K) = eta(i,j,K+1) + field%dz_src(i,j,k) ; enddo
     endif
   enddo ; enddo
 
