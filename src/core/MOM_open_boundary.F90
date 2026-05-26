@@ -4439,7 +4439,10 @@ subroutine read_OBC_field_data(G, GV, US, OBC, segment, field, Time)
   real :: dz_stack(SZK_(GV)) ! Distance between the interfaces at corner points [Z ~> m]
   integer :: ni_seg, nj_seg  ! number of src gridpoints along the segments
   integer :: ni_buf, nj_buf  ! Number of filled values in tmp_buffer
+  integer :: ni_tmp, nj_tmp  ! Horizontal size of tmp_buffer [count]
   integer :: i_seg_offset, j_seg_offset, bug_offset
+  integer :: i_src_lo, i_src_hi, i_src_step ! Source i-index triplet into tmp_buffer
+  integer :: j_src_lo, j_src_hi, j_src_step ! Source j-index triplet into tmp_buffer
   real :: net_dz_src  ! Total vertical extent of the incoming flow in the source field [Z ~> m]
   real :: net_dz_int  ! Total vertical extent of the incoming flow in the model [Z ~> m]
   real :: scl_fac     ! A scaling factor to compensate for differences in total thicknesses [nondim]
@@ -4461,20 +4464,37 @@ subroutine read_OBC_field_data(G, GV, US, OBC, segment, field, Time)
 
   turns = modulo(G%HI%turns, 4)
 
-  ! read source data interpolated to the current model time
-  ! NOTE: buffer is sized for vertex points, but may be used for faces
-  if (segment%is_E_or_W) then
-    if (OBC%brushcutter_mode) then
-      allocate(tmp_buffer(1,nj_seg*2-1,field%nk_src))  ! segment data is currently on supergrid
+  ! Compute tmp_buffer dimensions and source index triplets for unpacking.
+  ! NOTE: buffer is sized for vertex points, but may be used for faces.
+  ! In brushcutter mode the input is on the supergrid (stride-2 extraction);
+  ! otherwise it is on the native grid (stride-1).  The vorticity node values
+  ! are at odd positions and face values at even positions in the supergrid buffer.
+  bug_offset = 0 ; if (OBC%brushcutter_mode .and. OBC%hor_index_bug) bug_offset = -1
+  if (OBC%brushcutter_mode) then
+    ni_tmp = ni_seg*2-1 ; nj_tmp = nj_seg*2-1
+    j_src_step = 2 ; i_src_step = 2
+    if (field%on_face) then
+      j_src_lo = 2*(JsdB+j_seg_offset+1)+bug_offset ; j_src_hi = 2*(JedB+j_seg_offset)
+      i_src_lo = 2*(IsdB+i_seg_offset+1)+bug_offset ; i_src_hi = 2*(IedB+i_seg_offset)
     else
-      allocate(tmp_buffer(1,nj_seg,field%nk_src))  ! segment data is currently on native grid
+      j_src_lo = 2*(JsdB+j_seg_offset+1)-1 ; j_src_hi = 2*(JedB+j_seg_offset)+1
+      i_src_lo = 2*(IsdB+i_seg_offset+1)-1 ; i_src_hi = 2*(IedB+i_seg_offset)+1
     endif
   else
-    if (OBC%brushcutter_mode) then
-      allocate(tmp_buffer(ni_seg*2-1,1,field%nk_src))  ! segment data is currently on supergrid
+    ni_tmp = ni_seg ; nj_tmp = nj_seg
+    j_src_step = 1 ; i_src_step = 1
+    j_src_lo = JsdB+j_seg_offset+1 ; i_src_lo = IsdB+i_seg_offset+1
+    if (field%on_face) then
+      j_src_hi = JedB+j_seg_offset   ; i_src_hi = IedB+i_seg_offset
     else
-      allocate(tmp_buffer(ni_seg,1,field%nk_src))  ! segment data is currently on native grid
+      j_src_hi = JedB+j_seg_offset+1 ; i_src_hi = IedB+i_seg_offset+1
     endif
+  endif
+
+  if (segment%is_E_or_W) then
+    allocate(tmp_buffer(1, nj_tmp, field%nk_src))
+  else
+    allocate(tmp_buffer(ni_tmp, 1, field%nk_src))
   endif
 
   ! TODO: Since we conditionally rotate a subset of tmp_buffer_in after
@@ -4519,54 +4539,14 @@ subroutine read_OBC_field_data(G, GV, US, OBC, segment, field, Time)
     endif
   endif
 
-  if (OBC%brushcutter_mode) then
-    ! In brushcutter mode, the input data includes vales at both the vorticity point nodes and
-    ! the velocity point faces of the OBC segments.  The vorticity node values are at the odd
-    ! positions in tmp_buffer, while the faces are at the even points.  The bug that is being
-    ! corrected here is the use of the odd indexed points for both the corners and the faces.
-    bug_offset = 0 ; if (OBC%hor_index_bug) bug_offset = -1
-    if (segment%is_E_or_W) then
-      if (.not.field%on_face) then
-        field%buffer_src(IsdB,:,:) = &
-            tmp_buffer(1, 2*(JsdB+j_seg_offset+1)-1:2*(JedB+j_seg_offset)+1:2, :)
-      else
-        field%buffer_src(IsdB,:,:) = &
-            tmp_buffer(1, 2*(JsdB+j_seg_offset+1)+bug_offset:2*(JedB+j_seg_offset):2, :)
-      endif
-    else
-      if (.not.field%on_face) then
-        field%buffer_src(:,JsdB,:) = &
-            tmp_buffer(2*(IsdB+i_seg_offset+1)-1:2*(IedB+i_seg_offset)+1:2, 1, :)
-      else
-        field%buffer_src(:,JsdB,:) = &
-            tmp_buffer(2*(IsdB+i_seg_offset+1)+bug_offset:2*(IedB+i_seg_offset):2, 1, :)
-      endif
-    endif
-  else  ! Not brushcutter_mode.
-    if (segment%is_E_or_W) then
-      if (.not.field%on_face) then
-        field%buffer_src(IsdB,:,:) = &
-              tmp_buffer(1,JsdB+j_seg_offset+1:JedB+j_seg_offset+1,:)
-      else
-        field%buffer_src(IsdB,:,:) = &
-              tmp_buffer(1,JsdB+j_seg_offset+1:JedB+j_seg_offset,:)
-      endif
-    else
-      if (.not.field%on_face) then
-        field%buffer_src(:,JsdB,:) = &
-              tmp_buffer(IsdB+i_seg_offset+1:IedB+i_seg_offset+1,1,:)
-      else
-        field%buffer_src(:,JsdB,:) = &
-              tmp_buffer(IsdB+i_seg_offset+1:IedB+i_seg_offset,1,:)
-      endif
-    endif
+  if (segment%is_E_or_W) then
+    field%buffer_src(IsdB,:,:) = tmp_buffer(1, j_src_lo:j_src_hi:j_src_step, :)
+  else
+    field%buffer_src(:,JsdB,:) = tmp_buffer(i_src_lo:i_src_hi:i_src_step, 1, :)
   endif
 
-  ! no dz for tidal variables
-  if (field%nk_src <= 1) then  ! This is 2-d data with no remapping.
-    field%buffer_dst(:,:,1) = field%buffer_src(:,:,1)
-  elseif (field_is_tidal(field%name)) then
-    ! The 3rd axis for tidal variables is the tidal constituent, so there is no remapping.
+  ! No remapping for either tidal variables or 2D data (e.g., SSH)
+  if ((field%nk_src <= 1) .or. field_is_tidal(field%name)) then
     field%buffer_dst(:,:,:) = field%buffer_src(:,:,:)
   else
     ! Read in 3-d data that may need to be remapped onto the new grid
@@ -4586,43 +4566,10 @@ subroutine read_OBC_field_data(G, GV, US, OBC, segment, field, Time)
       endif
     endif ! End of rotation
 
-    if (OBC%brushcutter_mode) then
-      bug_offset = 0 ; if (OBC%hor_index_bug) bug_offset = -1
-      if (segment%is_E_or_W) then
-        if (.not.field%on_face) then
-          field%dz_src(IsdB,:,:) = &
-              tmp_buffer(1, 2*(JsdB+j_seg_offset+1)-1:2*(JedB+j_seg_offset)+1:2, :)
-        else
-          field%dz_src(IsdB,:,:) = &
-              tmp_buffer(1, 2*(JsdB+j_seg_offset+1)+bug_offset:2*(JedB+j_seg_offset):2, :)
-        endif
-      else
-        if (.not.field%on_face) then
-          field%dz_src(:,JsdB,:) = &
-              tmp_buffer(2*(IsdB+i_seg_offset+1)-1:2*(IedB+i_seg_offset)+1:2, 1, :)
-        else
-          field%dz_src(:,JsdB,:) = &
-              tmp_buffer(2*(IsdB+i_seg_offset+1)+bug_offset:2*(IedB+i_seg_offset):2, 1, :)
-        endif
-      endif
-    else  ! Not brushcutter_mode.
-      if (segment%is_E_or_W) then
-        if (.not.field%on_face) then
-          field%dz_src(IsdB,:,:) = &
-              tmp_buffer(1,JsdB+j_seg_offset+1:JedB+j_seg_offset+1,:)
-        else
-          field%dz_src(IsdB,:,:) = &
-              tmp_buffer(1,JsdB+j_seg_offset+1:JedB+j_seg_offset,:)
-        endif
-      else
-        if (.not.field%on_face) then
-          field%dz_src(:,JsdB,:) = &
-              tmp_buffer(IsdB+i_seg_offset+1:IedB+i_seg_offset+1,1,:)
-        else
-          field%dz_src(:,JsdB,:) = &
-              tmp_buffer(IsdB+i_seg_offset+1:IedB+i_seg_offset,1,:)
-        endif
-      endif
+    if (segment%is_E_or_W) then
+      field%dz_src(IsdB,:,:) = tmp_buffer(1, j_src_lo:j_src_hi:j_src_step, :)
+    else
+      field%dz_src(:,JsdB,:) = tmp_buffer(i_src_lo:i_src_hi:i_src_step, 1, :)
     endif
 
     if ((.not.field%on_face) .and. (.not.OBC%hor_index_bug)) then
