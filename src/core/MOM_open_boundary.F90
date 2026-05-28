@@ -483,6 +483,11 @@ type, public :: ocean_OBC_type
                                 !! a new run from the interior tracer concentrations regardless of
                                 !! properties that may be explicitly specified for the reservoir
                                 !! concentrations.
+  logical :: user_tracer_register_bug !< If true, recover a bug where temperature, salinity, and BGC
+                                !! tracers are automatically registered on OBC segments even for
+                                !! user-configured OBCs (user_BCs_set_globally is true). When false,
+                                !! user-configured OBCs must call register_segment_tracer for their
+                                !! own tracers.
   logical :: ts_needed_bug      !< If true, recover a bug that temperature and salinity can be ignored
                                 !! even if they are registered tracers in the rest of the model.
 end type ocean_OBC_type
@@ -766,6 +771,12 @@ subroutine open_boundary_config(G, US, param_file, OBC)
                    "interior tracer concentrations regardless of properties that may be explicitly "//&
                    "specified for the reservoir concentrations.  This flag has the same effect of "//&
                    "OBC_RESERVOIR_INIT_BUG but for BGC tracers.", default=.true.)
+  call get_param(param_file, mdl, "OBC_USER_TRACER_REGISTER_BUG", OBC%user_tracer_register_bug, &
+                 "If true, recover a bug where temperature, salinity, and BGC tracers are "//&
+                 "automatically registered on OBC segments even for user cases "//&
+                 "(OBC_USER_CONFIG is not 'none' or 'dyed_obcs').  When false, "//&
+                 "user OBCs must call register_segment_tracer for their own tracers.", &
+                 default=.true., do_not_log=(.not. OBC%user_BCs_set_globally))
   call get_param(param_file, mdl, "OBC_TEMP_SALT_NEEDED_BUG", OBC%ts_needed_bug, &
                  "If true, recover a bug that OBC temperature and salinity can be ignored "//&
                  "even if they are registered tracers in the rest of the model.", default=.true.)
@@ -5347,6 +5358,7 @@ subroutine register_temp_salt_segments(GV, US, OBC, tr_Reg, param_file)
   type(tracer_type), pointer :: tr_ptr => NULL()
 
   if (.not. associated(OBC)) return
+  if (OBC%user_BCs_set_globally .and. (.not. OBC%user_tracer_register_bug)) return
 
   do n=1,OBC%number_of_segments
     segment => OBC%segment(n)

@@ -390,8 +390,11 @@ subroutine call_tracer_register_obc_segments(GV, param_file, CS, tr_Reg, OBC)
                                                          !! and what open boundary
                                                          !! conditions are used.
 
+  if (.not. associated(OBC)) return
+  if (OBC%user_BCs_set_globally .and. (.not. OBC%user_tracer_register_bug)) return
+
   if (CS%use_MOM_generic_tracer) &
-      call register_MOM_generic_tracer_segments(CS%MOM_generic_tracer_CSp, GV, OBC, tr_Reg, param_file)
+    call register_MOM_generic_tracer_segments(CS%MOM_generic_tracer_CSp, GV, OBC, tr_Reg, param_file)
 
 end subroutine call_tracer_register_obc_segments
 
