@@ -5221,6 +5221,14 @@ subroutine register_segment_tracer(tr_ptr, ntr_index, param_file, GV, segment, O
         &all the tracers being registered via register_segment_tracer.")') segment%tr_Reg%ntseg+1
     call MOM_error(FATAL,"MOM register_segment_tracer: "//mesg)
   endif
+
+  ! Check duplicate registrations
+  do m=1,segment%tr_Reg%ntseg
+    if (uppercase(segment%tr_Reg%Tr(m)%name) == uppercase(tr_ptr%name)) &
+      call MOM_error(FATAL, "register_segment_tracer: tracer "// &
+                            trim(tr_ptr%name)//" is already registered on this segment.")
+  enddo
+
   segment%tr_Reg%ntseg = segment%tr_Reg%ntseg + 1
   ntseg     = segment%tr_Reg%ntseg
 
