@@ -200,16 +200,21 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
   type(OBC_segment_type), pointer :: segment => NULL()
   integer :: is, ie, js, je, i, j, k, nz
   real, dimension(SZK_(GV)) :: trans, vel
+  real :: ssh
 
-  segment => OBC%segment(1)
-  if (.not. segment%on_pe) return
-  if (.not. segment%is_E_or_W) return
+  !segment => OBC%segment(1)
+  !if (.not. segment%on_pe) return
+  !if (.not. segment%is_E_or_W) return
 
   call get_param(param_file, '', "OBC_USER_TRANSPORT", trans, &
   "Transport.", default=0.0, units="m^3/s")
   call get_param(param_file, '', "OBC_USER_VELOCITY", vel, &
   "Velocity.", default=0.0, units="m/s")
+  call get_param(param_file, '', "OBC_USER_FLATHER_SSH", ssh, & 
+  "donwstream flather ssh.", default=0.0, units="m")
 
+  segment => OBC%segment(1)
+  if (segment%on_pe) then 
   is = segment%HI%isdB ; ie = segment%HI%iedB
   js = segment%HI%jsd ; je = segment%HI%jed
   nz = GV%ke
@@ -218,6 +223,13 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
     segment%normal_trans(I,j,k) = trans(k)
     segment%normal_vel(I,j,k) = vel(k)
   endif ; enddo ; enddo ; enddo
+  endif
+
+  segment => OBC%segment(2)
+  if (segment%on_pe) then
+  segment%SSH(:,:) = ssh
+  endif
+
   if (first_call) call write_user_log(param_file)
 
 end subroutine USER_set_OBC_data
