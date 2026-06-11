@@ -126,7 +126,7 @@ use MOM_open_boundary,         only : update_OBC_segment_data, rotate_OBC_config
 use MOM_open_boundary,         only : open_boundary_halo_update, write_OBC_info, chksum_OBC_segments
 use MOM_open_boundary,         only : segment_thickness_reservoir_init
 use MOM_open_boundary,         only : fill_temp_salt_segments, fill_thickness_segments
-use MOM_open_boundary,         only : setup_OBC_tracer_reservoirs, set_initialized_OBC_tracer_reservoirs
+use MOM_open_boundary,         only : setup_OBC_tracer_reservoirs
 use MOM_open_boundary,         only : open_boundary_test_extern_h
 use MOM_open_boundary,         only : copy_OBC_radiation_coefs
 use MOM_open_boundary,         only : copy_OBC_tracer_reservoirs, copy_OBC_thickness_reservoirs
