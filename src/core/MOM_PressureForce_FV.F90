@@ -65,6 +65,10 @@ type, public :: PressureForce_FV_CS ; private
   logical :: MassWghtInterpVanOnly !< If true, don't do mass weighting of T/S interpolation unless vanished
   logical :: reset_intxpa_flattest !< If true, use flattest interface rather than top for reset integral
                                    !! in cases where no best nonvanished interface
+  logical :: test_intxza_bottom_up !< If true, anchor the linear interpolation of the height anomaly
+                                   !! at the bottom interface and integrate upward, rather than
+                                   !! anchoring at the surface and integrating downward.  This is a
+                                   !! testing option that only affects the non-Boussinesq pressure force.
   real    :: h_nonvanished  !< A minimal layer thickness that indicates that a layer is thick enough
                             !! to usefully reestimate the pressure integral across the interface
                             !! below it [H ~> m or kg m-2]
@@ -546,6 +550,19 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
       endif
       inty_za(i,J,1) = 0.5*(za(i,j,1) + za(i,j+1,1)) + inty_za_cor(i,J)
     enddo ; enddo
+  elseif (CS%test_intxza_bottom_up) then
+    !   This testing option reverses the order of the integration: the linear interpolation of the
+    ! height anomaly is anchored at the bottom interface and the integral is built up upward.  The
+    ! bottom geopotentials then go linearly between the values at thickness points, while the surface
+    ! geopotentials are not linear at the sub-grid-scale.
+    !$OMP parallel do default(shared)
+    do j=js,je ; do I=Isq,Ieq
+      intx_za(I,j,nz+1) = 0.5*(za(i,j,nz+1) + za(i+1,j,nz+1))
+    enddo ; enddo
+    !$OMP parallel do default(shared)
+    do J=Jsq,Jeq ; do i=is,ie
+      inty_za(i,J,nz+1) = 0.5*(za(i,j,nz+1) + za(i,j+1,nz+1))
+    enddo ; enddo
   else
     !   This order of integrating upward and then downward again is necessary with
     ! a nonlinear equation of state, so that the surface geopotentials will go
@@ -562,18 +579,33 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     enddo ; enddo
   endif
 
-  do k=1,nz
-    !$OMP parallel do default(shared)
-    do j=js,je ; do I=Isq,Ieq
-      intx_za(I,j,K+1) = intx_za(I,j,K) - intx_dza(I,j,k)
-    enddo ; enddo
-  enddo
-  do k=1,nz
-    !$OMP parallel do default(shared)
-    do J=Jsq,Jeq ; do i=is,ie
-      inty_za(i,J,K+1) = inty_za(i,J,K) - inty_dza(i,J,k)
-    enddo ; enddo
-  enddo
+  if (CS%test_intxza_bottom_up) then
+    do k=nz,1,-1
+      !$OMP parallel do default(shared)
+      do j=js,je ; do I=Isq,Ieq
+        intx_za(I,j,K) = intx_za(I,j,K+1) + intx_dza(I,j,k)
+      enddo ; enddo
+    enddo
+    do k=nz,1,-1
+      !$OMP parallel do default(shared)
+      do J=Jsq,Jeq ; do i=is,ie
+        inty_za(i,J,K) = inty_za(i,J,K+1) + inty_dza(i,J,k)
+      enddo ; enddo
+    enddo
+  else
+    do k=1,nz
+      !$OMP parallel do default(shared)
+      do j=js,je ; do I=Isq,Ieq
+        intx_za(I,j,K+1) = intx_za(I,j,K) - intx_dza(I,j,k)
+      enddo ; enddo
+    enddo
+    do k=1,nz
+      !$OMP parallel do default(shared)
+      do J=Jsq,Jeq ; do i=is,ie
+        inty_za(i,J,K+1) = inty_za(i,J,K) - inty_dza(i,J,k)
+      enddo ; enddo
+    enddo
+  endif
 
   if (CS%debug) then
     call uvchksum("Prelim int[xy]_za", intx_za, inty_za, G%HI, haloshift=0, &
@@ -2164,6 +2196,13 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
     CS%reset_intxpa_integral = .false.
     CS%reset_intxpa_flattest = .false.
   endif
+  call get_param(param_file, mdl, "TEST_INTXZA_BOTTOM_UP", CS%test_intxza_bottom_up, &
+                 "If true, anchor the linear interpolation of the height anomaly at the bottom "//&
+                 "interface and integrate upward to find intx_za, rather than anchoring at the "//&
+                 "surface and integrating downward.  This is a testing option that only affects "//&
+                 "the non-Boussinesq pressure force and is ignored when CORRECTION_INTXPA or "//&
+                 "RESET_INTXPA_INTEGRAL is true.", default=.false.)
+  if (CS%correction_intxpa .or. CS%reset_intxpa_integral) CS%test_intxza_bottom_up = .false.
   call get_param(param_file, mdl, "RESET_INTXPA_H_NONVANISHED", CS%h_nonvanished, &
                  "A minimal layer thickness that indicates that a layer is thick enough to usefully "//&
                  "reestimate the pressure integral across the interface below.", &
