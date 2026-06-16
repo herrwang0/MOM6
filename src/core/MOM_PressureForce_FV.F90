@@ -11,6 +11,7 @@ use MOM_diag_mediator, only : safe_alloc_ptr, diag_ctrl, time_type
 use MOM_error_handler, only : MOM_error, FATAL, WARNING, is_root_pe
 use MOM_file_parser, only : get_param, log_param, log_version, param_file_type
 use MOM_grid, only : ocean_grid_type
+use MOM_string_functions, only : uppercase
 use MOM_PressureForce_Mont, only : set_pbce_Bouss, set_pbce_nonBouss
 use MOM_self_attr_load, only : calc_SAL, SAL_CS
 use MOM_tidal_forcing, only : calc_tidal_forcing, tidal_forcing_CS
@@ -108,6 +109,24 @@ type, public :: PressureForce_FV_CS ; private
   integer :: id_sal_v = -1 !< Diagnostic identifier
   integer :: id_tides_u = -1 !< Diagnostic identifier
   integer :: id_tides_v = -1 !< Diagnostic identifier
+  ! Diagnostics decomposing the one-layer isotherm pressure gradient force with a linear equation
+  ! of state, following the four terms of the writeup table "Comparison of one-layer isotherm
+  ! integrals" (reference surface, constant density, compressibility, and discretization residual).
+  logical :: calc_pgf_iso_terms = .false. !< If true, the equation of state is linear so the global
+                            !! surface density used by the one-layer isotherm PGF-term diagnostics is
+                            !! well defined and at least one of those diagnostics is requested.
+  real :: rho_s_iso         !< The global surface density rho_s = Rho_T0_S0 + dRho_dT*T_ref + dRho_dS*S_ref
+                            !! used by the one-layer isotherm PGF-term diagnostics [R ~> kg m-3]
+  real :: dRho_dp_iso       !< The linear-EOS compressibility dRho_dp (the inverse of the sound speed
+                            !! squared) used by the one-layer isotherm PGF-term diagnostics [T2 L-2 ~> s2 m-2]
+  integer :: id_pgf_refsurf_u = -1 !< Diagnostic identifier
+  integer :: id_pgf_refsurf_v = -1 !< Diagnostic identifier
+  integer :: id_pgf_cdens_u = -1 !< Diagnostic identifier
+  integer :: id_pgf_cdens_v = -1 !< Diagnostic identifier
+  integer :: id_pgf_compress_u = -1 !< Diagnostic identifier
+  integer :: id_pgf_compress_v = -1 !< Diagnostic identifier
+  integer :: id_pgf_discresid_u = -1 !< Diagnostic identifier
+  integer :: id_pgf_discresid_v = -1 !< Diagnostic identifier
   type(SAL_CS), pointer :: SAL_CSp => NULL() !< SAL control structure
   type(tidal_forcing_CS), pointer :: tides_CSp => NULL() !< Tides control structure
 end type PressureForce_FV_CS
@@ -263,7 +282,21 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
 
   !  real :: oneatm       ! 1 standard atmosphere of pressure in [R L2 T-2 ~> Pa]
   real, parameter :: C1_6 = 1.0/6.0  ! [nondim]
+  real, parameter :: C1_12 = 1.0/12.0  ! A rational constant [nondim]
   real, parameter :: C1_90 = 1.0/90.0  ! A rational constant [nondim]
+  ! These variables are used by the one-layer isotherm linear-EOS PGF-term diagnostics.
+  real :: dpl, dpr      ! The pressure thicknesses of a layer in the left and right columns [R L2 T-2 ~> Pa]
+  real :: phi_bl, phi_br ! The geopotential anomaly at the bottom of a layer in the left and right
+                        ! columns [L2 T-2 ~> m2 s-2]
+  real :: int_phib      ! The along-x or along-y integral of the bottom geopotential anomaly, taken
+                        ! from the model's intx_za/inty_za because phi_b is not linear in the
+                        ! horizontal (pressure, not geopotential, is the linear coordinate) [L2 T-2 ~> m2 s-2]
+  real :: alpha_s_iso   ! The global surface specific volume 1/rho_s for the isotherm diagnostics [R-1 ~> m3 kg-1]
+  real :: pi_iso        ! The linear EOS compressibility dRho_dp for the isotherm diagnostics [T2 L-2 ~> s2 m-2]
+  real, allocatable, dimension(:,:,:) :: PGF_iso_u ! A one-layer isotherm PGF-term diagnostic at
+                        ! u-velocity points [L T-2 ~> m s-2]
+  real, allocatable, dimension(:,:,:) :: PGF_iso_v ! A one-layer isotherm PGF-term diagnostic at
+                        ! v-velocity points [L T-2 ~> m s-2]
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer, dimension(2) :: EOSdom_u ! The i-computational domain for the equation of state at u-velocity points
@@ -876,6 +909,93 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     enddo ; enddo
   enddo
 
+  if (CS%calc_pgf_iso_terms) then
+    ! Decompose the one-layer isotherm pressure gradient force with a linear equation of state into
+    ! the four terms of the writeup table "Comparison of one-layer isotherm integrals", normalized to
+    ! an acceleration so they sum to PFu/PFv in that idealized limit.  The global surface density
+    ! rho_s (hence alpha_s) and the compressibility pi are constants set at initialization.
+    alpha_s_iso = 1.0 / CS%rho_s_iso ; pi_iso = CS%dRho_dp_iso
+
+    allocate(PGF_iso_u(G%IsdB:G%IedB, G%jsd:G%jed, nz), source=0.0)
+    allocate(PGF_iso_v(G%isd:G%ied, G%JsdB:G%JedB, nz), source=0.0)
+
+    ! Reference-surface (geometric bottom-geopotential) term, F(phi_b).
+    if ((CS%id_pgf_refsurf_u > 0) .or. (CS%id_pgf_refsurf_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
+          phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
+          phi_br = za(i+1,j,K+1) - alpha_ref*p(i+1,j,K+1)
+          int_phib = intx_za(I,j,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i+1,j,K+1)))
+          PGF_iso_u(I,j,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
+                             (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
+          phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
+          phi_br = za(i,j+1,K+1) - alpha_ref*p(i,j+1,K+1)
+          int_phib = inty_za(i,J,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i,j+1,K+1)))
+          PGF_iso_v(i,J,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
+                             (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_refsurf_u > 0) call post_data(CS%id_pgf_refsurf_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_refsurf_v > 0) call post_data(CS%id_pgf_refsurf_v, PGF_iso_v, CS%diag)
+    endif
+
+    ! Constant-density (Montgomery) term, F(alpha_s) in the isotherm limit.
+    if ((CS%id_pgf_cdens_u > 0) .or. (CS%id_pgf_cdens_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          PGF_iso_u(I,j,k) = (alpha_s_iso * (p(i,j,K+1) - p(i+1,j,K+1))) * G%IdxCu(I,j)
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          PGF_iso_v(i,J,k) = (alpha_s_iso * (p(i,j,K+1) - p(i,j+1,K+1))) * G%IdyCv(i,J)
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, PGF_iso_v, CS%diag)
+    endif
+
+    ! Compressibility term, F(pi) leading order.
+    if ((CS%id_pgf_compress_u > 0) .or. (CS%id_pgf_compress_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          PGF_iso_u(I,j,k) = (((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+            (p(i,j,K+1)*p(i,j,K+1) - p(i+1,j,K+1)*p(i+1,j,K+1))) * G%IdxCu(I,j)
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          PGF_iso_v(i,J,k) = (((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+            (p(i,j,K+1)*p(i,j,K+1) - p(i,j+1,K+1)*p(i,j+1,K+1))) * G%IdyCv(i,J)
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, PGF_iso_v, CS%diag)
+    endif
+
+    ! Discretization-residual term.
+    if ((CS%id_pgf_discresid_u > 0) .or. (CS%id_pgf_discresid_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
+          PGF_iso_u(I,j,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+                              ((dpr - dpl) * (p(i+1,j,K+1) - p(i,j,K+1))**2)) * &
+                             (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
+          PGF_iso_v(i,J,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+                              ((dpr - dpl) * (p(i,j+1,K+1) - p(i,j,K+1))**2)) * &
+                             (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_discresid_u > 0) call post_data(CS%id_pgf_discresid_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_discresid_v > 0) call post_data(CS%id_pgf_discresid_v, PGF_iso_v, CS%diag)
+    endif
+
+    deallocate(PGF_iso_u, PGF_iso_v)
+  endif
+
   if (CS%GFS_scale < 1.0) then
     ! Adjust the Montgomery potential to make this a reduced gravity model.
     if (use_EOS) then
@@ -1122,7 +1242,23 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
   real :: r5(5)         ! Densities at five quadrature points [R ~> kg m-3]
   real :: wt_R          ! A weighting factor [nondim]
   real, parameter :: C1_6 = 1.0/6.0    ! A rational constant [nondim]
+  real, parameter :: C1_12 = 1.0/12.0  ! A rational constant [nondim]
   real, parameter :: C1_90 = 1.0/90.0  ! A rational constant [nondim]
+  ! These variables are used by the one-layer isotherm linear-EOS PGF-term diagnostics.
+  real :: dphil, dphir  ! The geopotential thicknesses of a layer in the left and right columns [L2 T-2 ~> m2 s-2]
+  real :: phi_tl, phi_tr ! The geopotential at the top of a layer in the left and right
+                        ! columns [L2 T-2 ~> m2 s-2]
+  real :: pt_l, pt_r    ! The pressure at the top of a layer in the left and right columns [R L2 T-2 ~> Pa]
+  real :: int_pt        ! The along-x or along-y integral of the top-interface pressure, taken from the
+                        ! model's intx_pa/inty_pa rather than the average of the corners [R L2 T-2 ~> Pa]
+  real :: dphi_neglect  ! A geopotential thickness that is so small it is usually lost in roundoff and
+                        ! can be neglected [L2 T-2 ~> m2 s-2]
+  real :: rho0_iso      ! The Boussinesq reference density used by the isotherm diagnostics [R ~> kg m-3]
+  real :: pi_iso        ! The linear EOS compressibility dRho_dp for the isotherm diagnostics [T2 L-2 ~> s2 m-2]
+  real, allocatable, dimension(:,:,:) :: PGF_iso_u ! A one-layer isotherm PGF-term diagnostic at
+                        ! u-velocity points [L T-2 ~> m s-2]
+  real, allocatable, dimension(:,:,:) :: PGF_iso_v ! A one-layer isotherm PGF-term diagnostic at
+                        ! v-velocity points [L T-2 ~> m s-2]
   logical :: use_p_atm       ! If true, use the atmospheric pressure.
   logical :: use_ALE         ! If true, use an ALE pressure reconstruction.
   logical :: use_EOS         ! If true, density is calculated from T & S using an equation of state.
@@ -1844,6 +1980,96 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
                   ((h(i,j,k) + h(i,j+1,k)) + h_neglect))
   enddo ; enddo ; enddo
 
+  if (CS%calc_pgf_iso_terms) then
+    ! Decompose the one-layer isotherm pressure gradient force with a linear equation of state into
+    ! the four terms of the writeup table "Comparison of one-layer isotherm integrals", normalized to
+    ! an acceleration.  The global surface density rho_s, the Boussinesq reference density rho_0 and
+    ! the compressibility pi are constants set at initialization.
+    pi_iso = CS%dRho_dp_iso ; rho0_iso = GV%Rho0
+    dphi_neglect = GV%g_Earth * dz_neglect
+
+    allocate(PGF_iso_u(G%IsdB:G%IedB, G%jsd:G%jed, nz), source=0.0)
+    allocate(PGF_iso_v(G%isd:G%ied, G%JsdB:G%JedB, nz), source=0.0)
+
+    ! Reference-surface (surface-pressure) term, F(p_t); this vanishes when the top is an isobath.
+    if ((CS%id_pgf_refsurf_u > 0) .or. (CS%id_pgf_refsurf_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i+1,j,K) - e(i+1,j,K+1))
+          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
+          pt_l = pa(i,j,K) - rho_ref*phi_tl ; pt_r = pa(i+1,j,K) - rho_ref*phi_tr
+          int_pt = intx_pa(I,j,K) - rho_ref*(0.5*(phi_tl + phi_tr))
+          PGF_iso_u(I,j,k) = ((pt_l*dphil - pt_r*dphir) + ((dphir - dphil) * int_pt)) * &
+                             ((2.0*I_Rho0*G%IdxCu(I,j)) / ((dphil + dphir) + dphi_neglect))
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i,j+1,K) - e(i,j+1,K+1))
+          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
+          pt_l = pa(i,j,K) - rho_ref*phi_tl ; pt_r = pa(i,j+1,K) - rho_ref*phi_tr
+          int_pt = inty_pa(i,J,K) - rho_ref*(0.5*(phi_tl + phi_tr))
+          PGF_iso_v(i,J,k) = ((pt_l*dphil - pt_r*dphir) + ((dphir - dphil) * int_pt)) * &
+                             ((2.0*I_Rho0*G%IdyCv(i,J)) / ((dphil + dphir) + dphi_neglect))
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_refsurf_u > 0) call post_data(CS%id_pgf_refsurf_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_refsurf_v > 0) call post_data(CS%id_pgf_refsurf_v, PGF_iso_v, CS%diag)
+    endif
+
+    ! Constant-density (Montgomery) term, F(rho_s) in the isotherm limit.
+    if ((CS%id_pgf_cdens_u > 0) .or. (CS%id_pgf_cdens_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          PGF_iso_u(I,j,k) = (CS%rho_s_iso * (GV%g_Earth*(e(i,j,K) - e(i+1,j,K)))) * (I_Rho0 * G%IdxCu(I,j))
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          PGF_iso_v(i,J,k) = (CS%rho_s_iso * (GV%g_Earth*(e(i,j,K) - e(i,j+1,K)))) * (I_Rho0 * G%IdyCv(i,J))
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, PGF_iso_v, CS%diag)
+    endif
+
+    ! Compressibility term, F(pi).
+    if ((CS%id_pgf_compress_u > 0) .or. (CS%id_pgf_compress_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
+          PGF_iso_u(I,j,k) = (((-0.5*pi_iso) * rho0_iso) * (phi_tl*phi_tl - phi_tr*phi_tr)) * &
+                             (I_Rho0 * G%IdxCu(I,j))
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
+          PGF_iso_v(i,J,k) = (((-0.5*pi_iso) * rho0_iso) * (phi_tl*phi_tl - phi_tr*phi_tr)) * &
+                             (I_Rho0 * G%IdyCv(i,J))
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, PGF_iso_v, CS%diag)
+    endif
+
+    ! Discretization-residual term.
+    if ((CS%id_pgf_discresid_u > 0) .or. (CS%id_pgf_discresid_v > 0)) then
+      do k=1,nz
+        do j=js,je ; do I=Isq,Ieq
+          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i+1,j,K) - e(i+1,j,K+1))
+          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
+          PGF_iso_u(I,j,k) = (((C1_12*pi_iso) * rho0_iso) * ((dphir - dphil) * (phi_tr - phi_tl)**2)) * &
+                             ((2.0*I_Rho0*G%IdxCu(I,j)) / ((dphil + dphir) + dphi_neglect))
+        enddo ; enddo
+        do J=Jsq,Jeq ; do i=is,ie
+          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i,j+1,K) - e(i,j+1,K+1))
+          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
+          PGF_iso_v(i,J,k) = (((C1_12*pi_iso) * rho0_iso) * ((dphir - dphil) * (phi_tr - phi_tl)**2)) * &
+                             ((2.0*I_Rho0*G%IdyCv(i,J)) / ((dphil + dphir) + dphi_neglect))
+        enddo ; enddo
+      enddo
+      if (CS%id_pgf_discresid_u > 0) call post_data(CS%id_pgf_discresid_u, PGF_iso_u, CS%diag)
+      if (CS%id_pgf_discresid_v > 0) call post_data(CS%id_pgf_discresid_v, PGF_iso_v, CS%diag)
+    endif
+
+    deallocate(PGF_iso_u, PGF_iso_v)
+  endif
+
   ! Calculate SAL geopotential anomaly and add its gradient to pressure gradient force
   if (CS%calculate_SAL .and. CS%tides_answer_date>20230630 .and. CS%bq_sal_tides) then
     !$OMP parallel do default(shared)
@@ -2075,6 +2301,12 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
   character(len=40)  :: mdl  ! This module's name.
+  character(len=40)  :: eos_string ! The equation of state being used.
+  real :: Rho_T0_S0        ! The linear EOS density at T=0, S=0 and p=0 [kg m-3]
+  real :: dRho_dT          ! The partial derivative of density with temperature [kg m-3 degC-1]
+  real :: dRho_dS          ! The partial derivative of density with salinity [kg m-3 PSU-1]
+  real :: T_ref_iso        ! The reference temperature setting the isotherm surface density [degC]
+  real :: S_ref_iso        ! The reference salinity setting the isotherm surface density [ppt]
   logical :: use_ALE       ! If true, use the Vertical Lagrangian Remap algorithm
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB, nz
 
@@ -2278,6 +2510,47 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
         'The fractional mass weighting at u-point PGF calculations', 'nondim')
   CS%id_MassWt_v = register_diag_field('ocean_model', 'MassWt_v', diag%axesCvL, Time, &
         'The fractional mass weighting at v-point PGF calculations', 'nondim')
+
+  ! Diagnostics that decompose the one-layer isotherm pressure gradient force into the four terms of
+  ! the writeup table "Comparison of one-layer isotherm integrals".  They are only meaningful with a
+  ! linear equation of state, for which the global surface density rho_s (and hence alpha_s) is a
+  ! well-defined constant set by the reference temperature and salinity.
+  call get_param(param_file, "MOM", "EQN_OF_STATE", eos_string, default="WRIGHT", do_not_log=.true.)
+  if (use_EOS .and. (index(uppercase(eos_string), "LINEAR") > 0)) then
+    ! The global surface density rho_s and the compressibility pi (= dRho_dp) of the linear equation
+    ! of state are read directly from the parameters that set up that equation of state and the
+    ! reference temperature and salinity.  Densities are read in MKS and converted once, avoiding any
+    ! call to the equation of state.
+    call get_param(param_file, mdl, "RHO_T0_S0", Rho_T0_S0, &
+                 units="kg m-3", default=1000.0, do_not_log=.true.)
+    call get_param(param_file, mdl, "DRHO_DT", dRho_dT, units="kg m-3 degC-1", default=-0.2, do_not_log=.true.)
+    call get_param(param_file, mdl, "DRHO_DS", dRho_dS, units="kg m-3 PSU-1", default=0.8, do_not_log=.true.)
+    call get_param(param_file, mdl, "T_REF", T_ref_iso, units="degC", default=0.0, do_not_log=.true.)
+    call get_param(param_file, mdl, "S_REF", S_ref_iso, units="ppt", default=0.0, do_not_log=.true.)
+    CS%rho_s_iso = (Rho_T0_S0 + (dRho_dT*T_ref_iso + dRho_dS*S_ref_iso)) * US%kg_m3_to_R
+    call get_param(param_file, mdl, "DRHO_DP", CS%dRho_dp_iso, &
+                 units="s2 m-2", default=0.0, scale=US%L_T_to_m_s**2, do_not_log=.true.)
+    CS%id_pgf_refsurf_u = register_diag_field('ocean_model', 'pgf_refsurf_u', diag%axesCuL, Time, &
+        'Zonal one-layer isotherm PGF accel., reference-surface term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_pgf_refsurf_v = register_diag_field('ocean_model', 'pgf_refsurf_v', diag%axesCvL, Time, &
+        'Meridional one-layer isotherm PGF accel., reference-surface term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_pgf_cdens_u = register_diag_field('ocean_model', 'pgf_cdens_u', diag%axesCuL, Time, &
+        'Zonal one-layer isotherm PGF accel., constant-density term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_pgf_cdens_v = register_diag_field('ocean_model', 'pgf_cdens_v', diag%axesCvL, Time, &
+        'Meridional one-layer isotherm PGF accel., constant-density term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_pgf_compress_u = register_diag_field('ocean_model', 'pgf_compress_u', diag%axesCuL, Time, &
+        'Zonal one-layer isotherm PGF accel., compressibility term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_pgf_compress_v = register_diag_field('ocean_model', 'pgf_compress_v', diag%axesCvL, Time, &
+        'Meridional one-layer isotherm PGF accel., compressibility term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_pgf_discresid_u = register_diag_field('ocean_model', 'pgf_discresid_u', diag%axesCuL, Time, &
+        'Zonal one-layer isotherm PGF accel., discretization-residual term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%id_pgf_discresid_v = register_diag_field('ocean_model', 'pgf_discresid_v', diag%axesCvL, Time, &
+        'Meridional one-layer isotherm PGF accel., discretization-residual term', 'm s-2', conversion=US%L_T2_to_m_s2)
+    CS%calc_pgf_iso_terms = ((((CS%id_pgf_refsurf_u > 0) .or. (CS%id_pgf_refsurf_v > 0)) .or. &
+                              ((CS%id_pgf_cdens_u > 0) .or. (CS%id_pgf_cdens_v > 0))) .or. &
+                             (((CS%id_pgf_compress_u > 0) .or. (CS%id_pgf_compress_v > 0)) .or. &
+                              ((CS%id_pgf_discresid_u > 0) .or. (CS%id_pgf_discresid_v > 0))))
+  endif
 
   CS%GFS_scale = 1.0
   if (GV%g_prime(1) /= GV%g_Earth) CS%GFS_scale = GV%g_prime(1) / GV%g_Earth
