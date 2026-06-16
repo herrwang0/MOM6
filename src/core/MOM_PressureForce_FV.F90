@@ -293,10 +293,6 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
                         ! horizontal (pressure, not geopotential, is the linear coordinate) [L2 T-2 ~> m2 s-2]
   real :: alpha_s_iso   ! The global surface specific volume 1/rho_s for the isotherm diagnostics [R-1 ~> m3 kg-1]
   real :: pi_iso        ! The linear EOS compressibility dRho_dp for the isotherm diagnostics [T2 L-2 ~> s2 m-2]
-  real, allocatable, dimension(:,:,:) :: PGF_iso_u ! A one-layer isotherm PGF-term diagnostic at
-                        ! u-velocity points [L T-2 ~> m s-2]
-  real, allocatable, dimension(:,:,:) :: PGF_iso_v ! A one-layer isotherm PGF-term diagnostic at
-                        ! v-velocity points [L T-2 ~> m s-2]
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer, dimension(2) :: EOSdom_u ! The i-computational domain for the equation of state at u-velocity points
@@ -913,87 +909,67 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     ! Decompose the one-layer isotherm pressure gradient force with a linear equation of state into
     ! the four terms of the writeup table "Comparison of one-layer isotherm integrals", normalized to
     ! an acceleration so they sum to PFu/PFv in that idealized limit.  The global surface density
-    ! rho_s (hence alpha_s) and the compressibility pi are constants set at initialization.
+    ! rho_s (hence alpha_s) and the compressibility pi are constants set at initialization.  The term
+    ! accelerations are stored in ADp so MOM_diagnostics can form their kinetic energy contributions.
     alpha_s_iso = 1.0 / CS%rho_s_iso ; pi_iso = CS%dRho_dp_iso
 
-    allocate(PGF_iso_u(G%IsdB:G%IedB, G%jsd:G%jed, nz), source=0.0)
-    allocate(PGF_iso_v(G%isd:G%ied, G%JsdB:G%JedB, nz), source=0.0)
-
     ! Reference-surface (geometric bottom-geopotential) term, F(phi_b).
-    if ((CS%id_pgf_refsurf_u > 0) .or. (CS%id_pgf_refsurf_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
-          phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
-          phi_br = za(i+1,j,K+1) - alpha_ref*p(i+1,j,K+1)
-          int_phib = intx_za(I,j,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i+1,j,K+1)))
-          PGF_iso_u(I,j,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
-                             (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
-          phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
-          phi_br = za(i,j+1,K+1) - alpha_ref*p(i,j+1,K+1)
-          int_phib = inty_za(i,J,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i,j+1,K+1)))
-          PGF_iso_v(i,J,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
-                             (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_refsurf_u > 0) call post_data(CS%id_pgf_refsurf_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_refsurf_v > 0) call post_data(CS%id_pgf_refsurf_v, PGF_iso_v, CS%diag)
-    endif
+    if (associated(ADp%pgf_refsurf_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
+      phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
+      phi_br = za(i+1,j,K+1) - alpha_ref*p(i+1,j,K+1)
+      int_phib = intx_za(I,j,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i+1,j,K+1)))
+      ADp%pgf_refsurf_u(I,j,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
+                                 (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_refsurf_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
+      phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
+      phi_br = za(i,j+1,K+1) - alpha_ref*p(i,j+1,K+1)
+      int_phib = inty_za(i,J,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i,j+1,K+1)))
+      ADp%pgf_refsurf_v(i,J,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
+                                 (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_refsurf_u > 0) call post_data(CS%id_pgf_refsurf_u, ADp%pgf_refsurf_u, CS%diag)
+    if (CS%id_pgf_refsurf_v > 0) call post_data(CS%id_pgf_refsurf_v, ADp%pgf_refsurf_v, CS%diag)
 
     ! Constant-density (Montgomery) term, F(alpha_s) in the isotherm limit.
-    if ((CS%id_pgf_cdens_u > 0) .or. (CS%id_pgf_cdens_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          PGF_iso_u(I,j,k) = (alpha_s_iso * (p(i,j,K+1) - p(i+1,j,K+1))) * G%IdxCu(I,j)
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          PGF_iso_v(i,J,k) = (alpha_s_iso * (p(i,j,K+1) - p(i,j+1,K+1))) * G%IdyCv(i,J)
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, PGF_iso_v, CS%diag)
-    endif
+    if (associated(ADp%pgf_cdens_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      ADp%pgf_cdens_u(I,j,k) = (alpha_s_iso * (p(i,j,K+1) - p(i+1,j,K+1))) * G%IdxCu(I,j)
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_cdens_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      ADp%pgf_cdens_v(i,J,k) = (alpha_s_iso * (p(i,j,K+1) - p(i,j+1,K+1))) * G%IdyCv(i,J)
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, ADp%pgf_cdens_u, CS%diag)
+    if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, ADp%pgf_cdens_v, CS%diag)
 
     ! Compressibility term, F(pi) leading order.
-    if ((CS%id_pgf_compress_u > 0) .or. (CS%id_pgf_compress_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          PGF_iso_u(I,j,k) = (((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-            (p(i,j,K+1)*p(i,j,K+1) - p(i+1,j,K+1)*p(i+1,j,K+1))) * G%IdxCu(I,j)
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          PGF_iso_v(i,J,k) = (((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-            (p(i,j,K+1)*p(i,j,K+1) - p(i,j+1,K+1)*p(i,j+1,K+1))) * G%IdyCv(i,J)
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, PGF_iso_v, CS%diag)
-    endif
+    if (associated(ADp%pgf_compress_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      ADp%pgf_compress_u(I,j,k) = (((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+        (p(i,j,K+1)*p(i,j,K+1) - p(i+1,j,K+1)*p(i+1,j,K+1))) * G%IdxCu(I,j)
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_compress_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      ADp%pgf_compress_v(i,J,k) = (((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+        (p(i,j,K+1)*p(i,j,K+1) - p(i,j+1,K+1)*p(i,j+1,K+1))) * G%IdyCv(i,J)
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, ADp%pgf_compress_u, CS%diag)
+    if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, ADp%pgf_compress_v, CS%diag)
 
     ! Discretization-residual term.
-    if ((CS%id_pgf_discresid_u > 0) .or. (CS%id_pgf_discresid_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
-          PGF_iso_u(I,j,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-                              ((dpr - dpl) * (p(i+1,j,K+1) - p(i,j,K+1))**2)) * &
-                             (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
-          PGF_iso_v(i,J,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-                              ((dpr - dpl) * (p(i,j+1,K+1) - p(i,j,K+1))**2)) * &
-                             (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_discresid_u > 0) call post_data(CS%id_pgf_discresid_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_discresid_v > 0) call post_data(CS%id_pgf_discresid_v, PGF_iso_v, CS%diag)
-    endif
-
-    deallocate(PGF_iso_u, PGF_iso_v)
+    if (associated(ADp%pgf_discresid_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
+      ADp%pgf_discresid_u(I,j,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+                                    ((dpr - dpl) * (p(i+1,j,K+1) - p(i,j,K+1))**2)) * &
+                                   (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_discresid_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
+      ADp%pgf_discresid_v(i,J,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+                                    ((dpr - dpl) * (p(i,j+1,K+1) - p(i,j,K+1))**2)) * &
+                                   (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_discresid_u > 0) call post_data(CS%id_pgf_discresid_u, ADp%pgf_discresid_u, CS%diag)
+    if (CS%id_pgf_discresid_v > 0) call post_data(CS%id_pgf_discresid_v, ADp%pgf_discresid_v, CS%diag)
   endif
 
   if (CS%GFS_scale < 1.0) then
@@ -1255,10 +1231,6 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
                         ! can be neglected [L2 T-2 ~> m2 s-2]
   real :: rho0_iso      ! The Boussinesq reference density used by the isotherm diagnostics [R ~> kg m-3]
   real :: pi_iso        ! The linear EOS compressibility dRho_dp for the isotherm diagnostics [T2 L-2 ~> s2 m-2]
-  real, allocatable, dimension(:,:,:) :: PGF_iso_u ! A one-layer isotherm PGF-term diagnostic at
-                        ! u-velocity points [L T-2 ~> m s-2]
-  real, allocatable, dimension(:,:,:) :: PGF_iso_v ! A one-layer isotherm PGF-term diagnostic at
-                        ! v-velocity points [L T-2 ~> m s-2]
   logical :: use_p_atm       ! If true, use the atmospheric pressure.
   logical :: use_ALE         ! If true, use an ALE pressure reconstruction.
   logical :: use_EOS         ! If true, density is calculated from T & S using an equation of state.
@@ -1984,90 +1956,70 @@ subroutine PressureForce_FV_Bouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, ADp, 
     ! Decompose the one-layer isotherm pressure gradient force with a linear equation of state into
     ! the four terms of the writeup table "Comparison of one-layer isotherm integrals", normalized to
     ! an acceleration.  The global surface density rho_s, the Boussinesq reference density rho_0 and
-    ! the compressibility pi are constants set at initialization.
+    ! the compressibility pi are constants set at initialization.  The term accelerations are stored
+    ! in ADp so MOM_diagnostics can form their kinetic energy contributions.
     pi_iso = CS%dRho_dp_iso ; rho0_iso = GV%Rho0
     dphi_neglect = GV%g_Earth * dz_neglect
 
-    allocate(PGF_iso_u(G%IsdB:G%IedB, G%jsd:G%jed, nz), source=0.0)
-    allocate(PGF_iso_v(G%isd:G%ied, G%JsdB:G%JedB, nz), source=0.0)
-
     ! Reference-surface (surface-pressure) term, F(p_t); this vanishes when the top is an isobath.
-    if ((CS%id_pgf_refsurf_u > 0) .or. (CS%id_pgf_refsurf_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i+1,j,K) - e(i+1,j,K+1))
-          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
-          pt_l = pa(i,j,K) - rho_ref*phi_tl ; pt_r = pa(i+1,j,K) - rho_ref*phi_tr
-          int_pt = intx_pa(I,j,K) - rho_ref*(0.5*(phi_tl + phi_tr))
-          PGF_iso_u(I,j,k) = ((pt_l*dphil - pt_r*dphir) + ((dphir - dphil) * int_pt)) * &
-                             ((2.0*I_Rho0*G%IdxCu(I,j)) / ((dphil + dphir) + dphi_neglect))
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i,j+1,K) - e(i,j+1,K+1))
-          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
-          pt_l = pa(i,j,K) - rho_ref*phi_tl ; pt_r = pa(i,j+1,K) - rho_ref*phi_tr
-          int_pt = inty_pa(i,J,K) - rho_ref*(0.5*(phi_tl + phi_tr))
-          PGF_iso_v(i,J,k) = ((pt_l*dphil - pt_r*dphir) + ((dphir - dphil) * int_pt)) * &
-                             ((2.0*I_Rho0*G%IdyCv(i,J)) / ((dphil + dphir) + dphi_neglect))
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_refsurf_u > 0) call post_data(CS%id_pgf_refsurf_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_refsurf_v > 0) call post_data(CS%id_pgf_refsurf_v, PGF_iso_v, CS%diag)
-    endif
+    if (associated(ADp%pgf_refsurf_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i+1,j,K) - e(i+1,j,K+1))
+      phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
+      pt_l = pa(i,j,K) - rho_ref*phi_tl ; pt_r = pa(i+1,j,K) - rho_ref*phi_tr
+      int_pt = intx_pa(I,j,K) - rho_ref*(0.5*(phi_tl + phi_tr))
+      ADp%pgf_refsurf_u(I,j,k) = ((pt_l*dphil - pt_r*dphir) + ((dphir - dphil) * int_pt)) * &
+                                 ((2.0*I_Rho0*G%IdxCu(I,j)) / ((dphil + dphir) + dphi_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_refsurf_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i,j+1,K) - e(i,j+1,K+1))
+      phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
+      pt_l = pa(i,j,K) - rho_ref*phi_tl ; pt_r = pa(i,j+1,K) - rho_ref*phi_tr
+      int_pt = inty_pa(i,J,K) - rho_ref*(0.5*(phi_tl + phi_tr))
+      ADp%pgf_refsurf_v(i,J,k) = ((pt_l*dphil - pt_r*dphir) + ((dphir - dphil) * int_pt)) * &
+                                 ((2.0*I_Rho0*G%IdyCv(i,J)) / ((dphil + dphir) + dphi_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_refsurf_u > 0) call post_data(CS%id_pgf_refsurf_u, ADp%pgf_refsurf_u, CS%diag)
+    if (CS%id_pgf_refsurf_v > 0) call post_data(CS%id_pgf_refsurf_v, ADp%pgf_refsurf_v, CS%diag)
 
     ! Constant-density (Montgomery) term, F(rho_s) in the isotherm limit.
-    if ((CS%id_pgf_cdens_u > 0) .or. (CS%id_pgf_cdens_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          PGF_iso_u(I,j,k) = (CS%rho_s_iso * (GV%g_Earth*(e(i,j,K) - e(i+1,j,K)))) * (I_Rho0 * G%IdxCu(I,j))
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          PGF_iso_v(i,J,k) = (CS%rho_s_iso * (GV%g_Earth*(e(i,j,K) - e(i,j+1,K)))) * (I_Rho0 * G%IdyCv(i,J))
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, PGF_iso_v, CS%diag)
-    endif
+    if (associated(ADp%pgf_cdens_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      ADp%pgf_cdens_u(I,j,k) = (CS%rho_s_iso * (GV%g_Earth*(e(i,j,K) - e(i+1,j,K)))) * (I_Rho0 * G%IdxCu(I,j))
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_cdens_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      ADp%pgf_cdens_v(i,J,k) = (CS%rho_s_iso * (GV%g_Earth*(e(i,j,K) - e(i,j+1,K)))) * (I_Rho0 * G%IdyCv(i,J))
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, ADp%pgf_cdens_u, CS%diag)
+    if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, ADp%pgf_cdens_v, CS%diag)
 
     ! Compressibility term, F(pi).
-    if ((CS%id_pgf_compress_u > 0) .or. (CS%id_pgf_compress_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
-          PGF_iso_u(I,j,k) = (((-0.5*pi_iso) * rho0_iso) * (phi_tl*phi_tl - phi_tr*phi_tr)) * &
-                             (I_Rho0 * G%IdxCu(I,j))
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
-          PGF_iso_v(i,J,k) = (((-0.5*pi_iso) * rho0_iso) * (phi_tl*phi_tl - phi_tr*phi_tr)) * &
-                             (I_Rho0 * G%IdyCv(i,J))
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, PGF_iso_v, CS%diag)
-    endif
+    if (associated(ADp%pgf_compress_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
+      ADp%pgf_compress_u(I,j,k) = (((-0.5*pi_iso) * rho0_iso) * (phi_tl*phi_tl - phi_tr*phi_tr)) * &
+                                  (I_Rho0 * G%IdxCu(I,j))
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_compress_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
+      ADp%pgf_compress_v(i,J,k) = (((-0.5*pi_iso) * rho0_iso) * (phi_tl*phi_tl - phi_tr*phi_tr)) * &
+                                  (I_Rho0 * G%IdyCv(i,J))
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, ADp%pgf_compress_u, CS%diag)
+    if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, ADp%pgf_compress_v, CS%diag)
 
     ! Discretization-residual term.
-    if ((CS%id_pgf_discresid_u > 0) .or. (CS%id_pgf_discresid_v > 0)) then
-      do k=1,nz
-        do j=js,je ; do I=Isq,Ieq
-          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i+1,j,K) - e(i+1,j,K+1))
-          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
-          PGF_iso_u(I,j,k) = (((C1_12*pi_iso) * rho0_iso) * ((dphir - dphil) * (phi_tr - phi_tl)**2)) * &
-                             ((2.0*I_Rho0*G%IdxCu(I,j)) / ((dphil + dphir) + dphi_neglect))
-        enddo ; enddo
-        do J=Jsq,Jeq ; do i=is,ie
-          dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i,j+1,K) - e(i,j+1,K+1))
-          phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
-          PGF_iso_v(i,J,k) = (((C1_12*pi_iso) * rho0_iso) * ((dphir - dphil) * (phi_tr - phi_tl)**2)) * &
-                             ((2.0*I_Rho0*G%IdyCv(i,J)) / ((dphil + dphir) + dphi_neglect))
-        enddo ; enddo
-      enddo
-      if (CS%id_pgf_discresid_u > 0) call post_data(CS%id_pgf_discresid_u, PGF_iso_u, CS%diag)
-      if (CS%id_pgf_discresid_v > 0) call post_data(CS%id_pgf_discresid_v, PGF_iso_v, CS%diag)
-    endif
-
-    deallocate(PGF_iso_u, PGF_iso_v)
+    if (associated(ADp%pgf_discresid_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+      dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i+1,j,K) - e(i+1,j,K+1))
+      phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i+1,j,K)
+      ADp%pgf_discresid_u(I,j,k) = (((C1_12*pi_iso) * rho0_iso) * ((dphir - dphil) * (phi_tr - phi_tl)**2)) * &
+                                   ((2.0*I_Rho0*G%IdxCu(I,j)) / ((dphil + dphir) + dphi_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (associated(ADp%pgf_discresid_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+      dphil = GV%g_Earth * (e(i,j,K) - e(i,j,K+1)) ; dphir = GV%g_Earth * (e(i,j+1,K) - e(i,j+1,K+1))
+      phi_tl = GV%g_Earth*e(i,j,K) ; phi_tr = GV%g_Earth*e(i,j+1,K)
+      ADp%pgf_discresid_v(i,J,k) = (((C1_12*pi_iso) * rho0_iso) * ((dphir - dphil) * (phi_tr - phi_tl)**2)) * &
+                                   ((2.0*I_Rho0*G%IdyCv(i,J)) / ((dphil + dphir) + dphi_neglect))
+    enddo ; enddo ; enddo ; endif
+    if (CS%id_pgf_discresid_u > 0) call post_data(CS%id_pgf_discresid_u, ADp%pgf_discresid_u, CS%diag)
+    if (CS%id_pgf_discresid_v > 0) call post_data(CS%id_pgf_discresid_v, ADp%pgf_discresid_v, CS%diag)
   endif
 
   ! Calculate SAL geopotential anomaly and add its gradient to pressure gradient force
@@ -2546,10 +2498,18 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
         'Zonal one-layer isotherm PGF accel., discretization-residual term', 'm s-2', conversion=US%L_T2_to_m_s2)
     CS%id_pgf_discresid_v = register_diag_field('ocean_model', 'pgf_discresid_v', diag%axesCvL, Time, &
         'Meridional one-layer isotherm PGF accel., discretization-residual term', 'm s-2', conversion=US%L_T2_to_m_s2)
-    CS%calc_pgf_iso_terms = ((((CS%id_pgf_refsurf_u > 0) .or. (CS%id_pgf_refsurf_v > 0)) .or. &
-                              ((CS%id_pgf_cdens_u > 0) .or. (CS%id_pgf_cdens_v > 0))) .or. &
-                             (((CS%id_pgf_compress_u > 0) .or. (CS%id_pgf_compress_v > 0)) .or. &
-                              ((CS%id_pgf_discresid_u > 0) .or. (CS%id_pgf_discresid_v > 0))))
+    ! The equation of state is linear, so rho_s and pi are well defined; the per-term accelerations
+    ! are computed at runtime for whichever ADp arrays are allocated (either here for the momentum
+    ! acceleration diagnostics, or in MOM_diagnostics for the kinetic energy budget diagnostics).
+    CS%calc_pgf_iso_terms = .true.
+    if (CS%id_pgf_refsurf_u > 0) call safe_alloc_ptr(ADp%pgf_refsurf_u, IsdB, IedB, jsd, jed, nz)
+    if (CS%id_pgf_refsurf_v > 0) call safe_alloc_ptr(ADp%pgf_refsurf_v, isd, ied, JsdB, JedB, nz)
+    if (CS%id_pgf_cdens_u > 0) call safe_alloc_ptr(ADp%pgf_cdens_u, IsdB, IedB, jsd, jed, nz)
+    if (CS%id_pgf_cdens_v > 0) call safe_alloc_ptr(ADp%pgf_cdens_v, isd, ied, JsdB, JedB, nz)
+    if (CS%id_pgf_compress_u > 0) call safe_alloc_ptr(ADp%pgf_compress_u, IsdB, IedB, jsd, jed, nz)
+    if (CS%id_pgf_compress_v > 0) call safe_alloc_ptr(ADp%pgf_compress_v, isd, ied, JsdB, JedB, nz)
+    if (CS%id_pgf_discresid_u > 0) call safe_alloc_ptr(ADp%pgf_discresid_u, IsdB, IedB, jsd, jed, nz)
+    if (CS%id_pgf_discresid_v > 0) call safe_alloc_ptr(ADp%pgf_discresid_v, isd, ied, JsdB, JedB, nz)
   endif
 
   CS%GFS_scale = 1.0

@@ -193,7 +193,17 @@ type, public :: accel_diag_ptrs
     sal_u => NULL(), &     !< Zonal acceleration due to self-attraction and loading [L T-2 ~> m s-2]
     sal_v => NULL(), &     !< Meridional acceleration due to self-attraction and loading [L T-2 ~> m s-2]
     tides_u => NULL(), &    !< Zonal acceleration due to astronomical tidal forcing [L T-2 ~> m s-2]
-    tides_v => NULL()       !< Meridional acceleration due to astronomical tidal forcing [L T-2 ~> m s-2]
+    tides_v => NULL(), &    !< Meridional acceleration due to astronomical tidal forcing [L T-2 ~> m s-2]
+    ! pgf_*_[uv] are the four terms of the one-layer isotherm linear-EOS pressure gradient force
+    ! decomposition (see MOM_PressureForce_FV); they are 3D like the accelerations above.
+    pgf_refsurf_u => NULL(), &   !< Zonal acceleration, reference-surface PGF term [L T-2 ~> m s-2]
+    pgf_refsurf_v => NULL(), &   !< Meridional acceleration, reference-surface PGF term [L T-2 ~> m s-2]
+    pgf_cdens_u => NULL(), &     !< Zonal acceleration, constant-density PGF term [L T-2 ~> m s-2]
+    pgf_cdens_v => NULL(), &     !< Meridional acceleration, constant-density PGF term [L T-2 ~> m s-2]
+    pgf_compress_u => NULL(), &  !< Zonal acceleration, compressibility PGF term [L T-2 ~> m s-2]
+    pgf_compress_v => NULL(), &  !< Meridional acceleration, compressibility PGF term [L T-2 ~> m s-2]
+    pgf_discresid_u => NULL(), & !< Zonal acceleration, discretization-residual PGF term [L T-2 ~> m s-2]
+    pgf_discresid_v => NULL()    !< Meridional acceleration, discretization-residual PGF term [L T-2 ~> m s-2]
   real, pointer, dimension(:,:,:) :: du_other => NULL()
                            !< Zonal velocity changes due to any other processes that are
                            !! not due to any explicit accelerations [L T-1 ~> m s-1].

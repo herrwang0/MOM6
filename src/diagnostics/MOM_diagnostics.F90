@@ -30,6 +30,7 @@ use MOM_grid,              only : ocean_grid_type
 use MOM_interface_heights, only : find_eta, find_dz_for_eta, find_col_mass
 use MOM_spatial_means,     only : global_area_mean, global_layer_mean
 use MOM_spatial_means,     only : global_volume_mean, global_area_integral
+use MOM_string_functions,  only : uppercase
 use MOM_tracer_registry,   only : tracer_registry_type, post_tracer_transport_diagnostics
 use MOM_unit_scaling,      only : unit_scale_type
 use MOM_variables,         only : thermo_var_ptrs, ocean_internal_state, p3d
@@ -89,6 +90,8 @@ type, public :: diagnostics_CS ; private
   integer :: id_KE             = -1, id_dKEdt          = -1
   integer :: id_PE_to_KE       = -1, id_KE_BT          = -1
   integer :: id_KE_SAL         = -1, id_KE_TIDES       = -1
+  integer :: id_KE_pgf_refsurf = -1, id_KE_pgf_cdens   = -1
+  integer :: id_KE_pgf_compress = -1, id_KE_pgf_discresid = -1
   integer :: id_KE_BT_PF       = -1, id_KE_BT_CF       = -1
   integer :: id_KE_BT_WD       = -1
   integer :: id_PE_to_KE_btbc  = -1, id_KE_Coradv_btbc = -1
@@ -1241,6 +1244,82 @@ subroutine calculate_energy_diagnostics(u, v, h, uh, vh, ADp, CDp, G, GV, US, CS
     call post_data(CS%id_KE_TIDES, KE_term, CS%diag)
   endif
 
+  if (CS%id_KE_pgf_refsurf > 0) then
+    ! KE source from the reference-surface one-layer isotherm PGF term [H L2 T-3 ~> m3 s-3 or W m-2].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%pgf_refsurf_u(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%pgf_refsurf_v(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * ((KE_u(I,j) + KE_u(I-1,j)) + (KE_v(i,J) + KE_v(i,J-1)))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_pgf_refsurf, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_pgf_cdens > 0) then
+    ! KE source from the constant-density one-layer isotherm PGF term [H L2 T-3 ~> m3 s-3 or W m-2].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%pgf_cdens_u(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%pgf_cdens_v(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * ((KE_u(I,j) + KE_u(I-1,j)) + (KE_v(i,J) + KE_v(i,J-1)))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_pgf_cdens, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_pgf_compress > 0) then
+    ! KE source from the compressibility one-layer isotherm PGF term [H L2 T-3 ~> m3 s-3 or W m-2].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%pgf_compress_u(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%pgf_compress_v(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * ((KE_u(I,j) + KE_u(I-1,j)) + (KE_v(i,J) + KE_v(i,J-1)))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_pgf_compress, KE_term, CS%diag)
+  endif
+
+  if (CS%id_KE_pgf_discresid > 0) then
+    ! KE source from the discretization-residual one-layer isotherm PGF term [H L2 T-3 ~> m3 s-3 or W m-2].
+    do k=1,nz
+      do j=js,je ; do I=Isq,Ieq
+        KE_u(I,j) = uh(I,j,k) * G%dxCu(I,j) * ADp%pgf_discresid_u(I,j,k)
+      enddo ; enddo
+      do J=Jsq,Jeq ; do i=is,ie
+        KE_v(i,J) = vh(i,J,k) * G%dyCv(i,J) * ADp%pgf_discresid_v(i,J,k)
+      enddo ; enddo
+      if (.not.G%symmetric) &
+        call do_group_pass(CS%pass_KE_uv, G%domain)
+      do j=js,je ; do i=is,ie
+        KE_term(i,j,k) = 0.5 * G%IareaT(i,j) &
+            * ((KE_u(I,j) + KE_u(I-1,j)) + (KE_v(i,J) + KE_v(i,J-1)))
+      enddo ; enddo
+    enddo
+    call post_data(CS%id_KE_pgf_discresid, KE_term, CS%diag)
+  endif
+
   if (CS%id_KE_BT > 0) then
     ! Calculate the barotropic contribution to KE term [H L2 T-3 ~> m3 s-3 or W m-2].
     do k=1,nz
@@ -1899,6 +1978,9 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
   logical :: split            ! True if using the barotropic-baroclinic split algorithm
   logical :: calc_tides       ! True if using tidal forcing
   logical :: calc_sal         ! True if using self-attraction and loading
+  logical :: calc_pgf_iso     ! True if the equation of state is linear, so the one-layer isotherm
+                              ! pressure gradient force term diagnostics are meaningful
+  character(len=40) :: eos_string ! The equation of state being used
   logical :: om4_remap_via_sub_cells ! Use the OM4-era ramap_via_sub_cells for calculating the EBT structure
   ! This include declares and sets the variable "version".
 # include "version_variable.h"
@@ -1964,6 +2046,8 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
   call get_param(param_file, mdl, "SPLIT", split, default=.true., do_not_log=.true.)
   call get_param(param_file, mdl, "TIDES", calc_tides, default=.false., do_not_log=.true.)
   call get_param(param_file, mdl, "CALCULATE_SAL", calc_sal, default=calc_tides, do_not_log=.true.)
+  call get_param(param_file, mdl, "EQN_OF_STATE", eos_string, default="WRIGHT", do_not_log=.true.)
+  calc_pgf_iso = (index(uppercase(eos_string), "LINEAR") > 0)
 
   thickness_units = get_thickness_units(GV)
   flux_units = get_flux_units(GV)
@@ -2213,6 +2297,20 @@ subroutine MOM_diagnostics_init(MIS, ADp, CDp, Time, G, GV, US, param_file, diag
     CS%id_KE_TIDES = register_diag_field('ocean_model', 'KE_tides', diag%axesTL, Time, &
         'Kinetic Energy Source from Astronomical Tidal Forcing', &
         'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+  if (calc_pgf_iso) then
+    CS%id_KE_pgf_refsurf = register_diag_field('ocean_model', 'KE_pgf_refsurf', diag%axesTL, Time, &
+        'Kinetic Energy Source from the reference-surface one-layer isotherm PGF term', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_pgf_cdens = register_diag_field('ocean_model', 'KE_pgf_cdens', diag%axesTL, Time, &
+        'Kinetic Energy Source from the constant-density one-layer isotherm PGF term', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_pgf_compress = register_diag_field('ocean_model', 'KE_pgf_compress', diag%axesTL, Time, &
+        'Kinetic Energy Source from the compressibility one-layer isotherm PGF term', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+    CS%id_KE_pgf_discresid = register_diag_field('ocean_model', 'KE_pgf_discresid', diag%axesTL, Time, &
+        'Kinetic Energy Source from the discretization-residual one-layer isotherm PGF term', &
+        'm3 s-3', conversion=GV%H_to_m*(US%L_T_to_m_s**2)*US%s_to_T)
+  endif
   if (split) then
     CS%id_KE_BT = register_diag_field('ocean_model', 'KE_BT', diag%axesTL, Time, &
         'Barotropic contribution to Kinetic Energy', &
@@ -2700,12 +2798,31 @@ subroutine set_dependent_diagnostics(MIS, ADp, CDp, G, GV, CS)
     call safe_alloc_ptr(ADp%tides_v, isd, ied, JsdB, JedB, nz)
   endif
 
+  if (CS%id_KE_pgf_refsurf > 0) then
+    call safe_alloc_ptr(ADp%pgf_refsurf_u, IsdB, IedB, jsd, jed, nz)
+    call safe_alloc_ptr(ADp%pgf_refsurf_v, isd, ied, JsdB, JedB, nz)
+  endif
+  if (CS%id_KE_pgf_cdens > 0) then
+    call safe_alloc_ptr(ADp%pgf_cdens_u, IsdB, IedB, jsd, jed, nz)
+    call safe_alloc_ptr(ADp%pgf_cdens_v, isd, ied, JsdB, JedB, nz)
+  endif
+  if (CS%id_KE_pgf_compress > 0) then
+    call safe_alloc_ptr(ADp%pgf_compress_u, IsdB, IedB, jsd, jed, nz)
+    call safe_alloc_ptr(ADp%pgf_compress_v, isd, ied, JsdB, JedB, nz)
+  endif
+  if (CS%id_KE_pgf_discresid > 0) then
+    call safe_alloc_ptr(ADp%pgf_discresid_u, IsdB, IedB, jsd, jed, nz)
+    call safe_alloc_ptr(ADp%pgf_discresid_v, isd, ied, JsdB, JedB, nz)
+  endif
+
   CS%KE_term_on = ((CS%id_dKEdt > 0) .or. (CS%id_PE_to_KE > 0) .or. (CS%id_KE_BT > 0) .or. &
                    (CS%id_KE_Coradv > 0) .or. (CS%id_KE_adv > 0) .or. (CS%id_KE_visc > 0) .or. &
                    (CS%id_KE_visc_gl90 > 0) .or. (CS%id_KE_stress > 0) .or. (CS%id_KE_horvisc > 0) .or. &
                    (CS%id_KE_dia > 0) .or. (CS%id_PE_to_KE_btbc > 0) .or. (CS%id_KE_BT_PF > 0) .or. &
                    (CS%id_KE_Coradv_btbc > 0) .or. (CS%id_KE_BT_CF > 0) .or. (CS%id_KE_BT_WD > 0) .or. &
-                   (CS%id_KE_SAL > 0) .or. (CS%id_KE_TIDES > 0))
+                   (CS%id_KE_SAL > 0) .or. (CS%id_KE_TIDES > 0) .or. &
+                   (CS%id_KE_pgf_refsurf > 0) .or. (CS%id_KE_pgf_cdens > 0) .or. &
+                   (CS%id_KE_pgf_compress > 0) .or. (CS%id_KE_pgf_discresid > 0))
 
   if (CS%id_h_du_dt > 0) call safe_alloc_ptr(ADp%diag_hu,IsdB,IedB,jsd,jed,nz)
   if (CS%id_h_dv_dt > 0) call safe_alloc_ptr(ADp%diag_hv,isd,ied,JsdB,JedB,nz)
@@ -2758,6 +2875,16 @@ subroutine MOM_diagnostics_end(CS, ADp, CDp)
   if (associated(ADp%sal_v))  deallocate(ADp%sal_v)
   if (associated(ADp%tides_u)) deallocate(ADp%tides_u)
   if (associated(ADp%tides_v)) deallocate(ADp%tides_v)
+  ! pgf_*_[uv] may be allocated either here (KE budget diagnostics) or in the PressureForce module
+  ! (momentum acceleration diagnostics).
+  if (associated(ADp%pgf_refsurf_u)) deallocate(ADp%pgf_refsurf_u)
+  if (associated(ADp%pgf_refsurf_v)) deallocate(ADp%pgf_refsurf_v)
+  if (associated(ADp%pgf_cdens_u)) deallocate(ADp%pgf_cdens_u)
+  if (associated(ADp%pgf_cdens_v)) deallocate(ADp%pgf_cdens_v)
+  if (associated(ADp%pgf_compress_u)) deallocate(ADp%pgf_compress_u)
+  if (associated(ADp%pgf_compress_v)) deallocate(ADp%pgf_compress_v)
+  if (associated(ADp%pgf_discresid_u)) deallocate(ADp%pgf_discresid_u)
+  if (associated(ADp%pgf_discresid_v)) deallocate(ADp%pgf_discresid_v)
 
   if (associated(ADp%diag_hfrac_u)) deallocate(ADp%diag_hfrac_u)
   if (associated(ADp%diag_hfrac_v)) deallocate(ADp%diag_hfrac_v)
