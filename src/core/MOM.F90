@@ -3754,13 +3754,13 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
   ! [if new_sim] Save %tres to OBC%tres_[xy] (needs to be after tracer_flow_control_init to init BGC)
   ! [if restart] copy OBC%tres_[xy] to %tres
   if (associated(CS%OBC)) then
-    ! At this point any information related to the tracer reservoirs has either been read from
-    ! the restart file or has been specified in the segments.  Initialize the tracer reservoir
-    ! values from the segments if they have not been set via the restart file.
-    if (is_new_run(restart_CSp)) then
+    if (new_sim .and. save_IC) then
+      ! Copy %tres and %h_res to OBC%tres_[xy] and OBC%h_res_[xy], only if initial condition is
+      ! output in a new run. This needs to be after tracer_flow_control_init to init BGC.
       call setup_OBC_tracer_reservoirs(G, GV, CS%OBC, restart_CSp)
       call setup_OBC_thickness_reservoirs(G, GV, CS%OBC, restart_CSp)
-    else
+    elseif (.not. new_sim) then
+      ! Copy global restart arrays to per-segment arrays.
       call open_boundary_halo_update(G, CS%OBC)
       call copy_OBC_radiation_coefs(CS%OBC)
       call copy_OBC_tracer_reservoirs(CS%OBC)
