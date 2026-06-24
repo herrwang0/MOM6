@@ -3328,9 +3328,6 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     CS%tv%valid_SpV_halo = -1  ! This array does not yet have any valid data.
   endif
 
-  if (associated(CS%OBC) .and. use_temperature) &
-    call calc_derived_thermo(CS%tv, CS%h, G, GV, US)
-
   ! Read/fill %t and [if new_sim] init %tres (needs to be before remap for the fill_temp_salt route)
   if (associated(CS%OBC)) then
     call initialize_user_OBCs(CS%tv, CS%OBC, G, GV, US, param_file, CS%tracer_Reg)
