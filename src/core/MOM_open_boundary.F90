@@ -538,10 +538,12 @@ subroutine open_boundary_config(G, US, param_file, OBC)
 
   ! Local variables
   integer :: num_of_segs ! Number of open boundary segments
-  integer :: n, n_seg ! For looping over segments
+  integer :: n, n_seg, m ! For looping over segments and fields
   logical :: debug, mask_outside, reentrant_x, reentrant_y
   character(len=15) :: segment_param_str ! The run-time parameter name for each segment
+  character(len=20) :: segment_data_param_str ! The run-time parameter name for each segment's data
   character(len=1024) :: segment_str      ! The contents (rhs) for parameter "segment_param_str"
+  character(len=256) :: field_list ! Accepted field names for docs, from PHYS_FIELD_NAMES
   character(len=200) :: config ! A string to temporarily store a few runtime parameters
   real               :: Lscale_in, Lscale_out ! parameters controlling tracer values at the boundaries [L ~> m]
   integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags.
@@ -806,6 +808,12 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   OBC%u_OBCs_on_PE = .false.
   OBC%v_OBCs_on_PE = .false.
 
+  ! Assemble the accepted field-name list from PHYS_FIELD_NAMES for the OBC_SEGMENT_xxx_DATA docs.
+  field_list = trim(PHYS_FIELD_NAMES(1))
+  do m=2,NUM_PHYS_FIELDS
+    field_list = trim(field_list)//", "//trim(PHYS_FIELD_NAMES(m))
+  enddo
+
   do n=1,OBC%number_of_segments
     n_seg = n ; if (OBC%reverse_segment_order) n_seg = OBC%number_of_segments + 1 - n
     write(segment_param_str(1:15),"('OBC_SEGMENT_',i3.3)") n
@@ -834,6 +842,27 @@ subroutine open_boundary_config(G, US, param_file, OBC)
     else
       call MOM_error(FATAL, "MOM_open_boundary.F90, open_boundary_config: "//&
            "Unable to interpret "//segment_param_str//" = "//trim(segment_str))
+    endif
+
+    ! Document OBC_SEGMENT_xxx_DATA here; the actual read happens later in initialize_segment_data
+    ! under a single-PE pelist, where logging would corrupt the docs.  Full description once
+    ! (segment 001), brief pointer thereafter.
+    if (.not. OBC%user_BCs_set_globally) then
+      write(segment_data_param_str, "('OBC_SEGMENT_',i3.3,'_DATA')") n
+      if (n == 1) then
+        call get_param(param_file, mdl, segment_data_param_str, segment_str, &
+             "Fields and data sources for an open boundary segment: a comma-separated list of "//&
+             "FIELD=method:spec entries (each up to 120 characters).  FIELD is one of: "//&
+             trim(field_list)//".  Two methods are supported:\n"//&
+             " \t file:FILENAME.nc(VARNAME)  - read from the named variable in a NetCDF file.\n"//&
+             " \t value:CONST                - a spatially constant value.\n"//&
+             "Generic/BGC tracers are configured separately and must not be listed here.  "//&
+             "Example: 'U=file:forcing.nc(u),TEMP=value:20.0'.")
+      else
+        call get_param(param_file, mdl, segment_data_param_str, segment_str, &
+             "Fields and data sources for this open boundary segment; see OBC_SEGMENT_001_DATA "//&
+             "for the format.")
+      endif
     endif
   enddo
   ! Set arrays indicating the segment number and segment direction, and also store the
@@ -1270,7 +1299,6 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
   ! Local variables
   integer :: n, n_seg, m, num_manifest_fields, mm
   character(len=1024) :: segstr
-  character(len=256) :: field_list ! Accepted field names for docs, from PHYS_FIELD_NAMES
   character(len=256) :: filename
   character(len=20)  :: segname, suffix
   character(len=32)  :: varname
@@ -1280,7 +1308,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
   character(len=32) :: bgc_input  ! segment field names
   character(len=128) :: inputdir
   type(OBC_segment_type), pointer :: segment => NULL() ! pointer to segment type list
-  character(len=256) :: mesg    ! Message for error messages.
+  character(len=256) :: mesg    ! Error message
   integer, dimension(:), allocatable :: saved_pelist
   integer :: current_pe
   integer, dimension(1) :: single_pelist
@@ -1300,33 +1328,6 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
   call get_param(PF, mdl, "INPUTDIR", inputdir, default=".")
   inputdir = slasher(inputdir)
 
-  ! Assemble the accepted field-name list from PHYS_FIELD_NAMES so the documentation stays
-  ! in sync with the code.
-  field_list = trim(PHYS_FIELD_NAMES(1))
-  do m=2,NUM_PHYS_FIELDS
-    field_list = trim(field_list)//", "//trim(PHYS_FIELD_NAMES(m))
-  enddo
-
-  ! Log the full syntax description once (for OBC_SEGMENT_001_DATA); later segments get a brief
-  ! pointer so the documentation is not repeated for every segment.
-  do n=1,OBC%number_of_segments
-    write(segname, "('OBC_SEGMENT_',i3.3,'_DATA')") n
-    if (n == 1) then
-      call get_param(PF, mdl, segname, segstr, &
-           "Fields and data sources for an open boundary segment: a comma-separated list of "//&
-           "FIELD=method:spec entries (each up to 120 characters).  FIELD is one of: "//&
-           trim(field_list)//".  Two methods are supported:\n"//&
-           " \t file:FILENAME.nc(VARNAME)  - read from the named variable in a NetCDF file.\n"//&
-           " \t value:CONST                - a spatially constant value.\n"//&
-           "Generic/BGC tracers are configured separately and must not be listed here.  "//&
-           "Example: 'U=file:forcing.nc(u),TEMP=value:20.0'.")
-    else
-      call get_param(PF, mdl, segname, segstr, &
-           "Fields and data sources for this open boundary segment; see OBC_SEGMENT_001_DATA "//&
-           "for the format.")
-    endif
-  enddo
-
   !< temporarily disable communication in order to read segment data independently
 
   allocate(saved_pelist(0:num_PEs()-1))
@@ -1341,18 +1342,12 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
 
     if (.not. segment%on_pe) cycle
 
+    ! Read OBC_SEGMENT_xxx_DATA (logged in open_boundary_config)
     write(segname, "('OBC_SEGMENT_',i3.3,'_DATA')") n
     write(suffix, "('_segment_',i3.3)") n
-    ! needs documentation !!  Yet, unsafe for now, causes grief for
-    ! MOM_parameter_docs in circle_obcs on two processes.
-    !   call get_param(PF, mdl, segname, segstr, 'xyz')
-    ! Clear out any old values
-    segstr = ''
-    call get_param(PF, mdl, segname, segstr)
-    if (segstr == '') then
-      write(mesg,'("No OBC_SEGMENT_XXX_DATA string for OBC segment ",I0)') n
-      call MOM_error(FATAL, mesg)
-    endif
+    call get_param(PF, mdl, segname, segstr, default='', do_not_log=.true.)
+    if (segstr == '') &
+      call MOM_error(FATAL, 'No '//trim(segname)//' string found.')
 
     segment%num_fields = NUM_PHYS_FIELDS + OBC%num_obgc_tracers
     allocate(segment%field(segment%num_fields))
