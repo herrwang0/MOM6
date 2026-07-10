@@ -809,9 +809,23 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   do n=1,OBC%number_of_segments
     n_seg = n ; if (OBC%reverse_segment_order) n_seg = OBC%number_of_segments + 1 - n
     write(segment_param_str(1:15),"('OBC_SEGMENT_',i3.3)") n
-    call get_param(param_file, mdl, segment_param_str, segment_str, &
-         "Documentation needs to be dynamic?????", &
-         fail_if_missing=.true.)
+    ! Log the full syntax description once (for OBC_SEGMENT_001); later segments get a brief
+    ! pointer so the documentation is not repeated for every segment.
+    if (n == 1) then
+      call get_param(param_file, mdl, segment_param_str, segment_str, &
+           "Position and boundary conditions for an open boundary segment: I=n0,J=n1:n2 "//&
+           "(east-west) or J=n0,I=n1:n2 (north-south), where each index is an integer, N "//&
+           "(the global maximum index), or N+k/N-k, and the range is ascending (n1 < n2) for "//&
+           "an eastern or southern boundary or descending for a western or northern one.  "//&
+           "This is followed by up to 8 comma-separated boundary condition keywords: FLATHER, "//&
+           "ORLANSKI[_TAN/_GRAD], OBLIQUE[_TAN/_GRAD], NUDGED[_TAN/_GRAD], GRADIENT, "//&
+           "SIMPLE[_TAN/_GRAD].  Example (a two-grid cell western boundary): "//&
+           "'I=0,J=N:N-2,FLATHER,ORLANSKI,ORLANSKI_TAN'.", fail_if_missing=.true.)
+    else
+      call get_param(param_file, mdl, segment_param_str, segment_str, &
+           "Position and boundary conditions for this open boundary segment; see OBC_SEGMENT_001"//&
+           "for the format.", fail_if_missing=.true.)
+    endif
     segment_str = remove_spaces(segment_str)
     if (segment_str(1:2) == 'I=') then
       call setup_u_point_obc(OBC, G, US, segment_str, n_seg, n, param_file, reentrant_y)
@@ -1256,6 +1270,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
   ! Local variables
   integer :: n, n_seg, m, num_manifest_fields, mm
   character(len=1024) :: segstr
+  character(len=256) :: field_list ! Accepted field names for docs, from PHYS_FIELD_NAMES
   character(len=256) :: filename
   character(len=20)  :: segname, suffix
   character(len=32)  :: varname
@@ -1285,10 +1300,31 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
   call get_param(PF, mdl, "INPUTDIR", inputdir, default=".")
   inputdir = slasher(inputdir)
 
-  ! Try this here just for the documentation. It is repeated below.
+  ! Assemble the accepted field-name list from PHYS_FIELD_NAMES so the documentation stays
+  ! in sync with the code.
+  field_list = trim(PHYS_FIELD_NAMES(1))
+  do m=2,NUM_PHYS_FIELDS
+    field_list = trim(field_list)//", "//trim(PHYS_FIELD_NAMES(m))
+  enddo
+
+  ! Log the full syntax description once (for OBC_SEGMENT_001_DATA); later segments get a brief
+  ! pointer so the documentation is not repeated for every segment.
   do n=1,OBC%number_of_segments
     write(segname, "('OBC_SEGMENT_',i3.3,'_DATA')") n
-    call get_param(PF, mdl, segname, segstr, 'OBC segment docs')
+    if (n == 1) then
+      call get_param(PF, mdl, segname, segstr, &
+           "Fields and data sources for an open boundary segment: a comma-separated list of "//&
+           "FIELD=method:spec entries (each up to 120 characters).  FIELD is one of: "//&
+           trim(field_list)//".  Two methods are supported:\n"//&
+           " \t file:FILENAME.nc(VARNAME)  - read from the named variable in a NetCDF file.\n"//&
+           " \t value:CONST                - a spatially constant value.\n"//&
+           "Generic/BGC tracers are configured separately and must not be listed here.  "//&
+           "Example: 'U=file:forcing.nc(u),TEMP=value:20.0'.")
+    else
+      call get_param(PF, mdl, segname, segstr, &
+           "Fields and data sources for this open boundary segment; see OBC_SEGMENT_001_DATA "//&
+           "for the format.")
+    endif
   enddo
 
   !< temporarily disable communication in order to read segment data independently
