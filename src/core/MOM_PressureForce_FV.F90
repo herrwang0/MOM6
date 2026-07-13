@@ -2254,11 +2254,6 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
 # include "version_variable.h"
   character(len=40)  :: mdl  ! This module's name.
   character(len=40)  :: eos_string ! The equation of state being used.
-  real :: Rho_T0_S0        ! The linear EOS density at T=0, S=0 and p=0 [kg m-3]
-  real :: dRho_dT          ! The partial derivative of density with temperature [kg m-3 degC-1]
-  real :: dRho_dS          ! The partial derivative of density with salinity [kg m-3 PSU-1]
-  real :: T_ref_iso        ! The reference temperature setting the isotherm surface density [degC]
-  real :: S_ref_iso        ! The reference salinity setting the isotherm surface density [ppt]
   logical :: use_ALE       ! If true, use the Vertical Lagrangian Remap algorithm
   integer :: isd, ied, jsd, jed, IsdB, IedB, JsdB, JedB, nz
 
@@ -2473,13 +2468,8 @@ subroutine PressureForce_FV_init(Time, G, GV, US, param_file, diag, CS, ADp, SAL
     ! of state are read directly from the parameters that set up that equation of state and the
     ! reference temperature and salinity.  Densities are read in MKS and converted once, avoiding any
     ! call to the equation of state.
-    call get_param(param_file, mdl, "RHO_T0_S0", Rho_T0_S0, &
-                 units="kg m-3", default=1000.0, do_not_log=.true.)
-    call get_param(param_file, mdl, "DRHO_DT", dRho_dT, units="kg m-3 degC-1", default=-0.2, do_not_log=.true.)
-    call get_param(param_file, mdl, "DRHO_DS", dRho_dS, units="kg m-3 PSU-1", default=0.8, do_not_log=.true.)
-    call get_param(param_file, mdl, "T_REF", T_ref_iso, units="degC", default=0.0, do_not_log=.true.)
-    call get_param(param_file, mdl, "S_REF", S_ref_iso, units="ppt", default=0.0, do_not_log=.true.)
-    CS%rho_s_iso = (Rho_T0_S0 + (dRho_dT*T_ref_iso + dRho_dS*S_ref_iso)) * US%kg_m3_to_R
+    call get_param(param_file, mdl, "RHO_REF_LINEAR_EOS", CS%rho_s_iso, &
+                 units="kg m-3", default=1035.0, do_not_log=.true.)
     call get_param(param_file, mdl, "DRHO_DP", CS%dRho_dp_iso, &
                  units="s2 m-2", default=0.0, scale=US%L_T_to_m_s**2, do_not_log=.true.)
     CS%id_pgf_refsurf_u = register_diag_field('ocean_model', 'pgf_refsurf_u', diag%axesCuL, Time, &
