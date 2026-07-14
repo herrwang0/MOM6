@@ -285,6 +285,8 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
 
   !  real :: oneatm       ! 1 standard atmosphere of pressure in [R L2 T-2 ~> Pa]
   real, parameter :: C1_3 = 1.0/3.0  ! A rational constant [nondim]
+  real, parameter :: C1_4 = 1.0/4.0  ! A rational constant [nondim]
+  real, parameter :: C1_5 = 1.0/5.0  ! A rational constant [nondim]
   real, parameter :: C1_6 = 1.0/6.0  ! [nondim]
   real, parameter :: C1_12 = 1.0/12.0  ! A rational constant [nondim]
   real, parameter :: C1_90 = 1.0/90.0  ! A rational constant [nondim]
@@ -961,20 +963,25 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, ADp%pgf_cdens_u, CS%diag)
     if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, ADp%pgf_cdens_v, CS%diag)
 
-    ! Compressibility term, F(pi) through second order in pi.  Both powers are terms in the
-    ! specific-volume (Montgomery) series alpha_s*p - 1/2*pi*alpha_s^2*p^2 + 1/3*pi^2*alpha_s^3*p^3;
-    ! the pi^2 term is needed for the decomposition to close for a deep compressible column.
+    ! Compressibility term, F(pi) through fourth order in pi (fifth power of pressure).  These are
+    ! the higher terms of the specific-volume (Montgomery) series
+    !   integral(alpha) = alpha_s*p - 1/2*pi*alpha_s^2*p^2 + 1/3*pi^2*alpha_s^3*p^3
+    !                                - 1/4*pi^3*alpha_s^4*p^4 + 1/5*pi^4*alpha_s^5*p^5 - ...
+    ! carried far enough that the decomposition closes to the discretization-residual floor even for
+    ! a deep compressible column (pi*p/rho_s is the per-order convergence ratio).
     if (associated(ADp%pgf_compress_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
-      ADp%pgf_compress_u(I,j,k) = ((((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-        (p(i,j,K+1)*p(i,j,K+1) - p(i+1,j,K+1)*p(i+1,j,K+1))) + &
-        (((C1_3*(pi_iso*pi_iso)) * (alpha_s_iso*alpha_s_iso*alpha_s_iso)) * &
-        (p(i,j,K+1)**3 - p(i+1,j,K+1)**3))) * G%IdxCu(I,j)
+      ADp%pgf_compress_u(I,j,k) = ( &
+          (((-0.5*pi_iso) * alpha_s_iso**2) * (p(i,j,K+1)**2 - p(i+1,j,K+1)**2)) + &
+          (((C1_3*pi_iso**2) * alpha_s_iso**3) * (p(i,j,K+1)**3 - p(i+1,j,K+1)**3)) + &
+          (((-C1_4*pi_iso**3) * alpha_s_iso**4) * (p(i,j,K+1)**4 - p(i+1,j,K+1)**4)) + &
+          (((C1_5*pi_iso**4) * alpha_s_iso**5) * (p(i,j,K+1)**5 - p(i+1,j,K+1)**5)) ) * G%IdxCu(I,j)
     enddo ; enddo ; enddo ; endif
     if (associated(ADp%pgf_compress_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
-      ADp%pgf_compress_v(i,J,k) = ((((-0.5*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-        (p(i,j,K+1)*p(i,j,K+1) - p(i,j+1,K+1)*p(i,j+1,K+1))) + &
-        (((C1_3*(pi_iso*pi_iso)) * (alpha_s_iso*alpha_s_iso*alpha_s_iso)) * &
-        (p(i,j,K+1)**3 - p(i,j+1,K+1)**3))) * G%IdyCv(i,J)
+      ADp%pgf_compress_v(i,J,k) = ( &
+          (((-0.5*pi_iso) * alpha_s_iso**2) * (p(i,j,K+1)**2 - p(i,j+1,K+1)**2)) + &
+          (((C1_3*pi_iso**2) * alpha_s_iso**3) * (p(i,j,K+1)**3 - p(i,j+1,K+1)**3)) + &
+          (((-C1_4*pi_iso**3) * alpha_s_iso**4) * (p(i,j,K+1)**4 - p(i,j+1,K+1)**4)) + &
+          (((C1_5*pi_iso**4) * alpha_s_iso**5) * (p(i,j,K+1)**5 - p(i,j+1,K+1)**5)) ) * G%IdyCv(i,J)
     enddo ; enddo ; enddo ; endif
     if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, ADp%pgf_compress_u, CS%diag)
     if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, ADp%pgf_compress_v, CS%diag)
