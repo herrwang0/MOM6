@@ -189,6 +189,9 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
                   ! specific to tides [Z ~> m].
     e_sal_and_tide, & ! The summation of self-attraction and loading and tidal forcing, used for recovering
                   ! old answers only [Z ~> m].
+    za_sal_tide, & ! The self-attraction and loading and tidal geopotential anomaly that is included in za,
+                  ! subtracted back out of the reference-surface PGF diagnostic pgf_refsurf_[uv] so that it
+                  ! reflects only the density structure [L2 T-2 ~> m2 s-2].
     dM          ! The barotropic adjustment to the Montgomery potential to
                 ! account for a reduced gravity model [L2 T-2 ~> m2 s-2].
   real, dimension(SZI_(G),SZJ_(G),SZK_(GV)+1) :: &
@@ -913,20 +916,34 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     ! accelerations are stored in ADp so MOM_diagnostics can form their kinetic energy contributions.
     alpha_s_iso = 1.0 / CS%rho_s_iso ; pi_iso = CS%dRho_dp_iso
 
+    ! The SAL and tidal forcing is folded into za as a vertically uniform geopotential anomaly, so it
+    ! is inherited by every interface and hence by the reference-surface term.  Reconstruct that anomaly
+    ! here (following the latest date stamp) so it can be removed, leaving pgf_refsurf reflecting only
+    ! the density structure.
+    za_sal_tide(:,:) = 0.0
+    if (CS%calculate_SAL) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      za_sal_tide(i,j) = za_sal_tide(i,j) + GV%g_Earth * e_sal(i,j)
+    enddo ; enddo ; endif
+    if (CS%tides) then ; do j=Jsq,Jeq+1 ; do i=Isq,Ieq+1
+      za_sal_tide(i,j) = za_sal_tide(i,j) + GV%g_Earth * (e_tidal_eq(i,j) + e_tidal_sal(i,j))
+    enddo ; enddo ; endif
+
     ! Reference-surface (geometric bottom-geopotential) term, F(phi_b).
     if (associated(ADp%pgf_refsurf_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
       dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
-      phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
-      phi_br = za(i+1,j,K+1) - alpha_ref*p(i+1,j,K+1)
-      int_phib = intx_za(I,j,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i+1,j,K+1)))
+      phi_bl = (za(i,j,K+1) + za_sal_tide(i,j)) - alpha_ref*p(i,j,K+1)
+      phi_br = (za(i+1,j,K+1) + za_sal_tide(i+1,j)) - alpha_ref*p(i+1,j,K+1)
+      int_phib = (intx_za(I,j,K+1) + 0.5*(za_sal_tide(i,j) + za_sal_tide(i+1,j))) - &
+                 alpha_ref*(0.5*(p(i,j,K+1) + p(i+1,j,K+1)))
       ADp%pgf_refsurf_u(I,j,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
                                  (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
     enddo ; enddo ; enddo ; endif
     if (associated(ADp%pgf_refsurf_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
       dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
-      phi_bl = za(i,j,K+1) - alpha_ref*p(i,j,K+1)
-      phi_br = za(i,j+1,K+1) - alpha_ref*p(i,j+1,K+1)
-      int_phib = inty_za(i,J,K+1) - alpha_ref*(0.5*(p(i,j,K+1) + p(i,j+1,K+1)))
+      phi_bl = (za(i,j,K+1) + za_sal_tide(i,j)) - alpha_ref*p(i,j,K+1)
+      phi_br = (za(i,j+1,K+1) + za_sal_tide(i,j+1)) - alpha_ref*p(i,j+1,K+1)
+      int_phib = (inty_za(i,J,K+1) + 0.5*(za_sal_tide(i,j) + za_sal_tide(i,j+1))) - &
+                 alpha_ref*(0.5*(p(i,j,K+1) + p(i,j+1,K+1)))
       ADp%pgf_refsurf_v(i,J,k) = ((phi_bl*dpl - phi_br*dpr) + ((dpr - dpl) * int_phib)) * &
                                  (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
     enddo ; enddo ; enddo ; endif
