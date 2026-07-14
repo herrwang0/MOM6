@@ -299,6 +299,9 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
                         ! horizontal (pressure, not geopotential, is the linear coordinate) [L2 T-2 ~> m2 s-2]
   real :: alpha_s_iso   ! The global surface specific volume 1/rho_s for the isotherm diagnostics [R-1 ~> m3 kg-1]
   real :: pi_iso        ! The linear EOS compressibility dRho_dp for the isotherm diagnostics [T2 L-2 ~> s2 m-2]
+  real :: intp_pi_l, intp_pi_r ! The compressibility (pi) part of the layer specific-volume integral
+                        ! intp_dza in the left and right columns, i.e. intp_dza less its pure
+                        ! surface-density part 1/2*(alpha_s - alpha_ref)*dp^2 [R L4 T-4 ~> Pa m2 s-2]
   integer :: is, ie, js, je, Isq, Ieq, Jsq, Jeq, nz, nkmb
   integer, dimension(2) :: EOSdom ! The i-computational domain for the equation of state
   integer, dimension(2) :: EOSdom_u ! The i-computational domain for the equation of state at u-velocity points
@@ -963,42 +966,61 @@ subroutine PressureForce_FV_nonBouss(h, tv, PFu, PFv, G, GV, US, CS, ALE_CSp, AD
     if (CS%id_pgf_cdens_u > 0) call post_data(CS%id_pgf_cdens_u, ADp%pgf_cdens_u, CS%diag)
     if (CS%id_pgf_cdens_v > 0) call post_data(CS%id_pgf_cdens_v, ADp%pgf_cdens_v, CS%diag)
 
-    ! Compressibility term, F(pi) through fourth order in pi (fifth power of pressure).  These are
-    ! the higher terms of the specific-volume (Montgomery) series
-    !   integral(alpha) = alpha_s*p - 1/2*pi*alpha_s^2*p^2 + 1/3*pi^2*alpha_s^3*p^3
-    !                                - 1/4*pi^3*alpha_s^4*p^4 + 1/5*pi^4*alpha_s^5*p^5 - ...
-    ! carried far enough that the decomposition closes to the discretization-residual floor even for
-    ! a deep compressible column (pi*p/rho_s is the per-order convergence ratio).
+    ! Compressibility term, F(pi).  The layer specific-volume integral intp_dza splits into
+    !   intp_dza = 1/2*(alpha_s - alpha_ref)*dp^2 + [pi (compressibility) terms],
+    ! where the leading term is the pure surface-density (incompressible) contribution that is
+    ! already carried by the cdens and refsurf terms.  Subtracting it isolates the pi part of
+    ! intp_dza, which is then differenced across the face exactly as intp_dza enters PFu/PFv.  This
+    ! absorbs the former discretization-residual term, so refsurf + cdens + compress reconstructs
+    ! the acceleration (in the one-layer isotherm limit) with no separate residual term.
     if (associated(ADp%pgf_compress_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
-      ADp%pgf_compress_u(I,j,k) = ( &
-          (((-0.5*pi_iso) * alpha_s_iso**2) * (p(i,j,K+1)**2 - p(i+1,j,K+1)**2)) + &
-          (((C1_3*pi_iso**2) * alpha_s_iso**3) * (p(i,j,K+1)**3 - p(i+1,j,K+1)**3)) + &
-          (((-C1_4*pi_iso**3) * alpha_s_iso**4) * (p(i,j,K+1)**4 - p(i+1,j,K+1)**4)) + &
-          (((C1_5*pi_iso**4) * alpha_s_iso**5) * (p(i,j,K+1)**5 - p(i+1,j,K+1)**5)) ) * G%IdxCu(I,j)
+      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
+      intp_pi_l = intp_dza(i,j,k)   - (0.5*(alpha_s_iso - alpha_ref)) * dpl**2
+      intp_pi_r = intp_dza(i+1,j,k) - (0.5*(alpha_s_iso - alpha_ref)) * dpr**2
+      ADp%pgf_compress_u(I,j,k) = (intp_pi_l - intp_pi_r) * &
+                                  (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
     enddo ; enddo ; enddo ; endif
     if (associated(ADp%pgf_compress_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
-      ADp%pgf_compress_v(i,J,k) = ( &
-          (((-0.5*pi_iso) * alpha_s_iso**2) * (p(i,j,K+1)**2 - p(i,j+1,K+1)**2)) + &
-          (((C1_3*pi_iso**2) * alpha_s_iso**3) * (p(i,j,K+1)**3 - p(i,j+1,K+1)**3)) + &
-          (((-C1_4*pi_iso**3) * alpha_s_iso**4) * (p(i,j,K+1)**4 - p(i,j+1,K+1)**4)) + &
-          (((C1_5*pi_iso**4) * alpha_s_iso**5) * (p(i,j,K+1)**5 - p(i,j+1,K+1)**5)) ) * G%IdyCv(i,J)
+      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
+      intp_pi_l = intp_dza(i,j,k)   - (0.5*(alpha_s_iso - alpha_ref)) * dpl**2
+      intp_pi_r = intp_dza(i,j+1,k) - (0.5*(alpha_s_iso - alpha_ref)) * dpr**2
+      ADp%pgf_compress_v(i,J,k) = (intp_pi_l - intp_pi_r) * &
+                                  (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
     enddo ; enddo ; enddo ; endif
+    ! ### Former closed-form Montgomery-series compressibility term (through 4th order in pi), kept
+    ! ### here temporarily for reference while the intp_dza-based form above is evaluated:
+    ! if (associated(ADp%pgf_compress_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+    !   ADp%pgf_compress_u(I,j,k) = ( &
+    !       (((-0.5*pi_iso) * alpha_s_iso**2) * (p(i,j,K+1)**2 - p(i+1,j,K+1)**2)) + &
+    !       (((C1_3*pi_iso**2) * alpha_s_iso**3) * (p(i,j,K+1)**3 - p(i+1,j,K+1)**3)) + &
+    !       (((-C1_4*pi_iso**3) * alpha_s_iso**4) * (p(i,j,K+1)**4 - p(i+1,j,K+1)**4)) + &
+    !       (((C1_5*pi_iso**4) * alpha_s_iso**5) * (p(i,j,K+1)**5 - p(i+1,j,K+1)**5)) ) * G%IdxCu(I,j)
+    ! enddo ; enddo ; enddo ; endif
+    ! if (associated(ADp%pgf_compress_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+    !   ADp%pgf_compress_v(i,J,k) = ( &
+    !       (((-0.5*pi_iso) * alpha_s_iso**2) * (p(i,j,K+1)**2 - p(i,j+1,K+1)**2)) + &
+    !       (((C1_3*pi_iso**2) * alpha_s_iso**3) * (p(i,j,K+1)**3 - p(i,j+1,K+1)**3)) + &
+    !       (((-C1_4*pi_iso**3) * alpha_s_iso**4) * (p(i,j,K+1)**4 - p(i,j+1,K+1)**4)) + &
+    !       (((C1_5*pi_iso**4) * alpha_s_iso**5) * (p(i,j,K+1)**5 - p(i,j+1,K+1)**5)) ) * G%IdyCv(i,J)
+    ! enddo ; enddo ; enddo ; endif
     if (CS%id_pgf_compress_u > 0) call post_data(CS%id_pgf_compress_u, ADp%pgf_compress_u, CS%diag)
     if (CS%id_pgf_compress_v > 0) call post_data(CS%id_pgf_compress_v, ADp%pgf_compress_v, CS%diag)
 
-    ! Discretization-residual term.
-    if (associated(ADp%pgf_discresid_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
-      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
-      ADp%pgf_discresid_u(I,j,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-                                    ((dpr - dpl) * (p(i+1,j,K+1) - p(i,j,K+1))**2)) * &
-                                   (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
-    enddo ; enddo ; enddo ; endif
-    if (associated(ADp%pgf_discresid_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
-      dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
-      ADp%pgf_discresid_v(i,J,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
-                                    ((dpr - dpl) * (p(i,j+1,K+1) - p(i,j,K+1))**2)) * &
-                                   (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
-    enddo ; enddo ; enddo ; endif
+    ! Discretization-residual term.  Temporarily disabled: the intp_dza-based compress term above
+    ! already carries the model's full pi contribution (including what was previously split off as
+    ! the discretization residual), so this term is now redundant in the one-layer isotherm limit.
+    ! if (associated(ADp%pgf_discresid_u)) then ; do k=1,nz ; do j=js,je ; do I=Isq,Ieq
+    !   dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i+1,j,k)
+    !   ADp%pgf_discresid_u(I,j,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+    !                                 ((dpr - dpl) * (p(i+1,j,K+1) - p(i,j,K+1))**2)) * &
+    !                                (2.0*G%IdxCu(I,j) / ((dpl + dpr) + dp_neglect))
+    ! enddo ; enddo ; enddo ; endif
+    ! if (associated(ADp%pgf_discresid_v)) then ; do k=1,nz ; do J=Jsq,Jeq ; do i=is,ie
+    !   dpl = H_to_RL2_T2 * h(i,j,k) ; dpr = H_to_RL2_T2 * h(i,j+1,k)
+    !   ADp%pgf_discresid_v(i,J,k) = (((C1_12*pi_iso) * (alpha_s_iso*alpha_s_iso)) * &
+    !                                 ((dpr - dpl) * (p(i,j+1,K+1) - p(i,j,K+1))**2)) * &
+    !                                (2.0*G%IdyCv(i,J) / ((dpl + dpr) + dp_neglect))
+    ! enddo ; enddo ; enddo ; endif
     if (CS%id_pgf_discresid_u > 0) call post_data(CS%id_pgf_discresid_u, ADp%pgf_discresid_u, CS%diag)
     if (CS%id_pgf_discresid_v > 0) call post_data(CS%id_pgf_discresid_v, ADp%pgf_discresid_v, CS%diag)
   endif
