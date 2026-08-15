@@ -523,8 +523,13 @@ subroutine open_boundary_config(G, US, param_file, OBC)
   logical :: debug, mask_outside, reentrant_x, reentrant_y
   character(len=15) :: segment_param_str ! The run-time parameter name for each segment
   character(len=1024) :: segment_str      ! The contents (rhs) for parameter "segment_param_str"
+  character(len=200) :: user_config ! The value of OBC_USER_CONFIG
   character(len=200) :: config ! A string to temporarily store a few runtime parameters
-  real               :: Lscale_in, Lscale_out ! parameters controlling tracer values at the boundaries [L ~> m]
+  logical :: prescribed_inflow ! If true, this configuration sets its own inflow tracer
+                        ! concentrations in code, and so requires reservoirs that are never updated.
+  real    :: Lscale_in, Lscale_out ! parameters controlling tracer values at the boundaries [L ~> m]
+  real    :: Lscale_dflt ! The default tracer reservoir length scale [m]
+
   integer :: default_answer_date  ! The default setting for the various ANSWER_DATE flags.
   logical :: enable_bugs     ! If true, the defaults for recently added bug-fix flags are set to
                              ! recreate the bugs, or if false bugs are only used if actively selected.
@@ -547,13 +552,10 @@ subroutine open_boundary_config(G, US, param_file, OBC)
 
   allocate(OBC)
   OBC%number_of_segments = num_of_segs
-  call get_param(param_file, mdl, "OBC_USER_CONFIG", config, &
-                 "A string that sets how the open boundary conditions are "//&
-                 " configured: \n", default="none", do_not_log=.true.)
-  call get_param(param_file, mdl, "NK", OBC%ke, &
-                 "The number of model layers", default=0, do_not_log=.true.)
-
-  if (config /= "none" .and. config /= "dyed_obcs") OBC%user_BCs_set_globally = .true.
+  call get_param(param_file, mdl, "NK", OBC%ke, default=0, do_not_log=.true.)
+  call get_param(param_file, mdl, "OBC_USER_CONFIG", user_config, default="none", do_not_log=.true.)
+  if (user_config /= "none" .and. user_config /= "dyed_obcs") &
+    OBC%user_BCs_set_globally = .true.
 
   ! Configuration for OBC relative vorticity.
   !   Old setup method
@@ -838,19 +840,33 @@ subroutine open_boundary_config(G, US, param_file, OBC)
 
   if (mask_outside) call mask_outside_OBCs(G, US, param_file, OBC)
 
+  ! Configurations that prescribe their own inflow tracer concentrations require those values to
+  ! persist, which reservoirs that are never updated provide.
+  prescribed_inflow = (trim(user_config) == "DOME")
+  Lscale_dflt = 0.0 ; if (prescribed_inflow) Lscale_dflt = -1.0
+
   call get_param(param_file, mdl, "OBC_TRACER_RESERVOIR_LENGTH_SCALE_OUT", Lscale_out, &
                  "The length scale for updating the tracer reservoir toward the interior "//&
                  "concentration where flow exits the domain: >0 relaxes over this distance, "//&
                  "0 resets the reservoir to that concentration immediately, and <0 (infinite "//&
                  "length scale) leaves the reservoir unchanged.  This applies to all tracers on "//&
-                 "every open boundary segment.", units="m", default=0.0, scale=US%m_to_L)
+                 "every open boundary segment.", units="m", default=Lscale_dflt, scale=US%m_to_L)
   call get_param(param_file, mdl, "OBC_TRACER_RESERVOIR_LENGTH_SCALE_IN", Lscale_in, &
                  "The length scale for updating the tracer reservoir toward the external OBC "//&
                  "concentration where flow enters the domain, following the sign convention of "//&
-                 "OBC_TRACER_RESERVOIR_LENGTH_SCALE_OUT.", units="m", default=0.0, scale=US%m_to_L)
+                 "OBC_TRACER_RESERVOIR_LENGTH_SCALE_OUT.", units="m", default=Lscale_dflt, &
+                 scale=US%m_to_L)
 
-  ! All segments have the same restoring length scale. Internally, each tracer has resrv_lfac_in/out
-  ! attributes to rescale the length scales. resrv_lfac_in/out is only used by BGC tracers at the moment.
+  if (prescribed_inflow .and. ((Lscale_in >= 0.0) .or. (Lscale_out >= 0.0))) &
+    call MOM_error(FATAL, "open_boundary_config: OBC_USER_CONFIG = '"//trim(user_config)//"' "//&
+                   "prescribes its own inflow tracer concentrations, and tracer reservoirs are "//&
+                   "never updated.  OBC_TRACER_RESERVOIR_LENGTH_SCALE_IN and "//&
+                   "OBC_TRACER_RESERVOIR_LENGTH_SCALE_OUT must both be negative.")
+
+  ! All segments have the same restoring length scales. Each tracer has resrv_lfac_in/out attributes
+  ! to rescale the length scales, which are set when that tracer is registered by subroutine
+  ! register_segment_tracer, either from the parameter file for BGC tracers, or to 0 for any tracer
+  ! that is registered with a prescribed uniform inflow concentration (OBC_scalar argument).
   do n=1,OBC%number_of_segments
     if (Lscale_in  > 0.0) then
       OBC%segment(n)%Tr_InvLscale_in  = 1.0 / Lscale_in
