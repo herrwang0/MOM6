@@ -62,6 +62,7 @@ public segment_tracer_registry_init
 public segment_tracer_registry_end
 public segment_thickness_reservoir_init
 public register_segment_tracer
+public get_segment_tracer_index
 public register_temp_salt_segments
 public register_obgc_segments
 public fill_temp_salt_segments
@@ -1372,7 +1373,7 @@ subroutine initialize_segment_data(GV, US, OBC, PF, turns, use_temperature)
         call MOM_error(FATAL, trim(routine_name) // ", " // trim(mesg))
       endif ; enddo
       segment%field(m)%name = rotated_field_name(bgc_input, turns)
-      segment%field(m)%tr_index = get_tracer_index(segment, trim(segment%field(m)%name))
+      segment%field(m)%tr_index = get_segment_tracer_index(segment, trim(segment%field(m)%name))
       call allocate_segment_field_data(segment%field(m), OBC, segment, US, &
                                        inputdir, filename, varname, suffix, 0.0, turns, GV%ke)
     enddo
@@ -4148,21 +4149,29 @@ function lookup_seg_field(OBC_seg, field)
 
 end function lookup_seg_field
 
-!> Return the tracer index from its name
-function get_tracer_index(OBC_seg,tr_name)
-  type(OBC_segment_type), pointer :: OBC_seg !< OBC segment
-  character(len=*), intent(in) :: tr_name   !< The field name
-  integer :: get_tracer_index, it
-  get_tracer_index = -1
-  it = 1
-  do while(allocated(OBC_seg%tr_Reg%Tr(it)%t))
-    if (trim(OBC_seg%tr_Reg%Tr(it)%name) == trim(tr_name)) then
-      get_tracer_index = it
-      exit
+!> Return the position of the named tracer in a segment's tracer registry, or -1 if that segment
+!! has no tracer with that name.  Note that this is the index into segment%tr_Reg%Tr, which is
+!! set by the order in which tracers are registered on the segment, and not the index into the
+!! global tracer registry, which is stored as segment%tr_Reg%Tr(m)%ntr_index.
+integer function get_segment_tracer_index(segment, tr_name)
+  type(OBC_segment_type), intent(in) :: segment !< Open boundary segment
+  character(len=*),       intent(in) :: tr_name !< The name of the tracer being sought
+
+  ! Local variables
+  integer :: m
+
+  get_segment_tracer_index = -1
+  if (.not. associated(segment%tr_Reg)) return
+
+  do m=1,segment%tr_Reg%ntseg
+    ! names are considered case insensitive.
+     if (uppercase(trim(segment%tr_Reg%Tr(m)%name)) == uppercase(trim(tr_name))) then
+      get_segment_tracer_index = m
+      return
     endif
-    it = it + 1
   enddo
-end function get_tracer_index
+
+end function get_segment_tracer_index
 
 !> Allocate segment data fields
 subroutine allocate_OBC_segment_data(OBC, segment)
@@ -5483,7 +5492,7 @@ subroutine fill_obgc_segments(G, GV, OBC, tr_ptr, tr_name)
   do n=1,OBC%number_of_segments
     segment => OBC%segment(n)
     if (.not. segment%on_pe) cycle
-    nt = get_tracer_index(segment, tr_name)
+    nt = get_segment_tracer_index(segment, tr_name)
     if (nt < 0) then
       call MOM_error(FATAL,"fill_obgc_segments: Did not find tracer "// tr_name)
     endif
