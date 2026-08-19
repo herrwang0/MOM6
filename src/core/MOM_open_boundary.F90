@@ -6,7 +6,7 @@
 module MOM_open_boundary
 
 use MOM_array_transform,      only : rotate_array, rotate_array_pair
-use MOM_coms,                 only : sum_across_PEs, any_across_PEs
+use MOM_coms,                 only : sum_across_PEs, any_across_PEs, max_across_PEs
 use MOM_coms,                 only : Set_PElist, Get_PElist, PE_here, num_PEs
 use MOM_cpu_clock,            only : cpu_clock_id, cpu_clock_begin, cpu_clock_end, CLOCK_ROUTINE
 use MOM_debugging,            only : hchksum, uvchksum, chksum
@@ -5904,8 +5904,10 @@ subroutine open_boundary_register_restarts(HI, GV, US, OBC, Reg, param_file, res
   type(MOM_restart_CS),    intent(inout) :: restart_CS !< MOM restart control structure
   logical,                 intent(in) :: use_temperature !< If true, T and S are used
   ! Local variables
+  type(OBC_segment_type), pointer :: segment => NULL() ! Pointer to an OBC segment
   type(vardesc) :: vd(2)
-  integer       :: m
+  integer       :: m, n
+  integer       :: ntseg_max  ! The largest number of tracers registered on any open boundary segment
   character(len=100) :: mesg, var_name
 
   if (.not. associated(OBC)) &
@@ -5996,6 +5998,20 @@ subroutine open_boundary_register_restarts(HI, GV, US, OBC, Reg, param_file, res
       call MOM_error(WARNING, 'open_boundary_register_restarts: '//mesg)
     endif
   endif
+
+  !   Report how many tracers are registered on the open boundary segments.  Currently, boundary
+  ! fluxes for tracers that are in the tracer registry but are not registered on the segments are
+  ! not properly defined and need to be fixed.
+  ntseg_max = 0
+  do n=1,OBC%number_of_segments
+    segment => OBC%segment(n)
+    if (segment%on_pe .and. associated(segment%tr_Reg)) &
+      ntseg_max = max(ntseg_max, segment%tr_Reg%ntseg)
+  enddo
+  call max_across_PEs(ntseg_max)
+  write(mesg,'(I0," of the ",I0," registered tracers are on the open boundary segments.")') &
+        ntseg_max, Reg%ntr
+  call MOM_mesg('open_boundary_register_restarts: '//trim(mesg))
 
   ! Still painfully inefficient, now in four dimensions.
   if (any(OBC%tracer_x_reservoirs_used)) then

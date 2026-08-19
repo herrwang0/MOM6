@@ -276,10 +276,16 @@ end subroutine register_tracer
 subroutine lock_tracer_registry(Reg)
   type(tracer_registry_type), pointer    :: Reg    !< pointer to the tracer registry
 
+  ! Local variables
+  character(len=128) :: mesg  ! A message for the log
+
   if (.not. associated(Reg)) call MOM_error(WARNING, &
     "lock_tracer_registry called with an unassociated registry.")
 
   Reg%locked = .True.
+
+  write(mesg,'("lock_tracer_registry: ",I0," tracers have been registered.")') Reg%ntr
+  call MOM_mesg(mesg)
 
 end subroutine lock_tracer_registry
 
