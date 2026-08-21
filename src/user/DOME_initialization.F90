@@ -12,8 +12,8 @@ use MOM_error_handler, only : MOM_mesg, MOM_error, FATAL, WARNING, is_root_pe
 use MOM_file_parser, only : get_param, log_version, param_file_type
 use MOM_get_input, only : directories
 use MOM_grid, only : ocean_grid_type
-use MOM_open_boundary, only : ocean_OBC_type, OBC_NONE
-use MOM_open_boundary,   only : OBC_segment_type, register_segment_tracer
+use MOM_open_boundary,   only : ocean_OBC_type, OBC_segment_type
+use MOM_open_boundary,   only : register_segment_tracer, get_segment_tracer_index
 use MOM_tracer_registry, only : tracer_registry_type, tracer_type
 use MOM_tracer_registry, only : tracer_name_lookup
 use MOM_unit_scaling, only : unit_scale_type
@@ -272,33 +272,61 @@ subroutine DOME_initialize_sponges(G, GV, US, tv, depth_tot, PF, CSp)
 
 end subroutine DOME_initialize_sponges
 
-!> Add DOME to the OBC registry and set up some variables that will be used to guide
-!! code setting up the restart fields related to the OBCs.
-subroutine register_DOME_OBC(param_file, US, OBC, tr_Reg)
+!> Register DOME tracers to open boundary segments and global restart arrays.
+subroutine register_DOME_OBC(param_file, US, GV, OBC, tr_Reg)
   type(param_file_type),      intent(in) :: param_file !< parameter file.
   type(unit_scale_type),      intent(in) :: US       !< A dimensional unit scaling type
+  type(verticalGrid_type),    intent(in) :: GV       !< The ocean's vertical grid structure.
   type(ocean_OBC_type),       pointer    :: OBC      !< OBC registry.
   type(tracer_registry_type), pointer    :: tr_Reg   !< Tracer registry.
 
-  if (OBC%number_of_segments /= 1) then
-    call MOM_error(FATAL, 'Error in register_DOME_OBC - DOME should have 1 OBC segment', .true.)
-  endif
+  ! Local variables
+  character(len=32) :: name  ! The name of a tracer field.
+  integer :: m, ntr_id
+  integer :: ntr_D1_interior ! The index of the first dye tracer in the global tracer registry.
+  type(OBC_segment_type), pointer :: segment => NULL()
+  type(tracer_type),      pointer :: tr_ptr => NULL()
 
-  ! Store this information for use in setting up the OBC restarts for tracer reservoirs.
+  if (OBC%number_of_segments /= 1) &
+    call MOM_error(FATAL, 'Error in register_DOME_OBC - DOME should have 1 OBC segment')
+
+  name = 'tr_D1'
+  call tracer_name_lookup(tr_Reg, ntr_D1_interior, tr_ptr, name)
+
+  ! Store this information for use in setting up the OBC restarts for tracer reservoirs.  This
+  ! section should be treated as a temporary walkaround.
+  ! - tracer_[xy]_reservoirs_used flags below need to precede the segment%on_pe test because they
+  ! are used on all PEs when the OBC restart fields are registered.
+  ! - Strictly speaking, the flags should be indexed by the order of segment tracer registry, rather
+  ! than global registry. The two indices just happen to match in this case.
   OBC%ntr = tr_Reg%ntr
   if (.not. allocated(OBC%tracer_x_reservoirs_used)) then
     allocate(OBC%tracer_x_reservoirs_used(OBC%ntr))
     allocate(OBC%tracer_y_reservoirs_used(OBC%ntr))
     OBC%tracer_x_reservoirs_used(:) = .false.
     OBC%tracer_y_reservoirs_used(:) = .false.
-    OBC%tracer_y_reservoirs_used(1) = .true.
+    OBC%tracer_y_reservoirs_used(ntr_D1_interior) = .true.
   endif
+
+  segment => OBC%segment(1)
+  if (.not. segment%on_pe) return
+
+  call register_segment_tracer(tr_ptr, ntr_D1_interior, param_file, GV, segment)
+
+  !   All of the dye tracers but the first have 0 concentration in their inflows.  NTR_DOME is
+  ! the number of dyes that DOME_tracer registers, so no assumption is made here about how many
+  ! other tracers precede or follow them in the tracer registry.
+  do m=2,NTR_DOME
+    write(name,'("tr_D",I0)') m
+    call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
+    call register_segment_tracer(tr_ptr, ntr_id, param_file, GV, segment, OBC_scalar=0.0)
+  enddo
 
 end subroutine register_DOME_OBC
 
 !> This subroutine sets the properties of flow at open boundary conditions.
 !! This particular example is for the DOME inflow describe in Legg et al. 2006.
-subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
+subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF)
   type(ocean_OBC_type),       pointer    :: OBC !< This open boundary condition type specifies
                                                 !! whether, where, and what open boundary
                                                 !! conditions are used.
@@ -311,7 +339,6 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   type(unit_scale_type),      intent(in) :: US  !< A dimensional unit scaling type
   type(param_file_type),      intent(in) :: PF  !< A structure indicating the open file
                               !! to parse for model parameter values.
-  type(tracer_registry_type), pointer    :: tr_Reg !< Tracer registry.
 
   ! Local variables
   real :: T0(SZK_(GV))       ! A profile of target temperatures [C ~> degC]
@@ -348,12 +375,12 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                             ! region of the specified shear profile [nondim]
   real :: km_to_grid_unit   ! The conversion factor from km to the units of latitude often 1 [nondim],
                             ! but this could be 1000 [m km-1]
-  character(len=32)  :: name ! The name of a tracer field.
   character(len=40)  :: mdl = "DOME_set_OBC_data" ! This subroutine's name.
-  integer :: i, j, k, itt, isd, ied, m, nz, ntr_id, nt
+  integer :: i, j, k, itt, isd, ied, nz, nt
   integer :: JsdB, JedB
   type(OBC_segment_type), pointer :: segment => NULL()
-  type(tracer_type),      pointer :: tr_ptr => NULL()
+
+  if (.not. associated(OBC)) return
 
   nz = GV%ke
 
@@ -396,8 +423,6 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
                  units="degC", default=25.0, scale=US%degC_to_C)
   endif
 
-  if (.not. associated(OBC)) return
-
   if (GV%Boussinesq) then
     g_prime_tot = (GV%g_Earth / GV%Rho0) * Rlay_range
     Def_Rad = sqrt(D_edge*g_prime_tot) / abs(f_inflow)
@@ -412,17 +437,10 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   ! This is mathematically equivalent to
   ! I_Def_Rad = G%grid_unit_to_L / Def_Rad
 
-  if (OBC%number_of_segments /= 1) then
-    write(name, '(i0)') OBC%number_of_segments
-    call MOM_error(FATAL, "DOME_set_OBC_data: DOME requires exactly 1 OBC segment, but "// &
-        "OBC%number_of_segments = "//trim(name)//". Check OBC_NUMBER_OF_SEGMENTS.")
-  endif
-
   segment => OBC%segment(1)
   if (.not. segment%on_pe) return
   isd = segment%HI%isd ; ied = segment%HI%ied
   JsdB = segment%HI%JsdB ; JedB = segment%HI%JedB
-
 
   ! Set dynamics data
   do k=1,nz
@@ -456,14 +474,22 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
   !   The inflows use only the tracer concentrations that are set below, because DOME defaults
   ! OBC_TRACER_RESERVOIR_LENGTH_SCALE_IN and _OUT to a negative (infinite) length scale, for
   ! which the reservoirs are never updated.
+  !   These tracers were registered on the segment by register_temp_salt_segments and
+  ! register_DOME_OBC, so only their inflow values are set here.
   !   The inflow values of temperature and salinity also need to be set here if
   ! these variables are used.  The following code is just a naive example.
   if (associated(tv%S)) then
     ! In this example, all S inflows have values given by S_ref.
-    name = 'salt'
-    call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
-    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, OBC_scalar=S_ref, scale=US%ppt_to_S)
+    nt = get_segment_tracer_index(segment, 'salt')
+    if (nt < 0) &
+      call MOM_error(FATAL, "DOME_set_OBC_data: salt tracer is not registered on the segment.")
+    do k=1,nz ; do J=JsdB,JedB ; do i=isd,ied
+      segment%tr_Reg%Tr(nt)%t(i,J,k) = S_ref
+      segment%tr_Reg%Tr(nt)%tres(i,J,k) = S_ref
+    enddo ; enddo ; enddo
+    segment%tr_Reg%Tr(nt)%is_initialized = .true.
   endif
+
   if (associated(tv%T)) then
     ! In this example, the T values are set to be consistent with the layer
     ! target density and a salinity of S_ref.  This code is taken from
@@ -479,11 +505,10 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
       do k=1,nz ; T0(k) = T0(k) + (GV%Rlay(k)-rho_guess(k)) / drho_dT(k) ; enddo
     enddo
 
-    ! T0 is computed analytically; register and fill %t/%tres directly.
-    name = 'temp'
-    call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
-    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, scale=US%degC_to_C)
-    nt = segment%tr_Reg%ntseg
+    ! T0 is computed analytically, so fill %t/%tres directly.
+    nt = get_segment_tracer_index(segment, 'temp')
+    if (nt < 0) &
+      call MOM_error(FATAL, "DOME_set_OBC_data: temp tracer is not registered on the segment.")
     do k=1,nz ; do J=JsdB,JedB ; do i=isd,ied
       segment%tr_Reg%Tr(nt)%t(i,J,k) = T0(k)
       segment%tr_Reg%Tr(nt)%tres(i,J,k) = T0(k)
@@ -491,11 +516,10 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
     segment%tr_Reg%Tr(nt)%is_initialized = .true.
   endif
 
-  ! Dye tr_D1 has an analytical step-profile inflow; register and fill %t/%tres directly.
-  name = 'tr_D1'
-  call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
-  call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment)
-  nt = segment%tr_Reg%ntseg
+  ! Dye tr_D1 has an analytical step-profile inflow, so fill %t/%tres directly.
+  nt = get_segment_tracer_index(segment, 'tr_D1')
+  if (nt < 0) &
+    call MOM_error(FATAL, "DOME_set_OBC_data: tr_D1 tracer is not on the segment.")
   do k=1,nz
     if (k < nz/2) then
       do J=JsdB,JedB ; do i=isd,ied
@@ -510,14 +534,6 @@ subroutine DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tr_Reg)
     endif
   enddo
   segment%tr_Reg%Tr(nt)%is_initialized = .true.
-
-  ! All tracers but the first have 0 concentration in their inflows. As 0 is the
-  ! default value for the inflow concentrations, the following calls are unnecessary.
-  do m=2,NTR_DOME
-    write(name,'("tr_D",I0)') m
-    call tracer_name_lookup(tr_Reg, ntr_id, tr_ptr, name)
-    call register_segment_tracer(tr_ptr, ntr_id, PF, GV, segment, OBC_scalar=0.0)
-  enddo
 
 end subroutine DOME_set_OBC_data
 

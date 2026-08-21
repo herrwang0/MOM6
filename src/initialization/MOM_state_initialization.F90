@@ -718,7 +718,7 @@ subroutine MOM_initialize_OBCs(h, tv, OBC, Time, G, GV, US, PF, restart_CS, trac
                  "   tidal_bay - Flather with tidal forcing on eastern boundary\n"//&
                  "   USER - user specified", default="none")
     if (trim(config) == "DOME") then
-      call DOME_set_OBC_data(OBC, tv, G, GV, US, PF, tracer_Reg)
+      call DOME_set_OBC_data(OBC, tv, G, GV, US, PF)
     elseif (trim(config) == "dyed_channel") then
       call dyed_channel_set_OBC_tracer_data(OBC, G, GV, PF, tracer_Reg)
       OBC%update_OBC = .true.

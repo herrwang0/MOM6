@@ -127,7 +127,7 @@ subroutine call_OBC_register(G, GV, US, param_file, CS, OBC, tr_Reg)
                  default=0, debuggingParam=.true., do_not_log=.not.CS%debug_OBCs)
 
   if (trim(config) == "DOME") then
-    call register_DOME_OBC(param_file, US, OBC, tr_Reg)
+    call register_DOME_OBC(param_file, US, GV, OBC, tr_Reg)
 !  elseif (trim(config) == "tidal_bay") then
 !  elseif (trim(config) == "Kelvin") then
 !  elseif (trim(config) == "shelfwave") then
