@@ -3202,16 +3202,16 @@ subroutine initialize_MOM(Time, Time_init, param_file, dirs, CS, &
     ! This call initializes the relevant vertical remapping structures.
     call open_boundary_setup_vert(GV, US, CS%OBC)
 
-    ! Set up remaining information about open boundary conditions that is needed for OBCs.
-    ! Package specific changes to OBCs occur here.
-    call call_OBC_register(G, GV, US, param_file, CS%update_OBC_CSp, CS%OBC, CS%tracer_Reg)
-
     ! This is the equivalent to 2 calls to register_segment_tracer (per segment), which
     ! could occur with the call to update_OBC_data or after the main initialization.
     if (use_temperature) &
       call register_temp_salt_segments(GV, US, CS%OBC, CS%tracer_Reg, param_file)
     ! This is the equivalent call to register_temp_salt_segments for external tracers with OBC
     call call_tracer_register_obc_segments(GV, param_file, CS%tracer_flow_CSp, CS%tracer_Reg, CS%OBC)
+
+    ! Set up remaining information about open boundary conditions that is needed for OBCs.
+    ! Package specific changes to OBCs occur here.
+    call call_OBC_register(G, GV, US, param_file, CS%update_OBC_CSp, CS%OBC, CS%tracer_Reg)
 
     ! Set up the thickness reservoirs if using them.
     if (CS%OBC%use_h_res) &
