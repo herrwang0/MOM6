@@ -210,19 +210,28 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
   "Transport.", default=0.0, units="m^3/s")
   call get_param(param_file, '', "OBC_USER_VELOCITY", vel, &
   "Velocity.", default=0.0, units="m/s")
-  call get_param(param_file, '', "OBC_USER_FLATHER_SSH", ssh, & 
+  call get_param(param_file, '', "OBC_USER_FLATHER_SSH", ssh, &
   "donwstream flather ssh.", default=0.0, units="m")
 
-  segment => OBC%segment(1)
-  if (segment%on_pe) then 
-  is = segment%HI%isdB ; ie = segment%HI%iedB
-  js = segment%HI%jsd ; je = segment%HI%jed
   nz = GV%ke
 
-  do k=1,nz ; do j=js,je ; do I=is,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
-    segment%normal_trans(I,j,k) = trans(k)
-    segment%normal_vel(I,j,k) = vel(k)
-  endif ; enddo ; enddo ; enddo
+  segment => OBC%segment(1)
+  if (segment%on_pe) then
+    if (segment%is_E_or_W) then
+      is = segment%HI%IsdB ; ie = segment%HI%IedB
+      js = segment%HI%jsd ; je = segment%HI%jed
+      do k=1,nz ; do j=js,je ; do I=is,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
+        segment%normal_trans(I,j,k) = trans(k)
+        segment%normal_vel(I,j,k) = vel(k)
+      endif ; enddo ; enddo ; enddo
+    else
+      is = segment%HI%isd ; ie = segment%HI%ied
+      js = segment%HI%JsdB ; je = segment%HI%JedB
+      do k=1,nz ; do J=js,je ; do i=is,ie ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
+        segment%normal_trans(i,J,k) = trans(k)
+        segment%normal_vel(i,J,k) = vel(k)
+      endif ; enddo ; enddo ; enddo
+    endif
   endif
 
   segment => OBC%segment(2)
