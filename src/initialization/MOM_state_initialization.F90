@@ -739,7 +739,7 @@ subroutine MOM_initialize_OBCs(h, tv, OBC, Time, G, GV, US, PF, restart_CS, trac
     elseif (trim(config) == "tidal_bay") then
       OBC%update_OBC = .true.
     elseif (trim(config) == "USER") then
-      call user_set_OBC_data(OBC, tv, G, GV, PF, tracer_Reg)
+      call user_set_OBC_data(OBC, tv, G, GV, US, PF, tracer_Reg)
     elseif (.not. trim(config) == "none") then
       call MOM_error(FATAL, "The open boundary conditions specified by "//&
               "OBC_USER_CONFIG = "//trim(config)//" have not been fully implemented.")

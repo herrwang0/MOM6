@@ -179,7 +179,7 @@ subroutine USER_initialize_sponges(G, GV, use_temp, tv, param_file, CSp, h)
 end subroutine USER_initialize_sponges
 
 !> This subroutine sets the properties of flow at open boundary conditions.
-subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
+subroutine USER_set_OBC_data(OBC, tv, G, GV, US, param_file, tr_Reg)
   type(ocean_OBC_type),       pointer    :: OBC   !< This open boundary condition type specifies
                                                   !! whether, where, and what open boundary
                                                   !! conditions are used.
@@ -189,6 +189,7 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
                                        !! fields have NULL ptrs.
   type(ocean_grid_type),      intent(in) :: G     !< The ocean's grid structure.
   type(verticalGrid_type),    intent(in) :: GV    !< The ocean's vertical grid structure.
+  type(unit_scale_type),      intent(in) :: US    !< A dimensional unit scaling type.
   type(param_file_type),      intent(in) :: param_file !< A structure indicating the
                                                   !! open file to parse for model
                                                   !! parameter values.
@@ -197,46 +198,90 @@ subroutine USER_set_OBC_data(OBC, tv, G, GV, param_file, tr_Reg)
 !   "USER_initialization.F90, USER_set_OBC_data: " // &
 !   "Unmodified user routine called - you must edit the routine to use it")
 
-  type(OBC_segment_type), pointer :: segment => NULL()
-  integer :: is, ie, js, je, i, j, k, nz
-  real, dimension(SZK_(GV)) :: trans, vel
-  real :: ssh
-
-  !segment => OBC%segment(1)
-  !if (.not. segment%on_pe) return
-  !if (.not. segment%is_E_or_W) return
-
-  call get_param(param_file, '', "OBC_USER_TRANSPORT", trans, &
-  "Transport.", default=0.0, units="m^3/s")
-  call get_param(param_file, '', "OBC_USER_VELOCITY", vel, &
-  "Velocity.", default=0.0, units="m/s")
-  call get_param(param_file, '', "OBC_USER_FLATHER_SSH", ssh, &
-  "donwstream flather ssh.", default=0.0, units="m")
+  ! Local variables
+  type(OBC_segment_type), pointer :: segment => NULL() ! A pointer to an open boundary segment
+  real, dimension(SZK_(GV)) :: trans_dflt ! The layer transports normal to any open boundary segment
+                                          ! that does not specify its own values, in mks units [m3 s-1]
+  real, dimension(SZK_(GV)) :: vel_dflt   ! The layer velocities normal to any open boundary segment
+                                          ! that does not specify its own values, in mks units [m s-1]
+  real, dimension(SZK_(GV)) :: trans      ! The layer transports normal to one open boundary
+                                          ! segment [H L2 T-1 ~> m3 s-1 or kg s-1]
+  real, dimension(SZK_(GV)) :: vel        ! The layer velocities normal to one open boundary
+                                          ! segment [L T-1 ~> m s-1]
+  real :: ssh        ! The sea surface height imposed outside of the outflow segment [Z ~> m]
+  character(len=48) :: seg_param_str ! The name of a segment-specific run-time parameter
+  character(len=40) :: mdl = "user_initialization" ! This module's name.
+  integer :: ssh_seg ! The number of the segment where the sea surface height is imposed, or 0
+                     ! if there is no such segment
+  integer :: is, ie, js, je, i, j, k, n, nz
 
   nz = GV%ke
 
-  segment => OBC%segment(1)
-  if (segment%on_pe) then
+  ! The first two parameters set the values that are used at any segment that does not specify
+  ! its own values with the segment-specific parameters that are read below.
+  call get_param(param_file, mdl, "OBC_USER_TRANSPORT", trans_dflt, &
+                 "The transports normal to the open boundary segments, from the top layer to the "//&
+                 "bottom layer.  This is used at any segment that does not set its own "//&
+                 "OBC_SEGMENT_%%%_USER_TRANSPORT.", &
+                 units="m3 s-1", default=0.0)
+  call get_param(param_file, mdl, "OBC_USER_VELOCITY", vel_dflt, &
+                 "The velocities normal to the open boundary segments, from the top layer to the "//&
+                 "bottom layer.  This is used at any segment that does not set its own "//&
+                 "OBC_SEGMENT_%%%_USER_VELOCITY.", &
+                 units="m s-1", default=0.0)
+  call get_param(param_file, mdl, "OBC_USER_FLATHER_SSH", ssh, &
+                 "The sea surface height imposed outside of the outflow segment, taken to be the "//&
+                 "last segment without a specified transport or velocity.  This is only used "//&
+                 "with Flather open boundary conditions.", &
+                 units="m", default=0.0, scale=US%m_to_Z)
+
+  ssh_seg = 0
+
+  do n=1,OBC%number_of_segments
+    ! The segment-specific parameters are read on all PEs, including those where this segment is
+    ! not present, so that they are logged consistently.
+    write(seg_param_str, "('OBC_SEGMENT_',i3.3,'_USER_TRANSPORT')") n
+    call get_param(param_file, mdl, trim(seg_param_str), trans, &
+                   "The transports normal to this open boundary segment, from the top layer to "//&
+                   "the bottom layer.", &
+                   units="m3 s-1", defaults=trans_dflt, scale=(GV%m_to_H*US%m_to_L**2)*US%T_to_s)
+    write(seg_param_str, "('OBC_SEGMENT_',i3.3,'_USER_VELOCITY')") n
+    call get_param(param_file, mdl, trim(seg_param_str), vel, &
+                   "The velocities normal to this open boundary segment, from the top layer to "//&
+                   "the bottom layer.", &
+                   units="m s-1", defaults=vel_dflt, scale=US%m_s_to_L_T)
+
+    ! The sea surface height is imposed at the last segment where no transport or velocity has
+    ! been specified, which is taken to be the outflow segment.
+    if (all(trans(:) == 0.0) .and. all(vel(:) == 0.0)) ssh_seg = n
+
+    segment => OBC%segment(n)
+    if (.not. segment%on_pe) cycle
+
     if (segment%is_E_or_W) then
       is = segment%HI%IsdB ; ie = segment%HI%IedB
       js = segment%HI%jsd ; je = segment%HI%jed
-      do k=1,nz ; do j=js,je ; do I=is,ie ; if (OBC%segnum_u(I,j) /= OBC_NONE) then
+      do k=1,nz ; do j=js,je ; do I=is,ie ; if (abs(OBC%segnum_u(I,j)) == n) then
         segment%normal_trans(I,j,k) = trans(k)
         segment%normal_vel(I,j,k) = vel(k)
       endif ; enddo ; enddo ; enddo
     else
       is = segment%HI%isd ; ie = segment%HI%ied
       js = segment%HI%JsdB ; je = segment%HI%JedB
-      do k=1,nz ; do J=js,je ; do i=is,ie ; if (OBC%segnum_v(i,J) /= OBC_NONE) then
+      do k=1,nz ; do J=js,je ; do i=is,ie ; if (abs(OBC%segnum_v(i,J)) == n) then
         segment%normal_trans(i,J,k) = trans(k)
         segment%normal_vel(i,J,k) = vel(k)
       endif ; enddo ; enddo ; enddo
     endif
-  endif
+  enddo ! n-loop over the open boundary segments
 
-  segment => OBC%segment(2)
-  if (segment%on_pe) then
-  segment%SSH(:,:) = ssh
+  ! The barotropic solver reads the Flather sea surface height everywhere within the segment's
+  ! index range, so it is set here without excluding the land points along the segment.
+  if (ssh_seg > 0) then
+    segment => OBC%segment(ssh_seg)
+    if (segment%on_pe) then
+      if (allocated(segment%SSH)) segment%SSH(:,:) = ssh
+    endif
   endif
 
   if (first_call) call write_user_log(param_file)
