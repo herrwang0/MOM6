@@ -254,9 +254,9 @@ subroutine copy_MOM_grid_to_dyngrid(oG, dG, US)
     dG%dyCv(i,J) = oG%dyCv(i+ido,J+jdo)
     dG%dx_Cv(i,J) = oG%dx_Cv(i+ido,J+jdo)
 
-    dG%porous_DminV(i,J) = oG%porous_DminU(i+ido,J+jdo) + oG%Z_ref
-    dG%porous_DmaxV(i,J) = oG%porous_DmaxU(i+ido,J+jdo) + oG%Z_ref
-    dG%porous_DavgV(i,J) = oG%porous_DavgU(i+ido,J+jdo) + oG%Z_ref
+    dG%porous_DminV(i,J) = oG%porous_DminV(i+ido,J+jdo) + oG%Z_ref
+    dG%porous_DmaxV(i,J) = oG%porous_DmaxV(i+ido,J+jdo) + oG%Z_ref
+    dG%porous_DavgV(i,J) = oG%porous_DavgV(i+ido,J+jdo) + oG%Z_ref
 
     dG%mask2dCv(i,J) = oG%mask2dCv(i+ido,J+jdo)
     dG%OBCmaskCv(i,J) = oG%OBCmaskCv(i+ido,J+jdo)
